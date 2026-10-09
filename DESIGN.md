@@ -4,6 +4,8 @@ Design for a service that sits beside an Immich instance and moves photos from i
 
 This is the design as of October 2026, targeting Immich 3.3. Nothing here is built yet. It's meant to be implemented and tested one stage at a time.
 
+This is a working document, not the final documentation. It holds the overall goal and the stages still to come. As stages are built, the real docs replace the matching sections here. Anything in it can change through discussion; when it does, this file is updated to match.
+
 ## The problem
 
 Immich has no concept of a shared library. Assets belong to one user. Shared albums don't put photos into other members' timelines, and partner sharing is all-or-nothing per user. There's no API to transfer ownership of an asset, and the maintainers have been clear that one isn't coming soon.
