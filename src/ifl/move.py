@@ -210,6 +210,7 @@ class MoveManyResult:
     failed: list[tuple[str, str]] = field(default_factory=list)  # (file name, error)
     remaining: int = 0  # movable assets left untouched because of the limit
     unfinished: set[UUID] = field(default_factory=set)  # blocked, failed or over the limit
+    skipped_in_flight: int = 0  # another path was already on it
 
     def __str__(self) -> str:
         return (
@@ -219,17 +220,33 @@ class MoveManyResult:
 
 
 async def move_assets(
-    accounts: Accounts, ledger: Ledger, opts: MoveOptions, moves: list, *, limit: int
+    accounts: Accounts,
+    ledger: Ledger,
+    opts: MoveOptions,
+    moves: list,
+    *,
+    limit: int,
+    in_flight: set[UUID] | None = None,
 ) -> MoveManyResult:
     """Move assets in scan order, at most `limit` of them (0 for no limit). Each
     item is a MoveAsset from the scan. One asset blocking or failing doesn't stop
-    the others. Per-owner lookups happen once."""
+    the others. Per-owner lookups happen once.
+
+    `in_flight` is shared between the daemon's pass and its webhook receiver:
+    an asset the other path is already on is skipped here, and ours are held in
+    it while they're worked on."""
     todo = moves if limit == 0 else moves[:limit]
     out = MoveManyResult(remaining=len(moves) - len(todo))
     out.unfinished = {m.asset_id for m in moves[len(todo) :]}
     shared_links: dict[UUID, set[UUID]] = {}
     for m in todo:
         owner = m.owner
+        if in_flight is not None:
+            if m.asset_id in in_flight:
+                out.skipped_in_flight += 1
+                out.unfinished.add(m.asset_id)
+                continue
+            in_flight.add(m.asset_id)
         if owner.user_id not in shared_links:
             shared_links[owner.user_id] = await shared_link_asset_ids(owner.client)
             for uid in await outside_partners(accounts, owner):
@@ -256,6 +273,9 @@ async def move_assets(
             out.failed.append((m.file_name, str(e)))
             out.unfinished.add(m.asset_id)
             continue
+        finally:
+            if in_flight is not None:
+                in_flight.discard(m.asset_id)
         for w in result.warnings:
             log.warning("%s: %s", result.file_name, w)
         log.info("%s", result)
@@ -311,10 +331,24 @@ async def move_asset(
         raise MoveBlocked(f"visibility is {asset.visibility.value}")
     if asset.live_photo_video_id is not None:
         raise MoveBlocked("live photo; not handled yet")
-    if asset.exif_info is None:
-        raise MoveBlocked("metadata extraction hasn't run yet")
-    if now - asset.updated_at < timedelta(seconds=opts.settle_seconds):
-        raise MoveBlocked(f"changed {int((now - asset.updated_at).total_seconds())}s ago; settling")
+
+    # The family copy, looked up first: a live copy with another asset's
+    # provenance means this is a duplicate, and a duplicate needs nothing the
+    # asset's own jobs produce, so it skips the extraction and settle checks.
+    # That's what lets the webhook trash a re-upload seconds after it lands.
+    owned = await existing_asset_by_checksum(family.client, asset.checksum)
+    family_id = owned.asset_id if owned else None
+    duplicate = False
+    if owned and not owned.is_trashed:
+        provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
+        duplicate = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
+
+    if not duplicate:
+        if asset.exif_info is None:
+            raise MoveBlocked("metadata extraction hasn't run yet")
+        if now - asset.updated_at < timedelta(seconds=opts.settle_seconds):
+            age = int((now - asset.updated_at).total_seconds())
+            raise MoveBlocked(f"changed {age}s ago; settling")
     if shared_links is None:
         shared_links = await shared_link_asset_ids(owner.client)
     if asset_id in shared_links:
@@ -333,13 +367,11 @@ async def move_asset(
             raise MoveBlocked(
                 f"in {a.name!r}, owned by a non-participant, and {owner.name} can't re-add to it"
             )
-    edits = await get_asset_edits(owner.client, asset_id)
+    edits = [] if duplicate else await get_asset_edits(owner.client, asset_id)
 
-    # The family copy: found by checksum, or made now. A trashed original with no
-    # copy isn't moved; a trashed original with a copy is a move that died late.
-    owned = await existing_asset_by_checksum(family.client, asset.checksum)
-    family_id = owned.asset_id if owned else None
-    uploaded = restored = duplicate = False
+    # A trashed original with no copy isn't moved; a trashed original with a copy
+    # is a move that died late.
+    uploaded = restored = False
     if owned and owned.is_trashed:
         if reupload:
             raise MoveBlocked("the family's copy is in the trash")
@@ -347,9 +379,8 @@ async def move_asset(
         await restore_assets(family.client, [owned.asset_id])
         restored = True
         log.info(
-            "%s: restored the family's copy %s from the trash", asset.original_file_name, family_id
+            "%s: restored the family copy %s from the trash", asset.original_file_name, family_id
         )
-    if family_id is not None:
         provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
         duplicate = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
     if family_id is None:

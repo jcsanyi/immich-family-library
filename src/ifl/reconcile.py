@@ -17,14 +17,17 @@ from dataclasses import dataclass
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
 
 from ifl.accounts import Accounts
+from ifl.config import WebhookConfig
 from ifl.immich import (
     AlbumSummary,
     add_album_users,
     create_album,
     create_partner,
+    create_workflow,
     set_album_user_role,
+    update_workflow,
 )
-from ifl.observer import ReconcileScan
+from ifl.observer import WORKFLOW_NAME, ReconcileScan
 
 log = logging.getLogger(__name__)
 
@@ -35,16 +38,22 @@ class ReconcileResult:
     shared: int  # (album, member) pairs added
     promoted: int  # (album, member) pairs promoted to editor
     partnered: int = 0  # members the family now partner-shares with
+    workflows: int = 0  # webhook workflows created or fixed
 
     def __str__(self) -> str:
         parts = []
         if self.created_dropbox:
             parts.append(f"created dropbox {self.created_dropbox.name!r}")
-        parts.append(f"shared {self.shared}, promoted {self.promoted}, partnered {self.partnered}")
+        parts.append(
+            f"shared {self.shared}, promoted {self.promoted}, partnered {self.partnered}, "
+            f"workflows {self.workflows}"
+        )
         return "; ".join(parts)
 
 
-async def reconcile(accounts: Accounts, scan: ReconcileScan) -> ReconcileResult:
+async def reconcile(
+    accounts: Accounts, scan: ReconcileScan, webhook: WebhookConfig | None = None
+) -> ReconcileResult:
     """Apply a reconcile scan. Every step is idempotent."""
     family = accounts.family
     editors = {m.user_id: AlbumUserRole.EDITOR for m in accounts.members.values()}
@@ -75,4 +84,15 @@ async def reconcile(accounts: Accounts, scan: ReconcileScan) -> ReconcileResult:
         result.partnered += 1
     if scan.partner_with:
         log.info("partner-shared the family library with %d members", len(scan.partner_with))
+
+    for fix in scan.workflows:
+        if webhook is None:
+            break
+        if fix.existing is None:
+            await create_workflow(fix.member.client, WORKFLOW_NAME, webhook.url, webhook.token)
+            log.info("created the webhook workflow for %s", fix.member.name)
+        else:
+            await update_workflow(fix.member.client, fix.existing, webhook.url, webhook.token)
+            log.info("fixed the webhook workflow for %s", fix.member.name)
+        result.workflows += 1
     return result

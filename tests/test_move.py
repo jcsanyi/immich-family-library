@@ -376,3 +376,32 @@ async def test_a_trashed_family_copy_is_restored_when_shared_again(world, ledger
             accounts, ledger, OPTS, re2.id, accounts.members["alice"], now=NOW, reupload=True
         )
     assert copy.is_trashed and not re2.is_trashed
+
+
+async def test_a_duplicate_skips_the_extraction_and_settle_checks(world, ledger):
+    accounts = make_accounts()
+    copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
+    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    re = alice_asset(world, exif_info=None, updated_at=NOW)  # just landed, nothing extracted
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[re])
+
+    result = await move_asset(
+        accounts, ledger, OPTS, re.id, accounts.members["alice"], now=NOW, reupload=True
+    )
+
+    assert result.duplicate and re.is_trashed and result.reupload_count == 1
+    assert not any(w[0] in ("tag", "download", "upload") for w in world.writes)
+    # Not a duplicate: the same fresh asset waits.
+    fresh = world.add_asset(
+        FakeAsset(
+            uuid4(),
+            ALICE,
+            checksum="new",
+            original_file_name="n.jpg",
+            exif_info=None,
+            updated_at=NOW,
+        )
+    )
+    world.album("Trip2", FAMILY, roles={ALICE: EDITOR}, assets=[fresh])
+    with pytest.raises(MoveBlocked, match="extraction"):
+        await move_asset(accounts, ledger, OPTS, fresh.id, accounts.members["alice"], now=NOW)

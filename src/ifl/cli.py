@@ -16,6 +16,7 @@ import tomli_w
 from ifl.accounts import AccountError, Accounts, open_accounts
 from ifl.config import Config, ConfigError, load_config, to_raw
 from ifl.convert import ConvertError, convert_album, convert_albums
+from ifl.daemon import Daemon
 from ifl.ledger import Ledger
 from ifl.move import (
     MoveBlocked,
@@ -64,7 +65,7 @@ async def run_observe(config_path: Path) -> int:
             # The same three scans `process` acts on, in the same order, reported only.
             albums = await scan_albums(accounts)
             log.info("albums: %s", "; ".join(describe_albums(albums)))
-            fixes = await scan_reconcile(accounts, cfg.dropbox_album)
+            fixes = await scan_reconcile(accounts, cfg.dropbox_album, cfg.webhook)
             log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
             assets = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
             log.info("assets: %s", "; ".join(describe_assets(assets)))
@@ -115,10 +116,10 @@ async def run_convert_album(config_path: Path, album_id: UUID | None) -> int:
 async def run_reconcile_albums(config_path: Path) -> int:
     """Make the family albums consistent: dropbox exists, every member is an editor."""
     async with opened(config_path, writes=True) as (cfg, accounts):
-        scan = await scan_reconcile(accounts, cfg.dropbox_album)
+        scan = await scan_reconcile(accounts, cfg.dropbox_album, cfg.webhook)
         log.info("family albums: %s", "; ".join(describe_reconcile(scan, accounts)))
         if scan:
-            log.info("%s", await reconcile(accounts, scan))
+            log.info("%s", await reconcile(accounts, scan, cfg.webhook))
         return 0
 
 
@@ -196,6 +197,22 @@ async def run_process(config_path: Path) -> int:
         return 1 if result.failed else 0
 
 
+async def run_daemon(config_path: Path) -> int:
+    """The long-running service: passes on an interval, plus the webhook receiver."""
+    async with opened(config_path, writes=True) as (cfg, accounts):
+        ledger = Ledger(cfg.ledger_path)
+        try:
+            log.info(
+                "daemon: a pass every %ds%s",
+                cfg.interval_seconds,
+                "" if cfg.webhook else "; no webhook configured",
+            )
+            await Daemon(accounts, cfg, ledger).run()
+        finally:
+            ledger.close()
+        return 0
+
+
 def run_show_config(config_path: Path, minimal: bool) -> int:
     """Print the effective config as TOML, keys redacted. No network."""
     sys.stdout.write(tomli_w.dumps(to_raw(load_config(config_path), minimal=minimal)))
@@ -230,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
         "process",
         help="one complete pass: convert albums, reconcile family albums, move photos",
     )
+    sub.add_parser("daemon", help="run passes on an interval and receive Immich's upload webhooks")
     show = sub.add_parser("show-config", help="print the effective config, secrets redacted")
     show.add_argument("--minimal", action="store_true", help="only what differs from the defaults")
     args = parser.parse_args(argv)
@@ -250,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(run_move(args.config, None if args.all else args.asset_id))
         if args.command == "process":
             return asyncio.run(run_process(args.config))
+        if args.command == "daemon":
+            return asyncio.run(run_daemon(args.config))
         return asyncio.run(run_convert_album(args.config, None if args.all else args.album_id))
     except (ConfigError, AccountError) as e:
         log.error("%s", e)

@@ -118,7 +118,7 @@ async def test_reuploads_are_handled_and_marks_advance_only_past_what_finished(w
     from datetime import UTC, datetime, timedelta
 
     accounts = make_accounts()
-    cfg = parse_config({**RAW, "service": {"readonly": False, "settle_seconds": 60}})
+    cfg = parse_config(RAW)
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     old = datetime(2026, 10, 1, tzinfo=UTC)
     fresh = datetime.now(UTC) - timedelta(seconds=5)
@@ -126,40 +126,85 @@ async def test_reuploads_are_handled_and_marks_advance_only_past_what_finished(w
         FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg")
     )
     world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
-    settled = world.add_asset(
+    # A re-upload needs no settling: seconds old and not yet extracted, it still goes.
+    alices = world.add_asset(
         FakeAsset(
             uuid4(),
             ALICE,
             checksum="beach",
             original_file_name="beach.jpg",
-            created_at=old,
-            updated_at=old,
-        )
-    )
-    too_new = world.add_asset(
-        FakeAsset(
-            uuid4(),
-            BOB,
-            checksum="beach",
-            original_file_name="beach.jpg",
             created_at=fresh,
             updated_at=fresh,
+            exif_info=None,
         )
     )
+    # Bob's is in one of his shared links, so it's blocked this pass.
+    bobs = world.add_asset(
+        FakeAsset(uuid4(), BOB, checksum="beach", original_file_name="beach.jpg", created_at=old)
+    )
+    world.shared_links[BOB] = {bobs.id}
 
     result = await run_pass(accounts, cfg, ledger)
 
     assert [r.file_name for r in result.moved.done] == ["beach.jpg"] and result.moved.done[
         0
     ].duplicate
-    assert settled.is_trashed and not too_new.is_trashed
-    assert [b[1] for b in result.moved.blocked][0].endswith("settling")
+    assert alices.is_trashed and not bobs.is_trashed
+    assert [b[1] for b in result.moved.blocked] == ["in one of the owner's shared links"]
     # alice: everything handled, marked at the scan time. bob: held at his unfinished upload.
     assert ledger.get_mark(ALICE) is not None and ledger.get_mark(ALICE) > fresh
-    assert ledger.get_mark(BOB) == fresh
+    assert ledger.get_mark(BOB) == old
     assert ledger.counts()["reuploads"] == 1
-    # Later, bob's has settled: found again from the held-back mark, handled, mark released.
-    too_new.updated_at = old
+    # Bob removes it from the link: found again from the held-back mark, handled, mark released.
+    world.shared_links[BOB] = set()
     again = await run_pass(accounts, cfg, ledger)
-    assert [r.file_name for r in again.moved.done] == ["beach.jpg"] and too_new.is_trashed
-    assert ledger.get_mark(BOB) > fresh and ledger.counts()["reuploads"] == 2
+    assert [r.file_name for r in again.moved.done] == ["beach.jpg"] and bobs.is_trashed
+    assert ledger.get_mark(BOB) > old and ledger.counts()["reuploads"] == 2
+
+
+async def test_in_flight_assets_are_left_to_the_other_path(world, ledger):
+    accounts = make_accounts()
+    cfg = parse_config(RAW)
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    copy = world.add_asset(
+        FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg")
+    )
+    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    re = world.add_asset(
+        FakeAsset(uuid4(), ALICE, checksum="beach", original_file_name="beach.jpg")
+    )
+    busy = {re.id}  # the receiver has it
+
+    result = await run_pass(accounts, cfg, ledger, in_flight=busy)
+
+    assert result.moved.skipped_in_flight == 1 and not result.moved.done and not re.is_trashed
+    assert ledger.get_mark(ALICE) == re.created_at  # held back, in case the other path fails
+    assert busy == {re.id}  # not ours to remove
+
+
+async def test_reconcile_sets_up_each_members_webhook_workflow(world, ledger):
+    from types import SimpleNamespace
+
+    from ifl.immich import webhook_step
+    from ifl.observer import WORKFLOW_NAME
+
+    accounts = make_accounts()
+    cfg = parse_config({**RAW, "webhook": {"url": "http://ifl:8080/hook", "token": "t0k"}})
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    # bob has one pointing at an old URL; alice has none.
+    stale = SimpleNamespace(
+        id=uuid4(), name=WORKFLOW_NAME, enabled=True, steps=[webhook_step("http://old/hook", "t0k")]
+    )
+    world.workflows[BOB] = [stale]
+
+    result = await run_pass(accounts, cfg, ledger)
+
+    assert result.reconciled and result.reconciled.workflows == 2
+    assert ("workflow", ALICE, "create") in world.writes and (
+        "workflow",
+        BOB,
+        "update",
+    ) in world.writes
+    assert stale.steps[0].config["url"] == "http://ifl:8080/hook"
+    again = await run_pass(accounts, cfg, ledger)
+    assert again.reconciled is None

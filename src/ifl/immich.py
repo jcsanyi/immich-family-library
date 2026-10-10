@@ -38,6 +38,11 @@ from immichpy.client.generated.models.partner_direction import PartnerDirection
 from immichpy.client.generated.models.shared_link_type import SharedLinkType
 from immichpy.client.generated.models.tag_upsert_dto import TagUpsertDto
 from immichpy.client.generated.models.update_album_user_dto import UpdateAlbumUserDto
+from immichpy.client.generated.models.workflow_create_dto import WorkflowCreateDto
+from immichpy.client.generated.models.workflow_response_dto import WorkflowResponseDto
+from immichpy.client.generated.models.workflow_step_dto import WorkflowStepDto
+from immichpy.client.generated.models.workflow_trigger import WorkflowTrigger
+from immichpy.client.generated.models.workflow_update_dto import WorkflowUpdateDto
 from immichpy.client.main import AsyncClient
 
 
@@ -345,3 +350,53 @@ async def owned_checksums(
             if r.action.value == "reject" and r.reason and r.reason.value == "duplicate":
                 out[r.id] = Owned(r.asset_id, bool(r.is_trashed))
     return out
+
+
+# Workflows: per user, firing on that user's own uploads.
+
+WEBHOOK_METHOD = "immich-plugin-core#webhook"
+TOKEN_HEADER = "X-IFL-Token"
+
+
+def webhook_step(url: str, token: str) -> WorkflowStepDto:
+    return WorkflowStepDto(
+        method=WEBHOOK_METHOD,
+        enabled=True,
+        config={"url": url, "method": "POST", "headerName": TOKEN_HEADER, "headerValue": token},
+    )
+
+
+def step_matches(step: WorkflowStepDto, url: str, token: str) -> bool:
+    c = step.config or {}
+    return (
+        step.method == WEBHOOK_METHOD
+        and step.enabled is not False
+        and c.get("url") == url
+        and c.get("headerName") == TOKEN_HEADER
+        and c.get("headerValue") == token
+    )
+
+
+async def find_workflow(client: AsyncClient, name: str) -> WorkflowResponseDto | None:
+    for w in await client.workflows.search_workflows(name=name):
+        if w.name == name:
+            return w
+    return None
+
+
+async def create_workflow(client: AsyncClient, name: str, url: str, token: str) -> UUID:
+    dto = WorkflowCreateDto(
+        name=name,
+        description="immich-family-library: tells the service about each new upload",
+        trigger=WorkflowTrigger.ASSETCREATE,
+        enabled=True,
+        steps=[webhook_step(url, token)],
+    )
+    return (await client.workflows.create_workflow(dto)).id
+
+
+async def update_workflow(client: AsyncClient, workflow_id: UUID, url: str, token: str) -> None:
+    dto = WorkflowUpdateDto(
+        trigger=WorkflowTrigger.ASSETCREATE, enabled=True, steps=[webhook_step(url, token)]
+    )
+    await client.workflows.update_workflow(id=workflow_id, workflow_update_dto=dto)

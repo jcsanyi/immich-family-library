@@ -183,7 +183,7 @@ Each poll is two scans in a fixed order: albums first, then assets. Album conver
 
 There is no retry queue. Anything blocked (missing key, non-participant contributor) is simply found again on the next poll and re-evaluated.
 
-Plus the AssetCreate workflow trigger with a webhook action, so looped re-uploads get trashed fast. Workflows in 3.x have only AssetCreate, AssetMetadataExtraction and AssetTagged triggers. The added-to-album trigger is an open PR with known bugs, so album detection stays polling-based.
+Plus the AssetCreate workflow trigger with a webhook action, so looped re-uploads get trashed fast. The core plugin's webhook action posts `{type, trigger, data: {asset}}` with one configurable header, which carries the shared token; the receiver takes the asset id and owner as hints only and re-reads the asset with the owner's key. A duplicate skips the extraction and settle checks, since it needs nothing the new asset's jobs produce. Workflows in 3.3.1 have exactly three triggers, AssetCreate, AssetMetadataExtraction and AssetTagged. The added-to-album trigger (PR 30524) is still open and in conflict as of October 2026, and nothing exists for album sharing, so album detection stays polling-based. That's fine: an album add or share can wait a pass, a re-upload can't, so the interval can be minutes rather than seconds.
 
 ## API key permissions
 
@@ -191,7 +191,7 @@ Immich's permission names, as the API key editor shows them:
 
 | Key | Needs |
 |---|---|
-| Member | `user.read`, `apiKey.read`, `album.read`, `album.delete`, `albumAsset.create`, `asset.read`, `asset.download`, `asset.delete`, `asset.edit.get`, `assetFile.read`, `assetFile.download`, `tag.create`, `tag.asset`, `sharedLink.read`, `partner.read` |
+| Member | `user.read`, `apiKey.read`, `album.read`, `album.delete`, `albumAsset.create`, `asset.read`, `asset.download`, `asset.delete`, `asset.edit.get`, `assetFile.read`, `assetFile.download`, `tag.create`, `tag.asset`, `sharedLink.read`, `partner.read`, `workflow.read`, `workflow.create`, `workflow.update` |
 | Family | the member set less the tag permissions, plus `album.create`, `albumUser.create`, `albumUser.update`, `asset.upload`, `asset.update`, `asset.edit.create`, `partner.read`, `partner.create`; later `person.read` and `person.update` for people sharing |
 | Admin (optional, `admin_api_key` under `[immich]`) | `queue.read`, plus `user.read` and `apiKey.read` for the startup check. Any admin user's key, the family account or a member included; the check is that its owner is an admin, not whose it is. Used for nothing but the queue check before a pass |
 
@@ -230,7 +230,7 @@ Stages 2 to 4 are CLI commands only, run by hand against the dev instance and ve
 4. Per-asset move. `ifl move <asset-id>`, and `--all` for every movable asset up to `assets_per_pass`: preconditions, tag-triggered sidecar, edits, provenance, re-link, trash. Also the `[tags]`, settle period and optional `admin_api_key` config, the queue check before the asset scan, and the shared-link block on album conversion. Done: verified on the dev instance. alice-beach-1.jpg round-tripped description, rating, GPS, date and zone, favourite, visibility, a crop and a rotate, with only `from/alice` as tag and the original tagged `family` and trashed; alice-garden.jpg was re-linked into alice's and bob's albums with their own keys; alice-beach-2.jpg left the dropbox and was re-added only to "Beach 2025"; a move that died after the upload resumed and finished. Live photos remain unverified.
 5. `ifl process`: one complete pass from the CLI, honoring the per-pass limits. Album scan, conversions, reconcile, queue check, asset scan, moves. Everything the service will eventually do each pass, run once by hand. Done: on the dev instance a pass converted carol's album and moved its photo in the same pass, re-linked bob's photo into alice's album, stopped at the asset limit, and two further passes finished the backlog and then found nothing to do. To revisit once it's been seen in practice at scale: whether a copy without dimensions should be deferred to the next pass rather than waited on, and whether the pass should upload every copy first and finish them afterwards so the waits overlap.
 6. Re-upload detection as a second source for the asset scan, found by polling with a per-member watermark, handled by the normal move path; restore of a trashed family copy when a member shares it again. Per-member warnings. Done: on the dev instance, alice's four photos re-uploaded after her trash was emptied were trashed again over three passes under the asset limit, counted once each, with her mark held back until the last one was handled; carol's cat, re-uploaded after the family trashed its copy, was skipped by the scan, then restored and re-linked when she shared it into a family album, and not counted.
-7. The long-running service: `process` passes with a fixed wait between them, plus the webhook receiver for the AssetCreate trigger so re-uploads get trashed in seconds instead of on the next poll.
+7. The long-running service, `ifl daemon`: `process` passes with a fixed wait between them, plus the webhook receiver for the AssetCreate trigger so re-uploads get trashed in seconds instead of on the next pass. Workflows are per user, so `reconcile-albums` creates one per member with the core plugin's webhook action, posting to the receiver with a shared token in a header. The receiver runs the re-upload half of the asset scan on the posted ids and the normal move; it never wakes the pass, since the interval and the limits are the pacing for real moves and a re-upload moves no bytes. A shared in-flight set keeps the two paths off the same asset. Done: on the dev instance the daemon's first pass created the three workflows, and a photo re-uploaded by alice was trashed 2.1 seconds after the upload.
 8. Packaging, documentation and publishing: a published container image, the compose and config examples the README promises, and the real docs that let the rest of this file shrink.
 
 ## Future improvements
@@ -241,6 +241,8 @@ Not stages. Things worth doing once the service is running on prod, in no partic
 - Reclaim.
 - Manual face reassignment and stacks on the family copy.
 - Slack notifications for warnings and errors, so a blocked album or a looping member doesn't sit unnoticed in the container logs.
+- Tag-to-share: the AssetTagged trigger exists today, so a member tagging a photo with the moved tag could send it to the dropbox with no album involved, reusing the whole move path through the stage 7 receiver.
+- The added-to-album trigger, once PR 30524 lands in a release: a second webhook route running the scan-and-move for one asset.
 
 ## Prior art
 

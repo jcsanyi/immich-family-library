@@ -72,6 +72,7 @@ def test_to_raw_redacts_and_resolves():
         "readonly": True,
         "ledger_path": "/etc/ifl/data/ledger.sqlite",
         "settle_seconds": 60,
+        "interval_seconds": 600,
     }
     assert raw["limits"] == {"albums_per_pass": 5, "assets_per_pass": 20}
     assert "sekrit" not in str(raw)
@@ -165,3 +166,32 @@ def test_stage4_setting_errors(mutate, msg):
     mutate(raw)
     with pytest.raises(ConfigError, match=msg):
         parse_config(raw)
+
+
+def test_webhook_and_interval_settings():
+    from ifl.config import to_raw
+
+    cfg = parse_config(GOOD)
+    assert cfg.webhook is None and cfg.interval_seconds == 600
+    raw = {
+        **GOOD,
+        "service": {"interval_seconds": 30},
+        "webhook": {"url": "http://ifl:8080/hook", "token": "sekrit"},
+    }
+    cfg = parse_config(raw)
+    assert cfg.interval_seconds == 30
+    assert cfg.webhook.url == "http://ifl:8080/hook" and cfg.webhook.listen == "0.0.0.0:8080"
+    assert cfg.webhook.path == "/webhook/asset-created"
+    minimal = to_raw(cfg, minimal=True)
+    assert minimal["service"] == {"interval_seconds": 30}
+    assert minimal["webhook"] == {"url": "http://ifl:8080/hook", "token": "**krit"}
+    assert "listen" in to_raw(cfg)["webhook"]
+    for bad in (
+        {"url": "http://x"},
+        {"token": "t"},
+        {"url": "http://x", "token": "t", "path": "hook"},
+    ):
+        with pytest.raises(ConfigError, match="webhook"):
+            parse_config({**GOOD, "webhook": bad})
+    with pytest.raises(ConfigError, match="interval_seconds"):
+        parse_config({**GOOD, "service": {"interval_seconds": 0}})

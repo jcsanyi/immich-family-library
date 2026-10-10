@@ -38,8 +38,19 @@ MEMBER_PERMISSIONS = {
     "tag.asset",
     "sharedLink.read",  # a photo in a public link isn't moved
     "partner.read",  # warn when the member shares with a non-participant
+    "workflow.read",  # the webhook workflow on each member's uploads
+    "workflow.create",
+    "workflow.update",
 }
-FAMILY_PERMISSIONS = (MEMBER_PERMISSIONS - {"tag.create", "tag.asset", "sharedLink.read"}) | {
+MEMBER_ONLY = {
+    "tag.create",
+    "tag.asset",
+    "sharedLink.read",
+    "workflow.read",
+    "workflow.create",
+    "workflow.update",
+}
+FAMILY_PERMISSIONS = (MEMBER_PERMISSIONS - MEMBER_ONLY) | {
     "album.create",
     "albumUser.create",
     "albumUser.update",  # promote a member who is only a viewer on a family album

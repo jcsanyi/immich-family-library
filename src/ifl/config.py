@@ -7,7 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULTS = {
-    "service": {"readonly": True, "ledger_path": "data/ledger.sqlite", "settle_seconds": 60},
+    "service": {
+        "readonly": True,
+        "ledger_path": "data/ledger.sqlite",
+        "settle_seconds": 60,
+        "interval_seconds": 600,
+    },
+    "webhook": {"listen": "0.0.0.0:8080", "path": "/webhook/asset-created"},
     "family": {"dropbox_album": "Family Dropbox"},
     "limits": {"albums_per_pass": 5, "assets_per_pass": 20},
     "tags": {"moved": "family", "from_prefix": "from"},
@@ -27,6 +33,14 @@ class AccountConfig:
 
 
 @dataclass(frozen=True)
+class WebhookConfig:
+    url: str  # what Immich calls, e.g. http://ifl:8080/webhook/asset-created
+    token: str  # sent by Immich in the X-IFL-Token header; the receiver checks it
+    listen: str = "0.0.0.0:8080"
+    path: str = "/webhook/asset-created"
+
+
+@dataclass(frozen=True)
 class Config:
     immich_url: str
     family: AccountConfig
@@ -35,6 +49,8 @@ class Config:
     ledger_path: Path = Path("data/ledger.sqlite")
     readonly: bool = True
     settle_seconds: int = 60  # leave an asset alone this long after its last change
+    interval_seconds: int = 600  # the daemon's pause between passes
+    webhook: WebhookConfig | None = None  # the daemon's receiver; None means no webhook
     albums_per_pass: int = 5  # 0 means no limit
     assets_per_pass: int = 20  # 0 means no limit
     moved_tag: str = "family"  # goes on a member's original when it's moved
@@ -100,6 +116,27 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
     settle = service.get("settle_seconds", DEFAULTS["service"]["settle_seconds"])
     if not isinstance(settle, int) or settle < 0:
         raise ConfigError("[service] settle_seconds must be a whole number of seconds")
+    interval = service.get("interval_seconds", DEFAULTS["service"]["interval_seconds"])
+    if not isinstance(interval, int) or interval < 1:
+        raise ConfigError(
+            "[service] interval_seconds must be a whole number of seconds, at least 1"
+        )
+
+    webhook = None
+    webhook_raw = raw.get("webhook")
+    if webhook_raw:
+        for key in ("url", "token"):
+            if not webhook_raw.get(key) or not isinstance(webhook_raw[key], str):
+                raise ConfigError(f"[webhook] is missing '{key}'")
+        path = webhook_raw.get("path", DEFAULTS["webhook"]["path"])
+        if not isinstance(path, str) or not path.startswith("/"):
+            raise ConfigError("[webhook] path must start with /")
+        webhook = WebhookConfig(
+            url=webhook_raw["url"],
+            token=webhook_raw["token"],
+            listen=str(webhook_raw.get("listen", DEFAULTS["webhook"]["listen"])),
+            path=path,
+        )
 
     tags = raw.get("tags") or {}
     moved_tag = tags.get("moved", DEFAULTS["tags"]["moved"])
@@ -127,6 +164,8 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
         ledger_path=ledger,
         readonly=bool(service.get("readonly", DEFAULTS["service"]["readonly"])),
         settle_seconds=settle,
+        interval_seconds=interval,
+        webhook=webhook,
         albums_per_pass=albums_per_pass,
         assets_per_pass=assets_per_pass,
         moved_tag=moved_tag,
@@ -159,6 +198,7 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
         "readonly": cfg.readonly,
         "ledger_path": str(cfg.ledger_path),
         "settle_seconds": cfg.settle_seconds,
+        "interval_seconds": cfg.interval_seconds,
     }
     limits = {"albums_per_pass": cfg.albums_per_pass, "assets_per_pass": cfg.assets_per_pass}
     tags = {"moved": cfg.moved_tag, "from_prefix": cfg.from_prefix}
@@ -198,4 +238,16 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
     if not minimal or cfg.dropbox_album != DEFAULTS["family"]["dropbox_album"]:
         out["family"]["dropbox_album"] = cfg.dropbox_album
     out["members"] = {name: account(m) for name, m in cfg.members.items()}
+    if cfg.webhook:
+        wh = {
+            "url": cfg.webhook.url,
+            "token": redact(cfg.webhook.token),
+            "listen": cfg.webhook.listen,
+            "path": cfg.webhook.path,
+        }
+        if minimal:
+            for key in ("listen", "path"):
+                if wh[key] == DEFAULTS["webhook"][key]:
+                    del wh[key]
+        out["webhook"] = wh
     return out

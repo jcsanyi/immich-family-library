@@ -17,5 +17,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Under rootful docker, set `user:` in compose to match the owner of ./config
 # and ./data.
 VOLUME ["/data"]
+EXPOSE 8080
 ENTRYPOINT ["ifl", "--config", "/config/config.toml"]
-CMD ["observe"]
+CMD ["daemon"]

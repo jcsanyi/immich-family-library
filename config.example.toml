@@ -22,6 +22,9 @@ readonly = true
 # A photo changed more recently than this isn't moved yet; its jobs may still
 # be running. Seconds.
 settle_seconds = 60
+# The daemon's pause between passes. Seconds. Re-uploads don't wait for this
+# when the webhook is set up; everything else does.
+interval_seconds = 600
 
 # Caps on how much one pass does, so a big backlog is worked through at a pace
 # you choose rather than all at once. 0 means no limit. Commands given a
@@ -43,6 +46,18 @@ from_prefix = "from"
 # one member, that member is named in a warning.
 [warnings]
 reuploads_per_pass = 10
+
+# The daemon's webhook receiver. With this section present, `reconcile-albums`
+# also gives every member an Immich workflow that posts each new upload here,
+# so a re-upload is trashed within seconds instead of on the next pass. `url`
+# is what Immich calls (the container name on the shared docker network);
+# `token` is a secret you make up, sent in the X-IFL-Token header and checked
+# by the receiver. Leave the section out to run without a webhook.
+# [webhook]
+# url = "http://ifl:8080/webhook/asset-created"
+# token = ""
+# listen = "0.0.0.0:8080"
+# path = "/webhook/asset-created"
 
 # The family account owns everything that's been shared. The email is checked
 # against the account the key belongs to, so a config pointed at the wrong

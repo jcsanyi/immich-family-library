@@ -2,7 +2,9 @@
 # this checkout, with config.toml in ./config and the ledger in ./data.
 #
 # The service joins the Immich stack's network so it can reach the server by
-# container name (and, later, so the Immich webhook can reach the service).
+# container name, and so Immich's webhook can reach the service the same way:
+# with the container named "ifl", the webhook url is
+# http://ifl:8080/webhook/asset-created. No published port is needed.
 # The network is named after the Immich compose project: for the stock
 # docker-compose.yml that's "immich_default". Override with IMMICH_NETWORK if
 # your project is named differently (`docker network ls` shows it).

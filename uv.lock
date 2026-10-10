@@ -308,6 +308,7 @@ name = "immich-family-library"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "immichpy" },
     { name = "tomli-w" },
 ]
@@ -325,6 +326,7 @@ seed = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.10" },
     { name = "immichpy", specifier = "==9.0.1" },
     { name = "tomli-w", specifier = ">=1.0" },
 ]

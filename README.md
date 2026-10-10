@@ -42,7 +42,7 @@ A photo that's in one of your public shared links isn't moved. The link would br
 
 ## The phone backup problem
 
-The Immich mobile app re-uploads any photo it can't find on the server. Once a moved original is trashed and the trash purges, your phone will upload it again. The service recognises these by checksum on each pass and trashes them straight away, so they never reach the family timeline, but it's wasted upload and processing. Each one is counted, and a member with more than `reuploads_per_pass` (under `[warnings]`, default 10) in one pass is named in a warning.
+The Immich mobile app re-uploads any photo it can't find on the server. Once a moved original is trashed and the trash purges, your phone will upload it again. The service recognises these by checksum, within seconds through the webhook or on the next pass without it, and trashes them straight away, so they never reach the family timeline, but it's wasted upload and processing. Each one is counted, and a member with more than `reuploads_per_pass` (under `[warnings]`, default 10) in one pass is named in a warning.
 
 If the family account has deleted a photo and you share it again, the service restores the family's copy from its trash rather than uploading it anew. A re-upload of a photo the family has deleted is left alone.
 
@@ -60,11 +60,11 @@ Trashed originals count against your usage until the trash purges, 30 days by de
 - A family Immich user with an API key.
 - An API key from every participating member. The service checks each key works before it touches anything, and skips operations it doesn't have the keys for. Members without a key can still share albums with the family user; they just won't be converted, and the service warns.
 - All accounts in one cluster group, created before face detection is turned on.
-- Optionally, an Immich workflow with a webhook action on asset upload, pointing at the service, so re-uploads get caught in seconds instead of on the next poll.
+- Optionally, a `[webhook]` section in the config. The service then gives each member an Immich workflow that posts every new upload to it, so re-uploads get caught in seconds instead of on the next pass. Member keys need the workflow permissions for that.
 
 ## Running it
 
-The service is a single container, deployed in the same compose stack as Immich with a volume for its state database. `compose.yml` shows the deployment and `config.example.toml` is the annotated configuration: the Immich URL, the family account and its API key, one section per member with their API key, and the name of the dropbox album.
+The service is a single container running `ifl daemon`, deployed on the same docker network as Immich with a volume for its state database, so the webhook URL is just the container's name. `compose.yml` shows the deployment and `config.example.toml` is the annotated configuration: the Immich URL, the family account and its API key, one section per member with their API key, the name of the dropbox album, and the webhook.
 
 Two settings guard against accidents:
 
@@ -76,13 +76,14 @@ Two settings guard against accidents:
 
 ### Commands
 
-Every command is one pass that exits. Each takes `-c path/to/config.toml` (default `config.toml` in the current directory) and `-v` for debug logging.
+Every command except `daemon` is one pass that exits. Each takes `-c path/to/config.toml` (default `config.toml` in the current directory) and `-v` for debug logging.
 
 - `ifl observe` reports what the rules would do: albums that would be converted, family albums that need reconciling, photos that would be moved, and anything blocked and why. Never writes.
 - `ifl convert-album <album-id>` converts one album a member has shared with the family. `ifl convert-album --all` converts every such album, up to the limit.
 - `ifl reconcile-albums` creates the dropbox if it's missing, makes every configured member an editor on every family-owned album, promoting anyone who's only a viewer, and partner-shares the family library with every member. It never removes anyone. Whether family photos show in your timeline is your own partner-sharing setting.
 - `ifl move <asset-id>` moves one member-owned photo that's sitting in a family album: re-uploads it under the family account with its metadata, edits and a `from/<member>` tag, puts the copy into every album the original was in except the dropbox, and trashes the original. `ifl move --all` moves every such photo, up to the limit. A photo that changed in the last `settle_seconds`, is in a public shared link, or hasn't finished metadata extraction is left for later and reported. With `admin_api_key` set, the command refuses to start while Immich's metadata queues have a backlog. A move that fails partway leaves the original in place; running it again finishes the job.
-- `ifl process` runs one complete pass: converts shared albums, reconciles the family albums, then moves photos, each under its limit. A just-converted album's photos move in the same pass. With `admin_api_key` set, the moves are skipped for the pass while Immich's metadata queues have a backlog; the album work still happens. Run it by hand, or on a schedule, until the long-running service exists.
+- `ifl process` runs one complete pass: converts shared albums, reconciles the family albums, then moves photos, each under its limit. A just-converted album's photos move in the same pass. With `admin_api_key` set, the moves are skipped for the pass while Immich's metadata queues have a backlog; the album work still happens.
+- `ifl daemon` is the service: a pass every `interval_seconds` (default ten minutes), plus, with `[webhook]` configured, the receiver Immich posts new uploads to. A re-upload is trashed within seconds of landing; everything else waits for the next pass, so the limits and the interval stay the only pacing for real moves. This is the container's default command.
 - `ifl show-config` prints the effective configuration as TOML with keys redacted to their last four characters. `--minimal` prints only what differs from the defaults.
 
 More arrives with the stages listed below.

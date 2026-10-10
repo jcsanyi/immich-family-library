@@ -69,16 +69,18 @@ class PassResult:
         return "; ".join(parts)
 
 
-async def run_pass(accounts: Accounts, cfg: Config, ledger: Ledger) -> PassResult:
+async def run_pass(
+    accounts: Accounts, cfg: Config, ledger: Ledger, *, in_flight: set | None = None
+) -> PassResult:
     albums = await scan_albums(accounts)
     for b in albums.blocked:
         log.warning("not converting %s: %s", b.what, b.reason)
     log.info("albums: %s", "; ".join(describe_albums(albums)))
     converted = await convert_albums(accounts, albums.conversions, limit=cfg.albums_per_pass)
 
-    fixes = await scan_reconcile(accounts, cfg.dropbox_album)
+    fixes = await scan_reconcile(accounts, cfg.dropbox_album, cfg.webhook)
     log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
-    reconciled = await reconcile(accounts, fixes) if fixes else None
+    reconciled = await reconcile(accounts, fixes, cfg.webhook) if fixes else None
 
     backlog = await pass_backlog(accounts)
     if backlog:
@@ -97,6 +99,8 @@ async def run_pass(accounts: Accounts, cfg: Config, ledger: Ledger) -> PassResul
         moved_tag=cfg.moved_tag,
         from_prefix=cfg.from_prefix,
     )
-    moved = await move_assets(accounts, ledger, opts, assets.moves, limit=cfg.assets_per_pass)
+    moved = await move_assets(
+        accounts, ledger, opts, assets.moves, limit=cfg.assets_per_pass, in_flight=in_flight
+    )
     advance_marks(ledger, assets, moved, accounts)
     return PassResult(converted, reconciled, backlog, moved)

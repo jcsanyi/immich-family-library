@@ -64,15 +64,15 @@ Two branches matter:
 
 - `dev` is the working branch. Commit and push to it freely, without asking, whenever there's something worth testing on the dev server. Keep commits small and messages plain. This is what gets deployed to `/data/immich-dev/ifl` on tarsus.
 
-  Deploying `dev` to tarsus and running a command there, after pushing:
+  Deploying `dev` to tarsus, after pushing:
 
   ```
   ssh immich-dev 'cd /data/immich-dev/ifl && git pull -q && \
     export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock && \
-    docker compose build -q && docker compose run --rm ifl observe'
+    docker compose build -q && docker compose up -d'
   ```
 
-  Every command is one pass and exits, so until stage 7 brings the long-running service the container is only run this way; `docker compose up -d` would restart a one-shot command forever. The checkout there uses a read-only deploy key, so it can pull but never push. `config/config.toml` and `data/` on tarsus are untracked and survive pulls; the config there uses `http://immich_dev_server:2283` and `ledger_path = "/data/ledger.sqlite"`, and the stack is started with `IMMICH_NETWORK=immich-dev_default` (set in an untracked `.env` next to compose.yml).
+  That restarts the daemon (`ifl daemon` is the container's default command). For a one-off command alongside it, `docker compose run --rm ifl observe` (or `process`, `show-config`, ...); the daemon and a one-off share the ledger file safely, SQLite handles that, but don't run two `process`-style commands at once. `docker compose logs --no-log-prefix --since 5m` shows the daemon's log. The dev config has a `[webhook]` section pointing at `http://ifl:8080/webhook/asset-created` with a token also kept in the local config; the daemon's first pass creates the per-member Immich workflows. The checkout there uses a read-only deploy key, so it can pull but never push. `config/config.toml` and `data/` on tarsus are untracked and survive pulls; the config there uses `http://immich_dev_server:2283` and `ledger_path = "/data/ledger.sqlite"`, and the stack is started with `IMMICH_NETWORK=immich-dev_default` (set in an untracked `.env` next to compose.yml).
 
   Keep instance-specific values (hostnames, emails, network names) out of tracked files. This is a public project; examples use example.com.
 - `main` is reviewed code. Never merge, rebase, or push to `main` without an explicit instruction in the current message. Completing a stage, or the user approving a plan, is not that instruction. When `dev` is ready for review, say so and stop.

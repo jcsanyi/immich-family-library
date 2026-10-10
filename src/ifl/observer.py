@@ -22,18 +22,24 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
+from immichpy.client.generated.models.asset_response_dto import AssetResponseDto
 
 from ifl.accounts import Account, Accounts
+from ifl.config import WebhookConfig
 from ifl.immich import (
     AlbumSummary,
     UserNames,
+    find_workflow,
     iter_album_assets,
     iter_assets_created_after,
     list_albums,
     list_partner_ids,
     owned_checksums,
+    step_matches,
 )
 from ifl.ledger import Ledger
+
+WORKFLOW_NAME = "immich-family-library"
 
 log = logging.getLogger(__name__)
 
@@ -70,14 +76,21 @@ class ShareFix:
     promote: frozenset[UUID]
 
 
+@dataclass(frozen=True)
+class WorkflowFix:
+    member: Account
+    existing: UUID | None  # None: create; else update this workflow's steps
+
+
 @dataclass
 class ReconcileScan:
     create_dropbox: str | None = None  # name of the dropbox album to create
     fixes: list[ShareFix] = field(default_factory=list)
     partner_with: frozenset[UUID] = frozenset()  # members the family doesn't share with yet
+    workflows: list[WorkflowFix] = field(default_factory=list)  # webhook workflows to set up
 
     def __bool__(self) -> bool:
-        return bool(self.create_dropbox or self.fixes or self.partner_with)
+        return bool(self.create_dropbox or self.fixes or self.partner_with or self.workflows)
 
 
 @dataclass(frozen=True)
@@ -159,8 +172,12 @@ async def family_albums(accounts: Accounts) -> list[AlbumSummary]:
     return [a for a in await list_albums(family.client) if a.owner_id == family.user_id]
 
 
-async def scan_reconcile(accounts: Accounts, dropbox_album: str) -> ReconcileScan:
-    """What it takes to make the family albums consistent. Never removes anyone."""
+async def scan_reconcile(
+    accounts: Accounts, dropbox_album: str, webhook: WebhookConfig | None = None
+) -> ReconcileScan:
+    """What it takes to make the family albums consistent. Never removes anyone.
+    With a webhook configured, also which members lack the workflow that posts
+    their uploads to it."""
     scan = ReconcileScan()
     albums = await family_albums(accounts)
     if not any(a.name == dropbox_album for a in albums):
@@ -174,6 +191,17 @@ async def scan_reconcile(accounts: Accounts, dropbox_album: str) -> ReconcileSca
         if add or promote:
             scan.fixes.append(ShareFix(album, frozenset(add), frozenset(promote)))
     scan.partner_with = frozenset(members - await list_partner_ids(accounts.family.client))
+    if webhook is not None:
+        for member in accounts.members.values():
+            existing = await find_workflow(member.client, WORKFLOW_NAME)
+            if existing is None:
+                scan.workflows.append(WorkflowFix(member, None))
+            elif not (
+                existing.enabled
+                and len(existing.steps) == 1
+                and step_matches(existing.steps[0], webhook.url, webhook.token)
+            ):
+                scan.workflows.append(WorkflowFix(member, existing.id))
     return scan
 
 
@@ -233,14 +261,28 @@ async def _scan_reuploads(
 ) -> None:
     """Members' assets uploaded since the last look that the family already owns."""
     scan.scanned_at = now
-    family = accounts.family
+    candidates: list[tuple[Account, list[AssetResponseDto]]] = []
     for member in accounts.members.values():
         mark = ledger.get_mark(member.user_id)
         since = mark - REUPLOAD_MARGIN if mark else None
-        recent = {}
-        async for a in iter_assets_created_after(member.client, since):
-            if a.owner_id == member.user_id and not a.is_trashed and a.id not in seen:
-                recent[a.checksum] = a
+        recent = [
+            a
+            async for a in iter_assets_created_after(member.client, since)
+            if a.owner_id == member.user_id and not a.is_trashed and a.id not in seen
+        ]
+        candidates.append((member, recent))
+    await reupload_items(accounts, candidates, scan)
+
+
+async def reupload_items(
+    accounts: Accounts, candidates: list[tuple[Account, list[AssetResponseDto]]], scan: AssetScan
+) -> None:
+    """Of these member-owned assets, the ones the family already owns become
+    re-upload move items on `scan`; those whose family copy is trashed are
+    listed as skipped. Shared by the pass and the webhook receiver."""
+    family = accounts.family
+    for member, assets in candidates:
+        recent = {a.checksum: a for a in assets if a.owner_id == member.user_id}
         if not recent:
             continue
         owned = await owned_checksums(family.client, recent)
@@ -289,6 +331,9 @@ def describe_reconcile(scan: ReconcileScan, accounts: Accounts) -> list[str]:
     if scan.partner_with:
         who = ", ".join(sorted(names[u] for u in scan.partner_with))
         lines.append(f"PARTNER-SHARE the family library with {who}")
+    for w in scan.workflows:
+        verb = "CREATE" if w.existing is None else "FIX"
+        lines.append(f"{verb} webhook workflow for {w.member.name}")
     return lines or ["family albums consistent"]
 
 

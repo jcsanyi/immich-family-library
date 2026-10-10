@@ -77,6 +77,7 @@ class FakeWorld:
         self.uploads: list[dict] = []
         self.queues: dict[str, int] = {}
         self.sidecar_writes: bool = True  # False: tagging never produces a sidecar
+        self.workflows: dict[UUID, list] = {}  # owner -> workflow response-like objects
         self.fail_adds: dict[UUID, BulkIdErrorReason] = {}
         self.on_read: list = []  # callbacks run once each, in order, on asset reads
 
@@ -159,6 +160,24 @@ class FakeWorld:
         assert user_id not in self.partners.get(client.user_id, set()), "already a partner"
         self.writes.append(("partner", client.user_id, user_id))
         self.partners.setdefault(client.user_id, set()).add(user_id)
+
+    async def find_workflow(self, client, name):
+        return next((w for w in self.workflows.get(client.user_id, []) if w.name == name), None)
+
+    async def create_workflow(self, client, name, url, token):
+        from ifl.immich import webhook_step
+
+        w = SimpleNamespace(id=uuid4(), name=name, enabled=True, steps=[webhook_step(url, token)])
+        self.workflows.setdefault(client.user_id, []).append(w)
+        self.writes.append(("workflow", client.user_id, "create"))
+        return w.id
+
+    async def update_workflow(self, client, workflow_id, url, token):
+        from ifl.immich import webhook_step
+
+        w = next(w for w in self.workflows[client.user_id] if w.id == workflow_id)
+        w.steps, w.enabled = [webhook_step(url, token)], True
+        self.writes.append(("workflow", client.user_id, "update"))
 
     async def set_album_user_role(self, client, album_id, user_id, role):
         a = self.albums[album_id]
@@ -374,6 +393,9 @@ WRITE_HELPERS = (
     "owned_checksums",
     "get_asset_metadata_value",
     "restore_assets",
+    "find_workflow",
+    "create_workflow",
+    "update_workflow",
 )
 
 
