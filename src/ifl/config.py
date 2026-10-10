@@ -7,9 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULTS = {
-    "service": {"readonly": True, "ledger_path": "data/ledger.sqlite"},
+    "service": {"readonly": True, "ledger_path": "data/ledger.sqlite", "settle_seconds": 60},
     "family": {"dropbox_album": "Family Dropbox"},
-    "limits": {"albums_per_pass": 5},
+    "limits": {"albums_per_pass": 5, "assets_per_pass": 20},
+    "tags": {"moved": "family", "from_prefix": "from"},
 }
 
 
@@ -20,8 +21,8 @@ class ConfigError(Exception):
 @dataclass(frozen=True)
 class AccountConfig:
     name: str
-    email: str
     api_key: str
+    email: str | None = None  # checked against the key's owner at startup when given
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,12 @@ class Config:
     members: dict[str, AccountConfig]
     ledger_path: Path = Path("data/ledger.sqlite")
     readonly: bool = True
+    settle_seconds: int = 60  # leave an asset alone this long after its last change
     albums_per_pass: int = 5  # 0 means no limit
+    assets_per_pass: int = 20  # 0 means no limit
+    moved_tag: str = "family"  # goes on a member's original when it's moved
+    from_prefix: str = "from"  # the family copy is tagged "<from_prefix>/<member>"
+    admin_api_key: str | None = None  # any admin user's key; only for the queue check
     config_dir: Path = field(default=Path("."), compare=False)
 
 
@@ -85,6 +91,26 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
     albums_per_pass = limits.get("albums_per_pass", DEFAULTS["limits"]["albums_per_pass"])
     if not isinstance(albums_per_pass, int) or albums_per_pass < 0:
         raise ConfigError("[limits] albums_per_pass must be a whole number (0 for no limit)")
+    assets_per_pass = limits.get("assets_per_pass", DEFAULTS["limits"]["assets_per_pass"])
+    if not isinstance(assets_per_pass, int) or assets_per_pass < 0:
+        raise ConfigError("[limits] assets_per_pass must be a whole number (0 for no limit)")
+
+    settle = service.get("settle_seconds", DEFAULTS["service"]["settle_seconds"])
+    if not isinstance(settle, int) or settle < 0:
+        raise ConfigError("[service] settle_seconds must be a whole number of seconds")
+
+    tags = raw.get("tags") or {}
+    moved_tag = tags.get("moved", DEFAULTS["tags"]["moved"])
+    from_prefix = tags.get("from_prefix", DEFAULTS["tags"]["from_prefix"])
+    for key, value in (("moved", moved_tag), ("from_prefix", from_prefix)):
+        if not isinstance(value, str) or not value.strip() or value.strip("/") != value:
+            raise ConfigError(
+                f"[tags] {key} must be a tag name without leading or trailing slashes"
+            )
+
+    admin_api_key = immich.get("admin_api_key") or None
+    if admin_api_key is not None and not isinstance(admin_api_key, str):
+        raise ConfigError("[immich] admin_api_key must be a string")
 
     return Config(
         immich_url=immich["url"].rstrip("/"),
@@ -93,7 +119,12 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
         members=members,
         ledger_path=ledger,
         readonly=bool(service.get("readonly", DEFAULTS["service"]["readonly"])),
+        settle_seconds=settle,
         albums_per_pass=albums_per_pass,
+        assets_per_pass=assets_per_pass,
+        moved_tag=moved_tag,
+        from_prefix=from_prefix,
+        admin_api_key=admin_api_key,
         config_dir=config_dir,
     )
 
@@ -112,24 +143,36 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
     """
 
     def account(a: AccountConfig) -> dict:
-        return {"email": a.email, "api_key": redact(a.api_key)}
+        out = {"email": a.email} if a.email else {}
+        return {**out, "api_key": redact(a.api_key)}
 
     default_ledger = cfg.config_dir / DEFAULTS["service"]["ledger_path"]
-    service = {"readonly": cfg.readonly, "ledger_path": str(cfg.ledger_path)}
-    limits = {"albums_per_pass": cfg.albums_per_pass}
+    service = {
+        "readonly": cfg.readonly,
+        "ledger_path": str(cfg.ledger_path),
+        "settle_seconds": cfg.settle_seconds,
+    }
+    limits = {"albums_per_pass": cfg.albums_per_pass, "assets_per_pass": cfg.assets_per_pass}
+    tags = {"moved": cfg.moved_tag, "from_prefix": cfg.from_prefix}
     if minimal:
-        if cfg.readonly == DEFAULTS["service"]["readonly"]:
-            del service["readonly"]
-        if cfg.ledger_path == default_ledger:
-            del service["ledger_path"]
-        if cfg.albums_per_pass == DEFAULTS["limits"]["albums_per_pass"]:
-            del limits["albums_per_pass"]
+        defaults = {
+            **{("service", k): v for k, v in DEFAULTS["service"].items()},
+            ("service", "ledger_path"): str(default_ledger),
+            **{("limits", k): v for k, v in DEFAULTS["limits"].items()},
+            **{("tags", k): v for k, v in DEFAULTS["tags"].items()},
+        }
+        for section in (("service", service), ("limits", limits), ("tags", tags)):
+            name, values = section
+            for key in list(values):
+                if values[key] == defaults[(name, key)]:
+                    del values[key]
 
     out: dict = {"immich": {"url": cfg.immich_url}}
-    if service:
-        out["service"] = service
-    if limits:
-        out["limits"] = limits
+    if cfg.admin_api_key:
+        out["immich"]["admin_api_key"] = redact(cfg.admin_api_key)
+    for name, values in (("service", service), ("limits", limits), ("tags", tags)):
+        if values:
+            out[name] = values
     out["family"] = account(cfg.family)
     if not minimal or cfg.dropbox_album != DEFAULTS["family"]["dropbox_album"]:
         out["family"]["dropbox_album"] = cfg.dropbox_album

@@ -33,6 +33,7 @@ class Blocked:
     what: str
     reason: str
     album_id: UUID | None = None
+    asset_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,16 @@ async def scan_albums(accounts: Accounts) -> AlbumScan:
         for album in await list_albums(member.client):
             if album.owner_id != member.user_id or family_id not in album.user_ids:
                 continue
+            if album.has_shared_link:
+                scan.blocked.append(
+                    Blocked(
+                        f"album {album.name!r} owned by {member.name}",
+                        "has a public shared link that deleting the album would break; "
+                        "remove the link to convert it",
+                        album_id=album.id,
+                    )
+                )
+                continue
             contributors: set[UUID] = set()
             async for asset in iter_album_assets(member.client, album.id):
                 contributors.add(asset.owner_id)
@@ -166,6 +177,7 @@ async def scan_assets(accounts: Accounts, dropbox_album: str) -> AssetScan:
                     Blocked(
                         f"photo {asset.original_file_name} in {album.name!r}",
                         f"owner {who} is not a participant (no API key)",
+                        asset_id=asset.id,
                     )
                 )
                 continue

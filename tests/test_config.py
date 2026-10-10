@@ -32,6 +32,7 @@ def test_parse_good():
         (lambda r: r["members"].update({"b": {"email": "a@x", "api_key": "k"}}), "more than one"),
         (lambda r: r.update({"limits": {"albums_per_pass": -1}}), "albums_per_pass"),
         (lambda r: r.update({"limits": {"albums_per_pass": "5"}}), "albums_per_pass"),
+        (lambda r: r.update({"limits": {"assets_per_pass": -2}}), "assets_per_pass"),
     ],
 )
 def test_parse_errors(mutate, msg):
@@ -67,8 +68,12 @@ def test_to_raw_redacts_and_resolves():
     raw = to_raw(parse_config(good, config_dir=Path("/etc/ifl")))
     assert raw["family"]["api_key"] == "*********mily"
     assert raw["members"]["a"]["api_key"] == "*********mber"
-    assert raw["service"] == {"readonly": True, "ledger_path": "/etc/ifl/data/ledger.sqlite"}
-    assert raw["limits"] == {"albums_per_pass": 5}
+    assert raw["service"] == {
+        "readonly": True,
+        "ledger_path": "/etc/ifl/data/ledger.sqlite",
+        "settle_seconds": 60,
+    }
+    assert raw["limits"] == {"albums_per_pass": 5, "assets_per_pass": 20}
     assert "sekrit" not in str(raw)
 
 
@@ -87,6 +92,8 @@ def test_to_raw_minimal_keeps_only_non_defaults():
     raw = to_raw(parse_config(changed, config_dir=Path("/etc/ifl")), minimal=True)
     assert raw["service"] == {"readonly": False}
     assert "limits" not in raw
+    changed["limits"] = {"assets_per_pass": 0}
+    assert to_raw(parse_config(changed), minimal=True)["limits"] == {"assets_per_pass": 0}
 
 
 def test_redact_short_secrets_entirely():
@@ -115,3 +122,46 @@ def test_show_config_round_trips(tmp_path, capsys):
     again = tomllib.loads(out)
     assert again["service"] == {"readonly": False}
     assert again["members"]["a"]["email"] == "a@x"
+
+
+def test_stage4_settings_and_admin_key():
+    import copy
+
+    from ifl.config import to_raw
+
+    raw = copy.deepcopy(GOOD)
+    cfg = parse_config(raw)
+    assert (cfg.settle_seconds, cfg.moved_tag, cfg.from_prefix) == (60, "family", "from")
+    assert cfg.admin_api_key is None
+    assert "tags" not in to_raw(cfg, minimal=True)
+
+    raw["service"] = {"settle_seconds": 5}
+    raw["tags"] = {"moved": "ifl/moved", "from_prefix": "given-by"}
+    raw["immich"]["admin_api_key"] = "sekrit-admin"
+    cfg = parse_config(raw)
+    assert (cfg.settle_seconds, cfg.moved_tag, cfg.from_prefix) == (5, "ifl/moved", "given-by")
+    assert cfg.admin_api_key == "sekrit-admin"
+
+    minimal = to_raw(cfg, minimal=True)
+    assert minimal["service"] == {"settle_seconds": 5}
+    assert minimal["tags"] == {"moved": "ifl/moved", "from_prefix": "given-by"}
+    assert minimal["immich"]["admin_api_key"] == "********dmin"
+    assert "sekrit" not in str(minimal)
+
+
+@pytest.mark.parametrize(
+    "mutate, msg",
+    [
+        (lambda r: r.update({"service": {"settle_seconds": -1}}), "settle_seconds"),
+        (lambda r: r.update({"tags": {"moved": "/family"}}), "tags. moved"),
+        (lambda r: r.update({"tags": {"from_prefix": ""}}), "from_prefix"),
+        (lambda r: r["immich"].update({"admin_api_key": 5}), "admin_api_key"),
+    ],
+)
+def test_stage4_setting_errors(mutate, msg):
+    import copy
+
+    raw = copy.deepcopy(GOOD)
+    mutate(raw)
+    with pytest.raises(ConfigError, match=msg):
+        parse_config(raw)

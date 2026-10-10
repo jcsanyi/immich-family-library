@@ -51,7 +51,7 @@ class FakeWorld:
         self.albums: dict[UUID, AlbumSummary] = {}
         self.assets: dict[UUID, list[FakeAsset]] = {}
 
-    def album(self, name, owner, users=(), assets=()):
+    def album(self, name, owner, users=(), assets=(), shared_link=False):
         aid = uuid4()
         members = {owner, *users}
         self.albums[aid] = AlbumSummary(
@@ -60,6 +60,7 @@ class FakeWorld:
             owner_id=owner,
             user_ids=frozenset(members),
             asset_count=len(assets),
+            has_shared_link=shared_link,
             emails={u: EMAILS.get(u, str(u)) for u in members},
         )
         self.assets[aid] = list(assets)
@@ -154,6 +155,14 @@ async def test_member_album_shared_with_family_is_a_conversion(world):
     assert [c.album.id for c in scan.conversions] == [shared.id]
     assert scan.conversions[0].contributor_ids == {ALICE, BOB}
     assert describe_albums(scan)[0].startswith("CONVERT album 'Shared'")
+
+
+async def test_shared_album_with_a_public_link_is_blocked(world):
+    world.album("Drop", FAMILY)
+    linked = world.album("Linked", ALICE, users={FAMILY}, shared_link=True)
+    scan = await scan_albums(make_accounts(world))
+    assert not scan.conversions
+    assert scan.blocked[0].album_id == linked.id and "shared link" in scan.blocked[0].reason
 
 
 async def test_shared_album_with_outsider_assets_is_blocked(world):

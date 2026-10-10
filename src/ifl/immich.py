@@ -4,19 +4,39 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from immichpy.client.generated.models.add_users_dto import AddUsersDto
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_add_dto import AlbumUserAddDto
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
+from immichpy.client.generated.models.asset_bulk_delete_dto import AssetBulkDeleteDto
+from immichpy.client.generated.models.asset_bulk_upload_check_dto import (
+    AssetBulkUploadCheckDto,
+)
+from immichpy.client.generated.models.asset_bulk_upload_check_item import (
+    AssetBulkUploadCheckItem,
+)
+from immichpy.client.generated.models.asset_edit_action_item_dto import AssetEditActionItemDto
+from immichpy.client.generated.models.asset_edits_create_dto import AssetEditsCreateDto
+from immichpy.client.generated.models.asset_file_type import AssetFileType
+from immichpy.client.generated.models.asset_metadata_upsert_dto import AssetMetadataUpsertDto
+from immichpy.client.generated.models.asset_metadata_upsert_item_dto import (
+    AssetMetadataUpsertItemDto,
+)
 from immichpy.client.generated.models.asset_response_dto import AssetResponseDto
+from immichpy.client.generated.models.asset_visibility import AssetVisibility
+from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 from immichpy.client.generated.models.bulk_id_response_dto import BulkIdResponseDto
 from immichpy.client.generated.models.bulk_ids_dto import BulkIdsDto
 from immichpy.client.generated.models.create_album_dto import CreateAlbumDto
 from immichpy.client.generated.models.metadata_search_dto import MetadataSearchDto
 from immichpy.client.generated.models.partner_create_dto import PartnerCreateDto
 from immichpy.client.generated.models.partner_direction import PartnerDirection
+from immichpy.client.generated.models.shared_link_type import SharedLinkType
+from immichpy.client.generated.models.tag_upsert_dto import TagUpsertDto
 from immichpy.client.generated.models.update_album_user_dto import UpdateAlbumUserDto
 from immichpy.client.main import AsyncClient
 
@@ -29,6 +49,7 @@ class AlbumSummary:
     user_ids: frozenset[UUID]  # everyone on the album, owner included
     asset_count: int
     description: str = ""
+    has_shared_link: bool = False
     emails: dict[UUID, str] = field(default_factory=dict, compare=False, hash=False)
     roles: dict[UUID, AlbumUserRole] = field(default_factory=dict, compare=False, hash=False)
 
@@ -49,6 +70,7 @@ def summarize_album(album: AlbumResponseDto) -> AlbumSummary:
         user_ids=frozenset(emails),
         asset_count=album.asset_count,
         description=album.description or "",
+        has_shared_link=bool(album.has_shared_link),
         emails=emails,
         roles=roles,
     )
@@ -153,3 +175,124 @@ async def set_album_user_role(
     await client.albums.update_album_user(
         id=album_id, user_id=str(user_id), update_album_user_dto=UpdateAlbumUserDto(role=role)
     )
+
+
+# Per-asset reads for the move. Edits, asset files and the sidecar are owner-only.
+
+
+async def get_asset(client: AsyncClient, asset_id: UUID) -> AssetResponseDto:
+    return await client.assets.get_asset_info(id=asset_id)
+
+
+async def albums_containing(client: AsyncClient, asset_id: UUID) -> list[AlbumSummary]:
+    """Albums this account can see that hold the asset."""
+    albums = await client.albums.get_all_albums(asset_id=asset_id)
+    return [summarize_album(a) for a in albums]
+
+
+async def get_asset_edits(client: AsyncClient, asset_id: UUID) -> list[AssetEditActionItemDto]:
+    """Crop, rotate and mirror, in the shape the edits endpoint accepts back."""
+    res = await client.assets.get_asset_edits(id=asset_id)
+    return [AssetEditActionItemDto(action=e.action, parameters=e.parameters) for e in res.edits]
+
+
+async def find_sidecar(client: AsyncClient, asset_id: UUID) -> UUID | None:
+    files = await client.asset_files.search_asset_files(
+        asset_id=asset_id, type=AssetFileType.SIDECAR
+    )
+    return files[0].id if files else None
+
+
+async def download_asset_file(client: AsyncClient, file_id: UUID) -> bytes:
+    return await client.asset_files.download_asset_file(id=file_id)
+
+
+async def download_original(client: AsyncClient, asset_id: UUID) -> bytes:
+    return await client.assets.download_asset(id=asset_id)
+
+
+async def shared_link_asset_ids(client: AsyncClient) -> set[UUID]:
+    """Assets in this account's individual shared links. Album links are checked by album."""
+    links = await client.shared_links.get_all_shared_links()
+    return {a.id for link in links if link.type == SharedLinkType.INDIVIDUAL for a in link.assets}
+
+
+async def existing_asset_by_checksum(client: AsyncClient, checksum: str) -> UUID | None:
+    """The id of this account's asset with that checksum, if it already has one."""
+    dto = AssetBulkUploadCheckDto(assets=[AssetBulkUploadCheckItem(id="x", checksum=checksum)])
+    res = await client.assets.check_bulk_upload(dto)
+    (result,) = res.results
+    if result.action.value == "reject" and result.reason and result.reason.value == "duplicate":
+        return result.asset_id
+    return None
+
+
+async def queue_backlog(client: AsyncClient) -> dict[str, int]:
+    """Waiting jobs per queue. Admin only."""
+    return {q.name.value: q.statistics.waiting for q in await client.queues.get_queues()}
+
+
+# Per-asset writes for the move.
+
+
+async def upsert_tag(client: AsyncClient, name: str) -> UUID:
+    (tag,) = await client.tags.upsert_tags(TagUpsertDto(tags=[name]))
+    return tag.id
+
+
+async def tag_asset(client: AsyncClient, tag_id: UUID, asset_id: UUID) -> None:
+    results = await client.tags.tag_assets(id=tag_id, bulk_ids_dto=BulkIdsDto(ids=[asset_id]))
+    for r in results:
+        if not r.success and r.error != BulkIdErrorReason.DUPLICATE:
+            raise RuntimeError(f"tagging failed: {r.error} {r.error_message or ''}".strip())
+
+
+async def upload_asset(
+    client: AsyncClient,
+    *,
+    data: bytes,
+    filename: str,
+    checksum: str,
+    file_created_at: datetime,
+    file_modified_at: datetime,
+    is_favorite: bool,
+    visibility: AssetVisibility,
+    sidecar: bytes | None,
+    duration: str | None = None,
+) -> tuple[UUID, bool]:
+    """Upload bytes plus sidecar. Returns (asset id, created). A duplicate of
+    something this account already has returns that asset's id and False."""
+    # No `filename` form field: the server applies it to every part, so the
+    # sidecar would be checked as a .jpg and rejected. Each part names itself.
+    res = await client.assets.upload_asset(
+        asset_data=(filename, data),
+        x_immich_checksum=checksum,
+        file_created_at=file_created_at,
+        file_modified_at=file_modified_at,
+        is_favorite=is_favorite,
+        visibility=visibility,
+        sidecar_data=(filename + ".xmp", sidecar) if sidecar else None,
+        duration=duration,
+    )
+    return res.id, res.status.value == "created"
+
+
+async def set_asset_edits(
+    client: AsyncClient, asset_id: UUID, edits: list[AssetEditActionItemDto]
+) -> None:
+    """Replaces the asset's edit list. Needs the asset's dimensions, so only
+    after metadata extraction has run on it."""
+    dto = AssetEditsCreateDto(edits=edits)
+    await client.assets.edit_asset(id=asset_id, asset_edits_create_dto=dto)
+
+
+async def set_asset_metadata(
+    client: AsyncClient, asset_id: UUID, key: str, value: dict[str, Any]
+) -> None:
+    dto = AssetMetadataUpsertDto(items=[AssetMetadataUpsertItemDto(key=key, value=value)])
+    await client.assets.update_asset_metadata(id=asset_id, asset_metadata_upsert_dto=dto)
+
+
+async def trash_assets(client: AsyncClient, asset_ids: Iterable[UUID]) -> None:
+    """Trash, never permanent delete. See the re-upload section of DESIGN.md."""
+    await client.assets.delete_assets(AssetBulkDeleteDto(ids=list(asset_ids), force=False))
