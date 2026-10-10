@@ -92,7 +92,11 @@ def world(monkeypatch):
         for a in w.assets[album_id]:
             yield a
 
+    async def list_partner_ids(client):
+        return {ALICE, BOB}
+
     monkeypatch.setattr("ifl.observer.list_albums", list_albums)
+    monkeypatch.setattr("ifl.observer.list_partner_ids", list_partner_ids)
     monkeypatch.setattr("ifl.observer.iter_album_assets", iter_album_assets)
     return w
 

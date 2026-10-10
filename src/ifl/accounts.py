@@ -34,6 +34,7 @@ FAMILY_PERMISSIONS = MEMBER_PERMISSIONS | {
     "album.create",
     "albumUser.create",
     "albumUser.update",  # promote a member who is only a viewer on a family album
+    "partner.create",  # share the family library with each member
 }
 
 

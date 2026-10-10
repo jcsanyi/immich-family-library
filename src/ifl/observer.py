@@ -5,8 +5,9 @@ Each pass is three scans, in this order:
 1. Albums. Member-owned albums shared with the family user become family-owned
    albums (conversion). Running this first means the later scans in the same
    pass already see the converted album as family-owned.
-2. Family albums. The invariant: the dropbox exists and every configured
-   member is an editor on every family-owned album (reconcile).
+2. Family albums. The invariant: the dropbox exists, every configured member
+   is an editor on every family-owned album, and the family partner-shares
+   with every member (reconcile).
 3. Assets. The one rule: a member-owned asset sitting in a family-owned album
    gets moved to the family account.
 """
@@ -20,7 +21,7 @@ from uuid import UUID
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
 
 from ifl.accounts import Account, Accounts
-from ifl.immich import AlbumSummary, UserNames, iter_album_assets, list_albums
+from ifl.immich import AlbumSummary, UserNames, iter_album_assets, list_albums, list_partner_ids
 
 log = logging.getLogger(__name__)
 
@@ -60,9 +61,10 @@ class ShareFix:
 class ReconcileScan:
     create_dropbox: str | None = None  # name of the dropbox album to create
     fixes: list[ShareFix] = field(default_factory=list)
+    partner_with: frozenset[UUID] = frozenset()  # members the family doesn't share with yet
 
     def __bool__(self) -> bool:
-        return bool(self.create_dropbox or self.fixes)
+        return bool(self.create_dropbox or self.fixes or self.partner_with)
 
 
 @dataclass(frozen=True)
@@ -137,6 +139,7 @@ async def scan_reconcile(accounts: Accounts, dropbox_album: str) -> ReconcileSca
         }
         if add or promote:
             scan.fixes.append(ShareFix(album, frozenset(add), frozenset(promote)))
+    scan.partner_with = frozenset(members - await list_partner_ids(accounts.family.client))
     return scan
 
 
@@ -200,6 +203,9 @@ def describe_reconcile(scan: ReconcileScan, accounts: Accounts) -> list[str]:
         if f.promote:
             who = ", ".join(sorted(names[u] for u in f.promote))
             lines.append(f"PROMOTE {who} to editor on {f.album.name!r}")
+    if scan.partner_with:
+        who = ", ".join(sorted(names[u] for u in scan.partner_with))
+        lines.append(f"PARTNER-SHARE the family library with {who}")
     return lines or ["family albums consistent"]
 
 

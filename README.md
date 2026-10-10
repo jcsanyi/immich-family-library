@@ -34,7 +34,11 @@ Each member has a private reclaim album. Add a family-owned photo that you origi
 
 The moved copy keeps everything embedded in the file, plus the edits you made in Immich: description, corrected date and time zone, location, rating, favourite, and crop, rotate and mirror. Faces are recognised again on the family copy and, because all accounts share a cluster group, they cluster with the same people.
 
-Manual face corrections and stacks don't carry over yet.
+Your tags don't carry over. Tags are private to each account anyway, so nobody else would see them. Instead the family copy gets one tag, `from/<your name>`, visible when browsing as the family account, and your original gets a `family` tag before it's trashed, so your own tag list shows what you've handed over. Both names are configurable.
+
+Manual face corrections and stacks don't carry over yet. Likes and comments on album photos are lost when an album is converted or a photo moves.
+
+A photo that's in one of your public shared links isn't moved. The link would break, so the service leaves the photo where it is and reports it until you take it out of the link or delete the link. The same goes for an album you've shared with the family that also has a public link.
 
 ## The phone backup problem
 
@@ -71,7 +75,7 @@ Every command is one pass that exits. Each takes `-c path/to/config.toml` (defau
 
 - `ifl observe` reports what the rules would do: albums that would be converted, family albums that need reconciling, photos that would be moved, and anything blocked and why. Never writes.
 - `ifl convert-album <album-id>` converts one album a member has shared with the family. `ifl convert-album --all` converts every such album, up to the limit.
-- `ifl reconcile-albums` creates the dropbox if it's missing and makes every configured member an editor on every family-owned album, promoting anyone who's only a viewer. It never removes anyone.
+- `ifl reconcile-albums` creates the dropbox if it's missing, makes every configured member an editor on every family-owned album, promoting anyone who's only a viewer, and partner-shares the family library with every member. It never removes anyone. Whether family photos show in your timeline is your own partner-sharing setting.
 - `ifl show-config` prints the effective configuration as TOML with keys redacted to their last four characters. `--minimal` prints only what differs from the defaults.
 
 The remaining commands arrive with the stages listed below.

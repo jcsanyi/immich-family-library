@@ -41,6 +41,7 @@ class FakeWorld:
         self.albums: dict[UUID, AlbumSummary] = {}
         self.assets: dict[UUID, list[FakeAsset]] = {}
         self.writes: list[tuple] = []
+        self.partners: dict[UUID, set[UUID]] = {}  # sharer -> users shared with
         self.fail_adds: dict[UUID, BulkIdErrorReason] = {}
         self.on_read: list = []  # callbacks run once each, in order, on asset reads
 
@@ -105,6 +106,14 @@ class FakeWorld:
         del self.albums[album_id]
         del self.assets[album_id]
 
+    async def list_partner_ids(self, client):
+        return set(self.partners.get(client.user_id, set()))
+
+    async def create_partner(self, client, user_id):
+        assert user_id not in self.partners.get(client.user_id, set()), "already a partner"
+        self.writes.append(("partner", client.user_id, user_id))
+        self.partners.setdefault(client.user_id, set()).add(user_id)
+
     async def set_album_user_role(self, client, album_id, user_id, role):
         a = self.albums[album_id]
         assert user_id in a.user_ids
@@ -138,6 +147,8 @@ WRITE_HELPERS = (
     "add_album_assets",
     "delete_album",
     "set_album_user_role",
+    "list_partner_ids",
+    "create_partner",
 )
 
 

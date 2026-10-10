@@ -15,6 +15,8 @@ from immichpy.client.generated.models.bulk_id_response_dto import BulkIdResponse
 from immichpy.client.generated.models.bulk_ids_dto import BulkIdsDto
 from immichpy.client.generated.models.create_album_dto import CreateAlbumDto
 from immichpy.client.generated.models.metadata_search_dto import MetadataSearchDto
+from immichpy.client.generated.models.partner_create_dto import PartnerCreateDto
+from immichpy.client.generated.models.partner_direction import PartnerDirection
 from immichpy.client.generated.models.update_album_user_dto import UpdateAlbumUserDto
 from immichpy.client.main import AsyncClient
 
@@ -99,7 +101,18 @@ async def iter_album_assets(
         page = int(res.assets.next_page)
 
 
+async def list_partner_ids(client: AsyncClient) -> set[UUID]:
+    """Users this account partner-shares its library with."""
+    partners = await client.partners.get_partners(direction=PartnerDirection.SHARED_MINUS_BY)
+    return {p.id for p in partners}
+
+
 # Writes. Each is one Immich call under the given account's key.
+
+
+async def create_partner(client: AsyncClient, user_id: UUID) -> None:
+    """Share this account's library with a user. "Show in timeline" is theirs to set."""
+    await client.partners.create_partner(PartnerCreateDto(shared_with_id=user_id))
 
 
 async def create_album(client: AsyncClient, name: str, description: str = "") -> AlbumSummary:

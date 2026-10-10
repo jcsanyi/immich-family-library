@@ -1,10 +1,12 @@
 """Stage 3: family album consistency.
 
 An invariant rather than a trigger: the dropbox album exists, owned by the
-family account, and every configured member is an editor on every
-family-owned album. That covers albums created by hand in the family account,
-members added to the config after albums exist, and a fresh install. Nobody is
-ever removed; taking a member off the family is a manual job.
+family account; every configured member is an editor on every family-owned
+album; and the family partner-shares its library with every member, which is
+what lets a member put a family copy into their own album. That covers albums
+created by hand in the family account, members added to the config after
+albums exist, and a fresh install. Nobody is ever removed; taking a member off
+the family is a manual job.
 """
 
 from __future__ import annotations
@@ -15,7 +17,13 @@ from dataclasses import dataclass
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
 
 from ifl.accounts import Accounts
-from ifl.immich import AlbumSummary, add_album_users, create_album, set_album_user_role
+from ifl.immich import (
+    AlbumSummary,
+    add_album_users,
+    create_album,
+    create_partner,
+    set_album_user_role,
+)
 from ifl.observer import ReconcileScan
 
 log = logging.getLogger(__name__)
@@ -26,12 +34,13 @@ class ReconcileResult:
     created_dropbox: AlbumSummary | None
     shared: int  # (album, member) pairs added
     promoted: int  # (album, member) pairs promoted to editor
+    partnered: int = 0  # members the family now partner-shares with
 
     def __str__(self) -> str:
         parts = []
         if self.created_dropbox:
             parts.append(f"created dropbox {self.created_dropbox.name!r}")
-        parts.append(f"shared {self.shared}, promoted {self.promoted}")
+        parts.append(f"shared {self.shared}, promoted {self.promoted}, partnered {self.partnered}")
         return "; ".join(parts)
 
 
@@ -60,4 +69,10 @@ async def reconcile(accounts: Accounts, scan: ReconcileScan) -> ReconcileResult:
             result.promoted += 1
         if fix.promote:
             log.info("promoted %d members to editor on %r", len(fix.promote), fix.album.name)
+
+    for uid in scan.partner_with:
+        await create_partner(family.client, uid)
+        result.partnered += 1
+    if scan.partner_with:
+        log.info("partner-shared the family library with %d members", len(scan.partner_with))
     return result
