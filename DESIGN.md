@@ -41,8 +41,8 @@ Non-participants (users with no API key) can still use Immich normally and share
 Triggered when a member-owned album has the family user as a shared user.
 
 1. Precheck: keys exist and work for the album owner and every asset owner in the album. If not, leave the album alone, warn, and retry on later polls.
-2. Create a family-owned album with the same name and description.
-3. Share it with all members as editors.
+2. Create a family-owned album with the same name and description. If one with that name already exists, use it: a crashed run resumes into it, and two albums that share a name merge, which is acceptable for a family.
+3. Share it with all members as editors. Anyone else the original was shared with, non-participants included, is carried over with their original role so nothing changes from their side. If a non-participant editor later adds a photo, the asset scan reports it as blocked, same as any non-participant asset in a family album.
 4. Add the original assets to the new album using each owner's key. Members can add their own assets to an album they're an editor on, so this needs no partner access.
 5. Re-read the original album once. Add anything that appeared since step 4.
 6. Delete the original album.
@@ -111,6 +111,10 @@ Trashed originals count toward the member's usage until the purge. During the in
 
 The family account should have no quota, or a generous one. It's the destination for everything.
 
+## Limits
+
+Config caps how much one pass does: `albums_per_pass` for conversions and, once the move path exists, `assets_per_pass` for moves. The two are independent: a pass converts up to X albums, then moves up to Y assets. 0 means no limit. Commands given a specific id ignore the caps; `convert-album --all` and `process` honor them. `process` is a single pass, so what's left over waits for the next run. The long-running service is what turns the caps into a rate: one pass, a fixed wait, another pass.
+
 ## What's carried and what's lost
 
 Carried on the family copy:
@@ -178,21 +182,30 @@ Which keys an operation needs:
 - A member's key can add a partner-shared asset to an album they're an editor on but don't own.
 - Trashing an asset right after upload actually stops the queued ML jobs, or whether they run anyway.
 - A single new upload in a cluster-group account clusters with existing cross-user faces, versus only on a full re-run.
-- The sync-deletions flag on iOS, and the failure mode: trash via API, don't open the app, purge, open the app. If it re-uploads, that's the production failure mode. Deferred: mobile tests may run on prod instead of dev, with one hand-moved photo, once stage 5 (re-upload detection and re-trash) is in and tested. Stage 5 is a hard gate before anything touches prod.
+- The sync-deletions flag on iOS, and the failure mode: trash via API, don't open the app, purge, open the app. If it re-uploads, that's the production failure mode. Deferred: mobile tests may run on prod instead of dev, with one hand-moved photo, once stage 6 (re-upload detection and re-trash) is in and tested. Stage 6 is a hard gate before anything touches prod.
 - Live photos: the video half needs uploading and linking via livePhotoVideoId.
 
 ## Stages
 
-Each stage that acts on Immich comes in two steps: a manually-triggered CLI command first, verified by hand on the dev instance, then the automatic version driven by the poll loop.
+Stages 2 to 4 are CLI commands only, run by hand against the dev instance and verified one at a time. Nothing acts on its own until stage 7.
 
 1. Read-only observer. Polls everything, logs what the rules would do. No writes. Done: `ifl observe`, verified on the dev instance locally and as a container on the Immich docker network.
-2. Album conversion. `ifl convert-album <album-id>` first, then automatic from the album scan.
-3. Family album consistency. `ifl reconcile-albums` first: creates the dropbox if missing and adds every configured member as editor to every family-owned album. Then automatic each poll.
-4. Per-asset move. `ifl move <asset-id>` first: sidecar, edits, re-link, trash; verify every carried field round-trips. Then automatic from the asset scan, which also covers the dropbox.
-5. Re-upload detection and re-trash, with the webhook. Per-member warnings.
-6. People sharing automation once face detection is on.
-7. Reclaim.
-8. Deferred: manual face reassignment, stacks.
+2. Album conversion. `ifl convert-album <album-id>`, and `--all` for every convertible album up to the limit. Done: verified on the dev instance for a fresh album, one with a description and a non-participant viewer, a merge into an existing family album, and `--all` stopping at the limit.
+3. Family album consistency. `ifl reconcile-albums`: creates the dropbox if missing and adds every configured member as editor to every family-owned album.
+4. Per-asset move. `ifl move <asset-id>`: sidecar, edits, re-link, trash; verify every carried field round-trips. Covers the dropbox.
+5. `ifl process`: one complete pass from the CLI, honoring the per-pass limits. Album scan, conversions, reconcile, asset scan, moves. Everything the service will eventually do each pass, run once by hand.
+6. Re-upload detection and re-trash as part of `process`, found by polling. Per-member warnings.
+7. The long-running service: `process` passes with a fixed wait between them, plus the webhook receiver for the AssetCreate trigger so re-uploads get trashed in seconds instead of on the next poll.
+8. Packaging, documentation and publishing: a published container image, the compose and config examples the README promises, and the real docs that let the rest of this file shrink.
+
+## Future improvements
+
+Not stages. Things worth doing once the service is running on prod, in no particular order.
+
+- People sharing automation once face detection is on.
+- Reclaim.
+- Manual face reassignment and stacks on the family copy.
+- Slack notifications for warnings and errors, so a blocked album or a looping member doesn't sit unnoticed in the container logs.
 
 ## Prior art
 

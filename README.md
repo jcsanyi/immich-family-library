@@ -14,7 +14,7 @@ The service watches for one thing: a member-owned photo sitting in an album the 
 
 ### Sharing an album
 
-Share any of your albums with the family user. The service recreates it as a family-owned album with the same name, shares that with every member as an editor, moves the photos into it, and deletes your original. You and the other members see the same album you shared; it's just owned by the family now.
+Share any of your albums with the family user. The service recreates it as a family-owned album with the same name and description, shares that with every member as an editor, moves the photos into it, and deletes your original. You and the other members see the same album you shared; it's just owned by the family now. Anyone else you had shared it with keeps their access, at the same role. If a family album with that name already exists, the two are merged into it.
 
 Albums you share privately with other members are left alone. If a photo in one of those later gets shared with the family, the family copy is added back to the private album, so nothing changes from your point of view.
 
@@ -58,7 +58,22 @@ Trashed originals count against your usage until the trash purges, 30 days by de
 
 ## Running it
 
-The service is a single container, deployed in the same compose stack as Immich with a volume for its state database. Configuration is the Immich URL, the family API key, each member's API key, and which albums are the dropbox and the reclaim albums. Details are in the compose and config examples once they exist.
+The service is a single container, deployed in the same compose stack as Immich with a volume for its state database. `compose.yml` shows the deployment and `config.example.toml` is the annotated configuration: the Immich URL, the family account and its API key, one section per member with their API key, and the name of the dropbox album.
+
+Two settings guard against accidents:
+
+- `readonly` under `[service]`, true unless you set it to false. While it's on, every command that would write to Immich refuses to run. Leave it on until `observe` reports what you expect.
+- `[limits]` caps how much one pass does. `albums_per_pass` (default 5, 0 for no limit) is the most albums `convert-album --all` will convert in one run; the rest wait for the next. Commands given a specific id ignore the limits.
+
+### Commands
+
+Every command is one pass that exits. Each takes `-c path/to/config.toml` (default `config.toml` in the current directory) and `-v` for debug logging.
+
+- `ifl observe` reports what the rules would do: albums that would be converted, photos that would be moved, and anything blocked and why. Never writes.
+- `ifl convert-album <album-id>` converts one album a member has shared with the family. `ifl convert-album --all` converts every such album, up to the limit.
+- `ifl show-config` prints the effective configuration as TOML with keys redacted to their last four characters. `--minimal` prints only what differs from the defaults.
+
+The remaining commands arrive with the stages listed below.
 
 ## Status
 

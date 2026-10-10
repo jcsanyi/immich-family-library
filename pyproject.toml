@@ -9,6 +9,7 @@ dependencies = [
     # Pinned together with the Immich version on the dev and prod instances.
     # See COMPATIBILITY.csv in the immichpy repo before bumping either.
     "immichpy==9.0.1",
+    "tomli-w>=1.0",
 ]
 
 [project.scripts]

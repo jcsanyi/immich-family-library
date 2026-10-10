@@ -20,9 +20,16 @@ log = logging.getLogger(__name__)
 
 MIN_SERVER = (3, 3, 0)
 
-# Permissions stage 1 needs. Later stages extend these.
-MEMBER_PERMISSIONS = {"user.read", "apiKey.read", "album.read", "asset.read"}
-FAMILY_PERMISSIONS = MEMBER_PERMISSIONS | {"partner.read"}
+# Permissions the stages built so far need. Later stages extend these.
+MEMBER_PERMISSIONS = {
+    "user.read",
+    "apiKey.read",
+    "album.read",
+    "asset.read",
+    "albumAsset.create",  # add own photos to a family album
+    "album.delete",  # delete own album after conversion
+}
+FAMILY_PERMISSIONS = MEMBER_PERMISSIONS | {"partner.read", "album.create", "albumUser.create"}
 
 
 class AccountError(Exception):

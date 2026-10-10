@@ -27,6 +27,7 @@ class Blocked:
 
     what: str
     reason: str
+    album_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,7 @@ async def scan_albums(accounts: Accounts) -> AlbumScan:
                     Blocked(
                         f"album {album.name!r} owned by {member.name}",
                         f"has photos from non-participants: {', '.join(who)}",
+                        album_id=album.id,
                     )
                 )
                 continue

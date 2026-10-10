@@ -7,12 +7,19 @@
 url = "https://photos.example.com"
 
 [service]
-poll_interval_seconds = 60
 # Relative paths are resolved against this file's directory. In the container
 # the config mount is read-only, so use the data volume: "/data/ledger.sqlite".
 ledger_path = "data/ledger.sqlite"
-# Stage 1: observe only. Nothing is written to Immich while this is true.
-observe_only = true
+# While true, every command that would write to Immich refuses to run; only
+# `observe` and `show-config` work. Defaults to true when absent. Flip it once
+# `observe` reports what you expect.
+readonly = true
+
+# Caps on how much one pass does, so a big backlog is worked through at a pace
+# you choose rather than all at once. 0 means no limit. Commands given a
+# specific id ignore them.
+[limits]
+albums_per_pass = 5
 
 # The family account owns everything that's been shared. The email is checked
 # against the account the key belongs to, so a config pointed at the wrong
@@ -21,7 +28,7 @@ observe_only = true
 email = "family@example.com"
 api_key = ""
 # Name of a family-owned album. Photos added here are moved but the family
-# copy isn't re-added to it.
+# copy isn't re-added to it. This is the default.
 dropbox_album = "Family Dropbox"
 
 # One section per participating member. The section name is a label for logs

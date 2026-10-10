@@ -24,11 +24,21 @@ Two terms DESIGN.md uses that README.md doesn't:
 
 ## Instance state
 
-As of October 2026 the Immich instance is on 3.0.x with an upgrade to 3.3 planned shortly. Develop against 3.3: cluster groups came in 3.2, people sharing in 3.3. Don't propose workarounds for older versions.
+As of October 2026 the prod Immich instance is on 3.0.x with an upgrade to 3.3 planned shortly. Develop against 3.3: cluster groups came in 3.2, people sharing in 3.3. Don't propose workarounds for older versions.
 
-Face detection is currently off on the instance. It gets enabled after all accounts are in a cluster group, so no facial recognition reset is needed. Don't rely on faces or people sharing existing yet.
+Face detection is currently off on prod. It gets enabled after all accounts are in a cluster group, so no facial recognition reset is needed. Don't rely on faces or people sharing existing yet.
 
-Testing happens on a separate dev instance, never production. The dev instance is https://dev.photos.csanyi.ca, running under rootless docker as user `immich-dev` on the home server (`ssh immich-dev`, compose files in `/data/immich-dev`). Accounts, user IDs and API keys are in `/data/immich-dev/accounts.env` on that host, never in the repo. Dev accounts: admin, family, and members alice, bob, carol.
+Testing happens on a separate dev instance, never production.
+
+## Dev instance
+
+- URL: https://dev.photos.csanyi.ca, nginx on the home server (tarsus) proxying to host port 2283.
+- Runs under rootless docker as user `immich-dev` on tarsus. `ssh immich-dev` works from this machine (alias in `~/.ssh/config`, key `~/.ssh/id_ed25519_immich_dev`). Rootless docker was installed with `dockerd-rootless-setuptool.sh install`; the user's docker context is `rootless`, and `loginctl enable-linger immich-dev` keeps it running without a login session (`disable-linger` undoes that). If a shell gets "permission denied" on the docker socket, `export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock`.
+- Compose files in `/data/immich-dev`: the stock Immich `docker-compose.yml`, an override naming the project `immich-dev` and containers `immich_dev_*`, and `.env` pinning `IMMICH_VERSION=v3.3.1`. Machine learning is behind the `ml` compose profile and disabled until the faces stage. Library and database are plain directories (`library/`, `pgdata/`); a full reset is `docker compose down && rm -rf library pgdata`.
+- Accounts: admin, family, and members alice, bob, carol. Emails, user ids, API keys and one shared password (`DEV_PASSWORD`, valid for all five accounts in the web UI) are in `/data/immich-dev/accounts.env` on tarsus, never in the repo.
+- Local config on this machine: `config.toml` in the repo checkout (gitignored) points at the public dev URL with the real keys. To rebuild it, copy `config.example.toml` and fill in the keys from `accounts.env`.
+- Sample data: `scripts/seed_dev.py` uploads eight deterministic JPEGs with EXIF as the members and sets up the albums the observer expects (family dropbox and "Family Trip", alice's "Beach 2025" shared with the family, alice's "Alice & Bob" shared only with bob). It logs in with the shared password, so run it as `IFL_DEV_PASSWORD=... uv run --group seed python scripts/seed_dev.py`; `--reset` wipes all five accounts first. Re-running without `--reset` is a no-op thanks to Immich's dedupe.
+- There is no Python on tarsus; the service only runs there as the container (see deploy steps below).
 
 ## How to work on this
 
@@ -54,15 +64,15 @@ Two branches matter:
 
 - `dev` is the working branch. Commit and push to it freely, without asking, whenever there's something worth testing on the dev server. Keep commits small and messages plain. This is what gets deployed to `/data/immich-dev/ifl` on tarsus.
 
-  Deploying `dev` to tarsus, after pushing:
+  Deploying `dev` to tarsus and running a command there, after pushing:
 
   ```
   ssh immich-dev 'cd /data/immich-dev/ifl && git pull -q && \
     export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock && \
-    docker compose build -q && docker compose up -d'
+    docker compose build -q && docker compose run --rm ifl observe'
   ```
 
-  For a one-off run instead of the long-running service, replace `up -d` with `run --rm ifl observe --once` (or whatever command is being tested). The checkout there uses a read-only deploy key, so it can pull but never push. `config/config.toml` and `data/` on tarsus are untracked and survive pulls; the config there uses `http://immich_dev_server:2283` and `ledger_path = "/data/ledger.sqlite"`, and the stack is started with `IMMICH_NETWORK=immich-dev_default` (set in an untracked `.env` next to compose.yml).
+  Every command is one pass and exits, so until stage 7 brings the long-running service the container is only run this way; `docker compose up -d` would restart a one-shot command forever. The checkout there uses a read-only deploy key, so it can pull but never push. `config/config.toml` and `data/` on tarsus are untracked and survive pulls; the config there uses `http://immich_dev_server:2283` and `ledger_path = "/data/ledger.sqlite"`, and the stack is started with `IMMICH_NETWORK=immich-dev_default` (set in an untracked `.env` next to compose.yml).
 
   Keep instance-specific values (hostnames, emails, network names) out of tracked files. This is a public project; examples use example.com.
 - `main` is reviewed code. Never merge, rebase, or push to `main` without an explicit instruction in the current message. Completing a stage, or the user approving a plan, is not that instruction. When `dev` is ready for review, say so and stop.
