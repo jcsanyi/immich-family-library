@@ -1,4 +1,4 @@
-"""Command line entry point: `ifl observe`, `ifl convert-album`, `ifl show-config`."""
+"""Command line entry point. `ifl --help` lists the commands."""
 
 from __future__ import annotations
 
@@ -17,7 +17,15 @@ from ifl.accounts import AccountError, Accounts, open_accounts
 from ifl.config import Config, ConfigError, load_config, to_raw
 from ifl.convert import ConvertError, convert_album, convert_albums
 from ifl.ledger import Ledger
-from ifl.observer import describe_albums, describe_assets, scan_albums, scan_assets
+from ifl.observer import (
+    describe_albums,
+    describe_assets,
+    describe_reconcile,
+    scan_albums,
+    scan_assets,
+    scan_reconcile,
+)
+from ifl.reconcile import reconcile
 
 log = logging.getLogger("ifl")
 
@@ -43,8 +51,10 @@ async def run_observe(config_path: Path) -> int:
         try:
             albums = await scan_albums(accounts)
             log.info("albums: %s", "; ".join(describe_albums(albums)))
-            # Stage 5's `process` converts `albums` and reconciles family albums here,
-            # before the asset scan.
+            # Stage 5's `process` converts `albums` here, before the next two scans.
+            fixes = await scan_reconcile(accounts, cfg.dropbox_album)
+            log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
+            # Stage 5's `process` reconciles here.
             assets = await scan_assets(accounts, cfg.dropbox_album)
             log.info("assets: %s", "; ".join(describe_assets(assets)))
             # Stage 5's `process` moves `assets` here.
@@ -89,6 +99,16 @@ async def run_convert_album(config_path: Path, album_id: UUID | None) -> int:
         return 0
 
 
+async def run_reconcile_albums(config_path: Path) -> int:
+    """Make the family albums consistent: dropbox exists, every member is an editor."""
+    async with opened(config_path, writes=True) as (cfg, accounts):
+        scan = await scan_reconcile(accounts, cfg.dropbox_album)
+        log.info("family albums: %s", "; ".join(describe_reconcile(scan, accounts)))
+        if scan:
+            log.info("%s", await reconcile(accounts, scan))
+        return 0
+
+
 def run_show_config(config_path: Path, minimal: bool) -> int:
     """Print the effective config as TOML, keys redacted. No network."""
     sys.stdout.write(tomli_w.dumps(to_raw(load_config(config_path), minimal=minimal)))
@@ -109,6 +129,10 @@ def main(argv: list[str] | None = None) -> int:
     which.add_argument(
         "--all", action="store_true", help="every convertible album, up to [limits] albums_per_pass"
     )
+    sub.add_parser(
+        "reconcile-albums",
+        help="create the dropbox if missing; make every member an editor on every family album",
+    )
     show = sub.add_parser("show-config", help="print the effective config, secrets redacted")
     show.add_argument("--minimal", action="store_true", help="only what differs from the defaults")
     args = parser.parse_args(argv)
@@ -123,6 +147,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_show_config(args.config, args.minimal)
         if args.command == "observe":
             return asyncio.run(run_observe(args.config))
+        if args.command == "reconcile-albums":
+            return asyncio.run(run_reconcile_albums(args.config))
         return asyncio.run(run_convert_album(args.config, None if args.all else args.album_id))
     except (ConfigError, AccountError) as e:
         log.error("%s", e)

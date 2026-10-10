@@ -1,11 +1,13 @@
-"""Stage 1: look at the instance and say what would happen. Never writes.
+"""Look at the instance and say what would happen. Never writes.
 
-Each poll is two scans, in this order:
+Each pass is three scans, in this order:
 
 1. Albums. Member-owned albums shared with the family user become family-owned
-   albums (conversion). Running this first means the asset scan in the same
-   poll already sees the converted album as family-owned.
-2. Assets. The one rule: a member-owned asset sitting in a family-owned album
+   albums (conversion). Running this first means the later scans in the same
+   pass already see the converted album as family-owned.
+2. Family albums. The invariant: the dropbox exists and every configured
+   member is an editor on every family-owned album (reconcile).
+3. Assets. The one rule: a member-owned asset sitting in a family-owned album
    gets moved to the family account.
 """
 
@@ -14,6 +16,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from uuid import UUID
+
+from immichpy.client.generated.models.album_user_role import AlbumUserRole
 
 from ifl.accounts import Account, Accounts
 from ifl.immich import AlbumSummary, UserNames, iter_album_assets, list_albums
@@ -41,6 +45,24 @@ class ConvertAlbum:
 class AlbumScan:
     conversions: list[ConvertAlbum] = field(default_factory=list)
     blocked: list[Blocked] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ShareFix:
+    """Members a family album is missing, or has only as viewers."""
+
+    album: AlbumSummary
+    add: frozenset[UUID]
+    promote: frozenset[UUID]
+
+
+@dataclass
+class ReconcileScan:
+    create_dropbox: str | None = None  # name of the dropbox album to create
+    fixes: list[ShareFix] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return bool(self.create_dropbox or self.fixes)
 
 
 @dataclass(frozen=True)
@@ -96,6 +118,28 @@ async def scan_albums(accounts: Accounts) -> AlbumScan:
     return scan
 
 
+async def family_albums(accounts: Accounts) -> list[AlbumSummary]:
+    family = accounts.family
+    return [a for a in await list_albums(family.client) if a.owner_id == family.user_id]
+
+
+async def scan_reconcile(accounts: Accounts, dropbox_album: str) -> ReconcileScan:
+    """What it takes to make the family albums consistent. Never removes anyone."""
+    scan = ReconcileScan()
+    albums = await family_albums(accounts)
+    if not any(a.name == dropbox_album for a in albums):
+        scan.create_dropbox = dropbox_album
+    members = {m.user_id for m in accounts.members.values()}
+    for album in albums:
+        add = members - album.user_ids
+        promote = {
+            u for u in members & album.user_ids if album.roles.get(u) != AlbumUserRole.EDITOR
+        }
+        if add or promote:
+            scan.fixes.append(ShareFix(album, frozenset(add), frozenset(promote)))
+    return scan
+
+
 async def scan_assets(accounts: Accounts, dropbox_album: str) -> AssetScan:
     """Member-owned assets in family-owned albums."""
     scan = AssetScan()
@@ -103,13 +147,11 @@ async def scan_assets(accounts: Accounts, dropbox_album: str) -> AssetScan:
     family = accounts.family
     names = _names(accounts)
 
-    family_albums = [a for a in await list_albums(family.client) if a.owner_id == family.user_id]
-    scan.dropbox = next((a for a in family_albums if a.name == dropbox_album), None)
-    if scan.dropbox is None:
-        scan.blocked.append(Blocked("dropbox", f"no family-owned album named {dropbox_album!r}"))
+    albums = await family_albums(accounts)
+    scan.dropbox = next((a for a in albums if a.name == dropbox_album), None)
 
     seen: set[UUID] = set()
-    for album in family_albums:
+    for album in albums:
         async for asset in iter_album_assets(family.client, album.id):
             if asset.owner_id == family.user_id or asset.id in seen or asset.is_trashed:
                 continue
@@ -143,6 +185,22 @@ def describe_albums(scan: AlbumScan) -> list[str]:
     ]
     lines += [f"BLOCKED {b.what}: {b.reason}" for b in scan.blocked]
     return lines or ["no albums to convert"]
+
+
+def describe_reconcile(scan: ReconcileScan, accounts: Accounts) -> list[str]:
+    names = {uid: a.name for uid, a in accounts.by_user_id().items()}
+    lines = []
+    if scan.create_dropbox:
+        lines.append(f"CREATE dropbox {scan.create_dropbox!r}")
+    for f in scan.fixes:
+        if f.add:
+            lines.append(
+                f"SHARE {f.album.name!r} with {', '.join(sorted(names[u] for u in f.add))}"
+            )
+        if f.promote:
+            who = ", ".join(sorted(names[u] for u in f.promote))
+            lines.append(f"PROMOTE {who} to editor on {f.album.name!r}")
+    return lines or ["family albums consistent"]
 
 
 def describe_assets(scan: AssetScan) -> list[str]:

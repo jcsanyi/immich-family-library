@@ -69,8 +69,9 @@ Two settings guard against accidents:
 
 Every command is one pass that exits. Each takes `-c path/to/config.toml` (default `config.toml` in the current directory) and `-v` for debug logging.
 
-- `ifl observe` reports what the rules would do: albums that would be converted, photos that would be moved, and anything blocked and why. Never writes.
+- `ifl observe` reports what the rules would do: albums that would be converted, family albums that need reconciling, photos that would be moved, and anything blocked and why. Never writes.
 - `ifl convert-album <album-id>` converts one album a member has shared with the family. `ifl convert-album --all` converts every such album, up to the limit.
+- `ifl reconcile-albums` creates the dropbox if it's missing and makes every configured member an editor on every family-owned album, promoting anyone who's only a viewer. It never removes anyone.
 - `ifl show-config` prints the effective configuration as TOML with keys redacted to their last four characters. `--minimal` prints only what differs from the defaults.
 
 The remaining commands arrive with the stages listed below.

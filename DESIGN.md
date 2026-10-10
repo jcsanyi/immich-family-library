@@ -191,7 +191,7 @@ Stages 2 to 4 are CLI commands only, run by hand against the dev instance and ve
 
 1. Read-only observer. Polls everything, logs what the rules would do. No writes. Done: `ifl observe`, verified on the dev instance locally and as a container on the Immich docker network.
 2. Album conversion. `ifl convert-album <album-id>`, and `--all` for every convertible album up to the limit. Done: verified on the dev instance for a fresh album, one with a description and a non-participant viewer, a merge into an existing family album, and `--all` stopping at the limit.
-3. Family album consistency. `ifl reconcile-albums`: creates the dropbox if missing and adds every configured member as editor to every family-owned album.
+3. Family album consistency. `ifl reconcile-albums`: creates the dropbox if missing and adds every configured member as editor to every family-owned album, promoting members who are only viewers. Done: verified on the dev instance with the dropbox deleted, an unshared family album, and a member demoted to viewer.
 4. Per-asset move. `ifl move <asset-id>`: sidecar, edits, re-link, trash; verify every carried field round-trips. Covers the dropbox.
 5. `ifl process`: one complete pass from the CLI, honoring the per-pass limits. Album scan, conversions, reconcile, asset scan, moves. Everything the service will eventually do each pass, run once by hand.
 6. Re-upload detection and re-trash as part of `process`, found by polling. Per-member warnings.

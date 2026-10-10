@@ -15,6 +15,7 @@ from immichpy.client.generated.models.bulk_id_response_dto import BulkIdResponse
 from immichpy.client.generated.models.bulk_ids_dto import BulkIdsDto
 from immichpy.client.generated.models.create_album_dto import CreateAlbumDto
 from immichpy.client.generated.models.metadata_search_dto import MetadataSearchDto
+from immichpy.client.generated.models.update_album_user_dto import UpdateAlbumUserDto
 from immichpy.client.main import AsyncClient
 
 
@@ -131,3 +132,11 @@ async def add_album_assets(
 async def delete_album(client: AsyncClient, album_id: UUID) -> None:
     """Deletes the album only. Its assets stay where they are."""
     await client.albums.delete_album(id=album_id)
+
+
+async def set_album_user_role(
+    client: AsyncClient, album_id: UUID, user_id: UUID, role: AlbumUserRole
+) -> None:
+    await client.albums.update_album_user(
+        id=album_id, user_id=str(user_id), update_album_user_dto=UpdateAlbumUserDto(role=role)
+    )

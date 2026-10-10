@@ -9,7 +9,13 @@ import pytest
 
 from ifl.accounts import Account, Accounts
 from ifl.immich import AlbumSummary
-from ifl.observer import describe_albums, describe_assets, scan_albums, scan_assets
+from ifl.observer import (
+    describe_albums,
+    describe_reconcile,
+    scan_albums,
+    scan_assets,
+    scan_reconcile,
+)
 
 FAMILY, ALICE, BOB, STRANGER = (uuid4() for _ in range(4))
 EMAILS = {FAMILY: "family@x", ALICE: "alice@x", BOB: "bob@x", STRANGER: "stranger@x"}
@@ -154,8 +160,10 @@ async def test_shared_album_with_outsider_assets_is_blocked(world):
     assert "non-participants: stranger@x" in scan.blocked[0].reason
 
 
-async def test_missing_dropbox_is_reported(world):
-    scan = await scan_assets(make_accounts(world), "Drop")
-    assert scan.dropbox is None
-    assert any(b.what == "dropbox" for b in scan.blocked)
-    assert describe_assets(scan)[0].startswith("BLOCKED dropbox")
+async def test_missing_dropbox_is_a_reconcile_action(world):
+    accounts = make_accounts(world)
+    scan = await scan_assets(accounts, "Drop")
+    assert scan.dropbox is None and not scan.blocked
+    fixes = await scan_reconcile(accounts, "Drop")
+    assert fixes.create_dropbox == "Drop"
+    assert describe_reconcile(fixes, accounts) == ["CREATE dropbox 'Drop'"]

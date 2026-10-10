@@ -29,7 +29,12 @@ MEMBER_PERMISSIONS = {
     "albumAsset.create",  # add own photos to a family album
     "album.delete",  # delete own album after conversion
 }
-FAMILY_PERMISSIONS = MEMBER_PERMISSIONS | {"partner.read", "album.create", "albumUser.create"}
+FAMILY_PERMISSIONS = MEMBER_PERMISSIONS | {
+    "partner.read",
+    "album.create",
+    "albumUser.create",
+    "albumUser.update",  # promote a member who is only a viewer on a family album
+}
 
 
 class AccountError(Exception):
