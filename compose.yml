@@ -1,0 +1,28 @@
+# Runs the service next to an Immich compose stack: `docker compose up -d` in
+# this checkout, with config.toml in ./config and the ledger in ./data.
+#
+# The service joins the Immich stack's network so it can reach the server by
+# container name (and, later, so the Immich webhook can reach the service).
+# The network is named after the Immich compose project: for the stock
+# docker-compose.yml that's "immich_default". Override with IMMICH_NETWORK if
+# your project is named differently (`docker network ls` shows it).
+
+name: immich-family-library
+
+services:
+  ifl:
+    build: .
+    container_name: ifl
+    restart: unless-stopped
+    # Rootful docker: uncomment and match the owner of ./config and ./data.
+    # user: "1000:1000"
+    volumes:
+      - ./config:/config:ro
+      - ./data:/data
+    networks:
+      - immich
+
+networks:
+  immich:
+    external: true
+    name: ${IMMICH_NETWORK:-immich_default}

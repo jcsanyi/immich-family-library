@@ -49,23 +49,31 @@ Triggered when a member-owned album has the family user as a shared user.
 
 This takes seconds. The per-asset moves happen afterwards through the one rule.
 
+### Family album consistency
+
+An invariant the service keeps, rather than a trigger. Each poll makes whatever changes are needed so that:
+
+- the dropbox album exists, owned by the family account;
+- every family-owned album, dropbox included, has every configured member on it as an editor.
+
+That covers albums created by hand in the family account, members added to the config after albums already exist, and a fresh install with nothing set up yet. It never removes anyone from an album; taking a member off the family is a manual job, since it also means deciding what happens to their photos.
+
 ### Per-asset move
 
 Triggered when a member-owned asset is found in a family-owned album.
 
 1. Precheck: the owner's key exists and works. Take a per-asset lock in the state DB.
-2. Record the asset in the ledger: checksum, owner, original asset id, albums it's in. The ledger row is written before anything is deleted, always.
+2. Record the asset in the ledger: checksum, owner, original asset id.
 3. Read what needs carrying: album memberships (own and shared, across all participants), edit actions (crop/rotate/mirror), the sidecar file if one exists.
 4. Download the original bytes. Download the sidecar via the asset-files endpoint if present.
-5. Upload to the family account with: the original bytes, the sidecar as `sidecarData`, original `fileCreatedAt` and `fileModifiedAt`, favourite, and visibility set to hidden.
+5. Upload to the family account with: the original bytes, the sidecar as `sidecarData`, original `fileCreatedAt` and `fileModifiedAt`, favourite, and the original's visibility (timeline or archive). No interim hidden state: the fix-ups take seconds, and `hidden` is an internal Immich value for the video half of live photos, not something to lean on.
    Metadata extraction reads the sidecar on its first pass and prefers its date, so there's nothing to wait for and nothing to overwrite afterwards.
 6. Apply the edit actions to the new asset, verbatim, with the family key. The bytes are identical so crop coordinates still apply.
 7. Re-link: add the new asset to every album the original was in. Family albums via the family key, except the dropbox. Member-owned albums via that member's key (the member sees the family copy through partner sharing). If a contributor's key can't add, fall back to the album owner's key.
-8. Flip visibility to timeline.
-9. Trash the original with the owner's key. Trash, not permanent delete. See the re-upload section for why.
-10. Update the ledger with the family asset id and release the lock.
+8. Trash the original with the owner's key. Trash, not permanent delete. See the re-upload section for why.
+9. Update the ledger with the family asset id and release the lock.
 
-Failure at any step leaves the ledger row with enough to resume or roll back. Steps are idempotent: re-running checks whether the family copy already exists by checksum before uploading again.
+Every step is derived from Immich state, so a failure at any step is resumed by running the move again: it checks by checksum whether the family copy exists before uploading, redoes the fix-ups regardless (applying edits replaces the list, adding to an album an asset already in it is a no-op, so they're idempotent), and checks whether the original still exists before trashing.
 
 ### Dropbox
 
@@ -92,7 +100,7 @@ The mobile app backs up by asking the server whether it already has each file's 
 How we handle it:
 
 - Originals are trashed, never permanently deleted. A trashed asset still answers "yes" to the hash check, so the phone leaves it alone until the purge.
-- The ledger holds every moved checksum. When an upload lands in a member's account with a checksum in the ledger (detected via the AssetCreate workflow trigger with a webhook action, or by polling), the system trashes it immediately, before most of the processing queue reaches it. That restarts the 30-day clock.
+- When an upload lands in a member's account with a checksum the family account already owns (detected via the AssetCreate workflow trigger with a webhook action, or by polling), the system trashes it immediately, before most of the processing queue reaches it. That restarts the 30-day clock. The ledger says which member it came from originally, for the warning below.
 - Members are told to turn on the experimental "sync remote deletions" setting in the mobile app. With it on, the next time the app opens after a trash, the phone moves its local copy to the device trash, and the loop ends for that photo. This only works while the asset is still in the server trash, which is another reason never to force-purge.
 - The system counts re-uploads per member. A member with the flag on should produce zero. A member looping produces the whole moved library once per purge cycle, forever, with upload bandwidth and ML cost each time. Warn on volume, per member, not per asset.
 - Permanent delete is strictly worse on both counts: the phone re-uploads on its next backup run instead of in 30 days, and the sync-deletions flag has nothing to sync against.
@@ -121,26 +129,27 @@ Lost:
 
 ## Provenance
 
-The ledger is the source of truth for where a family asset came from. It's keyed by checksum and survives a reclaim and a later re-move.
+The ledger is the record of where a family asset came from. It's keyed by checksum and survives a reclaim and a later re-move.
 
 Tags in Immich are per-user and invisible to anyone but the owner, so a family-account tag like `source/jon` is a private backup label the system can use to rebuild the ledger, not a human-facing marker. Add it anyway; it's cheap. The description field is the only thing members can see on a partner asset, and the system shouldn't write into it.
 
 ## State
 
-A small local database (SQLite is fine) holding:
+Immich is the source of truth for anything in flight. A move is derived from what the server says, not from local state: the family account having the checksum means it's uploaded; the member's original still existing means it hasn't been trashed; the fix-ups in between are idempotent and simply re-run. So the move path is restartable after a crash with nothing local, and re-uploads are caught by "a member owns a checksum the family already owns".
 
-- ledger: checksum, origin user, origin asset id, family asset id, album memberships at move time, timestamps, status, re-upload count.
-- locks: per-asset, so album conversion and a manual add don't both try to move the same photo.
-- retry queue: operations blocked on a missing or broken key, re-checked each poll.
-- per-member counters for re-upload warnings.
+The ledger is a record, not a controller. One SQLite table, keyed by checksum: origin member as Immich user id, origin asset id, family asset id, moved-at, reclaimed-at, re-upload count. Config labels are never stored: renaming a member in config changes how messages refer to them and nothing else. Reports resolve ids to labels through the current config at read time. It exists for the two things Immich can't tell us once the original is purged: who a family asset came from (reclaim authorization) and who is looping (per-member warnings). It also serves as the audit trail.
+
+Locks are in-process; the service is a single process. Album memberships are read live at move time, since the original still exists until the last step.
 
 ## Detection
 
-Poll each member's key and the family key on a short interval (a minute is fine for a family):
+Each poll is two scans in a fixed order: albums first, then assets. Album conversions are acted on before the asset scan runs, so a just-converted album is already family-owned when its photos are considered, in the same poll. Poll each member's key and the family key on a short interval (a minute is fine for a family):
 
 - family albums: list assets, find member-owned ones.
 - member albums: find ones with the family user as a shared user.
 - dropbox and reclaim albums: list contents.
+
+There is no retry queue. Anything blocked (missing key, non-participant contributor) is simply found again on the next poll and re-evaluated.
 
 Plus the AssetCreate workflow trigger with a webhook action, so looped re-uploads get trashed fast. Workflows in 3.x have only AssetCreate, AssetMetadataExtraction and AssetTagged triggers. The added-to-album trigger is an open PR with known bugs, so album detection stays polling-based.
 
@@ -169,15 +178,17 @@ Which keys an operation needs:
 - A member's key can add a partner-shared asset to an album they're an editor on but don't own.
 - Trashing an asset right after upload actually stops the queued ML jobs, or whether they run anyway.
 - A single new upload in a cluster-group account clusters with existing cross-user faces, versus only on a full re-run.
-- The sync-deletions flag on iOS, and the failure mode: trash via API, don't open the app, purge, open the app. If it re-uploads, that's the production failure mode.
+- The sync-deletions flag on iOS, and the failure mode: trash via API, don't open the app, purge, open the app. If it re-uploads, that's the production failure mode. Deferred: mobile tests may run on prod instead of dev, with one hand-moved photo, once stage 5 (re-upload detection and re-trash) is in and tested. Stage 5 is a hard gate before anything touches prod.
 - Live photos: the video half needs uploading and linking via livePhotoVideoId.
 
 ## Stages
 
-1. Read-only observer. Polls everything, builds the ledger of what would move, logs the plan. No writes.
-2. Per-asset move, single asset, by hand. Sidecar, edits, re-link, hidden-then-visible, trash. Verify every carried field round-trips.
-3. Family album add and dropbox, driven by polling.
-4. Album conversion.
+Each stage that acts on Immich comes in two steps: a manually-triggered CLI command first, verified by hand on the dev instance, then the automatic version driven by the poll loop.
+
+1. Read-only observer. Polls everything, logs what the rules would do. No writes. Done: `ifl observe`, verified on the dev instance locally and as a container on the Immich docker network.
+2. Album conversion. `ifl convert-album <album-id>` first, then automatic from the album scan.
+3. Family album consistency. `ifl reconcile-albums` first: creates the dropbox if missing and adds every configured member as editor to every family-owned album. Then automatic each poll.
+4. Per-asset move. `ifl move <asset-id>` first: sidecar, edits, re-link, trash; verify every carried field round-trips. Then automatic from the asset scan, which also covers the dropbox.
 5. Re-upload detection and re-trash, with the webhook. Per-member warnings.
 6. People sharing automation once face detection is on.
 7. Reclaim.

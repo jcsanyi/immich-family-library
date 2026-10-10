@@ -1,0 +1,41 @@
+# immich-family-library configuration.
+# Copy to config.toml, fill in keys, keep it out of the repo (it's gitignored).
+
+[immich]
+# Where the service reaches Immich. Running in the same docker network as the
+# Immich stack, the server's container name works: "http://immich_server:2283".
+url = "https://photos.example.com"
+
+[service]
+poll_interval_seconds = 60
+# Relative paths are resolved against this file's directory. In the container
+# the config mount is read-only, so use the data volume: "/data/ledger.sqlite".
+ledger_path = "data/ledger.sqlite"
+# Stage 1: observe only. Nothing is written to Immich while this is true.
+observe_only = true
+
+# The family account owns everything that's been shared. The email is checked
+# against the account the key belongs to, so a config pointed at the wrong
+# server fails at startup instead of moving photos between the wrong accounts.
+[family]
+email = "family@example.com"
+api_key = ""
+# Name of a family-owned album. Photos added here are moved but the family
+# copy isn't re-added to it.
+dropbox_album = "Family Dropbox"
+
+# One section per participating member. The section name is a label for logs
+# and config; Immich identity comes from the key, checked against the email.
+# Members without a section can still share albums with the family user; those
+# albums are reported, not converted.
+[members.alice]
+email = "alice@example.com"
+api_key = ""
+
+[members.bob]
+email = "bob@example.com"
+api_key = ""
+
+[members.carol]
+email = "carol@example.com"
+api_key = ""

@@ -20,7 +20,7 @@ Albums you share privately with other members are left alone. If a photo in one 
 
 ### Adding to a family album
 
-Any member can add their own photos to any family album. The service moves them.
+Any member can add their own photos to any family album. The service moves them. It also keeps the family albums consistent: the dropbox exists, and every family album is shared with every member as an editor, so an album created by hand in the family account, or a member added later, needs no manual sharing.
 
 ### The dropbox
 

@@ -1,0 +1,45 @@
+[project]
+name = "immich-family-library"
+version = "0.1.0"
+description = "Moves shared photos from family members' Immich accounts into one family account"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    # Pinned together with the Immich version on the dev and prod instances.
+    # See COMPATIBILITY.csv in the immichpy repo before bumping either.
+    "immichpy==9.0.1",
+]
+
+[project.scripts]
+ifl = "ifl.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+# Only for scripts/seed_dev.py
+seed = [
+    "pillow>=10",
+    "piexif>=1.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ifl"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
