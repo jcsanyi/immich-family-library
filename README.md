@@ -80,9 +80,10 @@ Every command is one pass that exits. Each takes `-c path/to/config.toml` (defau
 - `ifl convert-album <album-id>` converts one album a member has shared with the family. `ifl convert-album --all` converts every such album, up to the limit.
 - `ifl reconcile-albums` creates the dropbox if it's missing, makes every configured member an editor on every family-owned album, promoting anyone who's only a viewer, and partner-shares the family library with every member. It never removes anyone. Whether family photos show in your timeline is your own partner-sharing setting.
 - `ifl move <asset-id>` moves one member-owned photo that's sitting in a family album: re-uploads it under the family account with its metadata, edits and a `from/<member>` tag, puts the copy into every album the original was in except the dropbox, and trashes the original. `ifl move --all` moves every such photo, up to the limit. A photo that changed in the last `settle_seconds`, is in a public shared link, or hasn't finished metadata extraction is left for later and reported. With `admin_api_key` set, the command refuses to start while Immich's metadata queues have a backlog. A move that fails partway leaves the original in place; running it again finishes the job.
+- `ifl process` runs one complete pass: converts shared albums, reconciles the family albums, then moves photos, each under its limit. A just-converted album's photos move in the same pass. With `admin_api_key` set, the moves are skipped for the pass while Immich's metadata queues have a backlog; the album work still happens. Run it by hand, or on a schedule, until the long-running service exists.
 - `ifl show-config` prints the effective configuration as TOML with keys redacted to their last four characters. `--minimal` prints only what differs from the defaults.
 
-The remaining commands arrive with the stages listed below.
+More arrives with the stages listed below.
 
 ## Status
 

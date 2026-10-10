@@ -347,11 +347,12 @@ WRITE_HELPERS = (
 )
 
 
-def patch_world(monkeypatch, module: str) -> FakeWorld:
-    """Point every immich helper that `module` imported at one fresh FakeWorld."""
-    w = FakeWorld()
-    mod = __import__(module, fromlist=["_"])
-    for name in WRITE_HELPERS:
-        if hasattr(mod, name):
-            monkeypatch.setattr(f"{module}.{name}", getattr(w, name))
+def patch_world(monkeypatch, *modules: str, world: FakeWorld | None = None) -> FakeWorld:
+    """Point every immich helper that each module imported at one FakeWorld."""
+    w = world or FakeWorld()
+    for module in modules:
+        mod = __import__(module, fromlist=["_"])
+        for name in WRITE_HELPERS:
+            if hasattr(mod, name):
+                monkeypatch.setattr(f"{module}.{name}", getattr(w, name))
     return w

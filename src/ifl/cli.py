@@ -34,6 +34,7 @@ from ifl.observer import (
     scan_assets,
     scan_reconcile,
 )
+from ifl.process import run_pass
 from ifl.reconcile import reconcile
 
 log = logging.getLogger("ifl")
@@ -58,15 +59,13 @@ async def run_observe(config_path: Path) -> int:
     async with opened(config_path, writes=False) as (cfg, accounts):
         ledger = Ledger(cfg.ledger_path)
         try:
+            # The same three scans `process` acts on, in the same order, reported only.
             albums = await scan_albums(accounts)
             log.info("albums: %s", "; ".join(describe_albums(albums)))
-            # Stage 5's `process` converts `albums` here, before the next two scans.
             fixes = await scan_reconcile(accounts, cfg.dropbox_album)
             log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
-            # Stage 5's `process` reconciles here.
             assets = await scan_assets(accounts, cfg.dropbox_album)
             log.info("assets: %s", "; ".join(describe_assets(assets)))
-            # Stage 5's `process` moves `assets` here.
             log.info("ledger: %s", ledger.counts())
             return 0
         finally:
@@ -171,6 +170,18 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
         return 0
 
 
+async def run_process(config_path: Path) -> int:
+    """One complete pass: conversions, reconcile, moves, under the limits."""
+    async with opened(config_path, writes=True) as (cfg, accounts):
+        ledger = Ledger(cfg.ledger_path)
+        try:
+            result = await run_pass(accounts, cfg, ledger)
+            log.info("pass done: %s; ledger: %s", result, ledger.counts())
+        finally:
+            ledger.close()
+        return 1 if result.failed else 0
+
+
 def run_show_config(config_path: Path, minimal: bool) -> int:
     """Print the effective config as TOML, keys redacted. No network."""
     sys.stdout.write(tomli_w.dumps(to_raw(load_config(config_path), minimal=minimal)))
@@ -201,6 +212,10 @@ def main(argv: list[str] | None = None) -> int:
         "reconcile-albums",
         help="create the dropbox if missing; make every member an editor on every family album",
     )
+    sub.add_parser(
+        "process",
+        help="one complete pass: convert albums, reconcile family albums, move photos",
+    )
     show = sub.add_parser("show-config", help="print the effective config, secrets redacted")
     show.add_argument("--minimal", action="store_true", help="only what differs from the defaults")
     args = parser.parse_args(argv)
@@ -219,6 +234,8 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(run_reconcile_albums(args.config))
         if args.command == "move":
             return asyncio.run(run_move(args.config, None if args.all else args.asset_id))
+        if args.command == "process":
+            return asyncio.run(run_process(args.config))
         return asyncio.run(run_convert_album(args.config, None if args.all else args.album_id))
     except (ConfigError, AccountError) as e:
         log.error("%s", e)
