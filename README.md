@@ -42,7 +42,9 @@ A photo that's in one of your public shared links isn't moved. The link would br
 
 ## The phone backup problem
 
-The Immich mobile app re-uploads any photo it can't find on the server. Once a moved original is trashed and the trash purges, your phone will upload it again. The service recognises these by checksum and trashes them straight away, so they never reach the family timeline, but it's wasted upload and processing.
+The Immich mobile app re-uploads any photo it can't find on the server. Once a moved original is trashed and the trash purges, your phone will upload it again. The service recognises these by checksum on each pass and trashes them straight away, so they never reach the family timeline, but it's wasted upload and processing. Each one is counted, and a member with more than `reuploads_per_pass` (under `[warnings]`, default 10) in one pass is named in a warning.
+
+If the family account has deleted a photo and you share it again, the service restores the family's copy from its trash rather than uploading it anew. A re-upload of a photo the family has deleted is left alone.
 
 To stop the loop, turn on the experimental **Sync remote deletions** setting in the mobile app (Settings, Advanced). With it on, the app moves the local copy to your phone's trash the next time it opens, as long as the original is still in the server trash. The service never force-empties trash for exactly this reason.
 

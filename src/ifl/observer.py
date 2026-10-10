@@ -9,19 +9,31 @@ Each pass is three scans, in this order:
    is an editor on every family-owned album, and the family partner-shares
    with every member (reconcile).
 3. Assets. The one rule: a member-owned asset sitting in a family-owned album
-   gets moved to the family account.
+   gets moved to the family account. Plus re-uploads: a member-owned asset,
+   uploaded since the last look, whose checksum the family already owns. The
+   same move handles both; a re-upload just has nothing to upload.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
 
 from ifl.accounts import Account, Accounts
-from ifl.immich import AlbumSummary, UserNames, iter_album_assets, list_albums, list_partner_ids
+from ifl.immich import (
+    AlbumSummary,
+    UserNames,
+    iter_album_assets,
+    iter_assets_created_after,
+    list_albums,
+    list_partner_ids,
+    owned_checksums,
+)
+from ifl.ledger import Ledger
 
 log = logging.getLogger(__name__)
 
@@ -73,8 +85,10 @@ class MoveAsset:
     asset_id: UUID
     checksum: str
     owner: Account
-    album: AlbumSummary
+    album: AlbumSummary | None  # the family album it was found in; None for a re-upload
     file_name: str
+    reupload: bool = False
+    created_at: datetime | None = None  # for advancing the re-upload mark
 
 
 @dataclass
@@ -82,6 +96,15 @@ class AssetScan:
     moves: list[MoveAsset] = field(default_factory=list)
     blocked: list[Blocked] = field(default_factory=list)
     dropbox: AlbumSummary | None = None
+    scanned_at: datetime | None = None  # when the re-upload scan looked; None if it didn't
+    skipped_reuploads: list[str] = field(default_factory=list)  # family copy in the trash
+
+    def reuploads_by_owner(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for m in self.moves:
+            if m.reupload:
+                out[m.owner.name] = out.get(m.owner.name, 0) + 1
+        return out
 
 
 def _names(accounts: Accounts) -> UserNames:
@@ -154,8 +177,18 @@ async def scan_reconcile(accounts: Accounts, dropbox_album: str) -> ReconcileSca
     return scan
 
 
-async def scan_assets(accounts: Accounts, dropbox_album: str) -> AssetScan:
-    """Member-owned assets in family-owned albums."""
+REUPLOAD_MARGIN = timedelta(minutes=10)  # re-read a little before the mark, uploads can land late
+
+
+async def scan_assets(
+    accounts: Accounts,
+    dropbox_album: str,
+    *,
+    ledger: Ledger | None = None,
+    now: datetime | None = None,
+) -> AssetScan:
+    """Member-owned assets in family-owned albums, plus, when a ledger is given,
+    re-uploads: members' recent assets whose checksum the family already owns."""
     scan = AssetScan()
     by_id = accounts.by_user_id()
     family = accounts.family
@@ -190,7 +223,45 @@ async def scan_assets(accounts: Accounts, dropbox_album: str) -> AssetScan:
                     file_name=asset.original_file_name,
                 )
             )
+    if ledger is not None:
+        await _scan_reuploads(accounts, ledger, scan, seen, now or datetime.now(UTC))
     return scan
+
+
+async def _scan_reuploads(
+    accounts: Accounts, ledger: Ledger, scan: AssetScan, seen: set[UUID], now: datetime
+) -> None:
+    """Members' assets uploaded since the last look that the family already owns."""
+    scan.scanned_at = now
+    family = accounts.family
+    for member in accounts.members.values():
+        mark = ledger.get_mark(member.user_id)
+        since = mark - REUPLOAD_MARGIN if mark else None
+        recent = {}
+        async for a in iter_assets_created_after(member.client, since):
+            if a.owner_id == member.user_id and not a.is_trashed and a.id not in seen:
+                recent[a.checksum] = a
+        if not recent:
+            continue
+        owned = await owned_checksums(family.client, recent)
+        for checksum, copy in owned.items():
+            a = recent[checksum]
+            if copy.is_trashed:
+                scan.skipped_reuploads.append(
+                    f"{a.original_file_name} from {member.name}: the family's copy is in the trash"
+                )
+                continue
+            scan.moves.append(
+                MoveAsset(
+                    asset_id=a.id,
+                    checksum=checksum,
+                    owner=member,
+                    album=None,
+                    file_name=a.original_file_name,
+                    reupload=True,
+                    created_at=a.created_at,
+                )
+            )
 
 
 def describe_albums(scan: AlbumScan) -> list[str]:
@@ -224,7 +295,12 @@ def describe_reconcile(scan: ReconcileScan, accounts: Accounts) -> list[str]:
 def describe_assets(scan: AssetScan) -> list[str]:
     lines = []
     for m in scan.moves:
-        tag = " [dropbox]" if scan.dropbox and m.album.id == scan.dropbox.id else ""
-        lines.append(f"MOVE {m.file_name} from {m.owner.name}, in {m.album.name!r}{tag}")
+        if m.reupload:
+            lines.append(f"REUPLOAD {m.file_name} from {m.owner.name}: family already has it")
+            continue
+        tag = " [dropbox]" if scan.dropbox and m.album and m.album.id == scan.dropbox.id else ""
+        name = m.album.name if m.album else "?"
+        lines.append(f"MOVE {m.file_name} from {m.owner.name}, in {name!r}{tag}")
+    lines += [f"SKIP re-upload {s}" for s in scan.skipped_reuploads]
     lines += [f"BLOCKED {b.what}: {b.reason}" for b in scan.blocked]
     return lines or ["no assets to move"]

@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS moves (
     reclaimed_at    TEXT,
     reupload_count  INTEGER NOT NULL DEFAULT 0
 );
+-- How far the re-upload scan has looked, per member. A record: losing it means
+-- one slow full rescan, nothing worse.
+CREATE TABLE IF NOT EXISTS scan_marks (
+    user_id         TEXT PRIMARY KEY,
+    scanned_until   TEXT NOT NULL
+);
 """
 
 
@@ -72,6 +78,39 @@ class Ledger:
         )
         self.db.commit()
 
+    def count_reupload(
+        self,
+        *,
+        checksum: str,
+        origin_user_id: UUID,
+        origin_asset_id: UUID,
+        family_asset_id: UUID,
+        file_name: str,
+    ) -> int:
+        """One more re-upload of this checksum. A photo the family got some other
+        way has no row yet; it gets one naming this member. Returns the new count."""
+        self.db.execute(
+            """
+            INSERT INTO moves (checksum, origin_user_id, origin_asset_id, family_asset_id,
+                               file_name, moved_at, reupload_count)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(checksum) DO UPDATE SET reupload_count = reupload_count + 1
+            """,
+            (
+                checksum,
+                str(origin_user_id),
+                str(origin_asset_id),
+                str(family_asset_id),
+                file_name,
+                datetime.now(UTC).isoformat(timespec="seconds"),
+            ),
+        )
+        self.db.commit()
+        (n,) = self.db.execute(
+            "SELECT reupload_count FROM moves WHERE checksum = ?", (checksum,)
+        ).fetchone()
+        return n
+
     def get(self, checksum: str) -> dict | None:
         row = self.db.execute("SELECT * FROM moves WHERE checksum = ?", (checksum,)).fetchone()
         if row is None:
@@ -84,9 +123,26 @@ class Ledger:
             )
         )
 
+    def get_mark(self, user_id: UUID) -> datetime | None:
+        row = self.db.execute(
+            "SELECT scanned_until FROM scan_marks WHERE user_id = ?", (str(user_id),)
+        ).fetchone()
+        return datetime.fromisoformat(row[0]) if row else None
+
+    def set_mark(self, user_id: UUID, until: datetime) -> None:
+        self.db.execute(
+            "INSERT INTO scan_marks (user_id, scanned_until) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET scanned_until = excluded.scanned_until",
+            (str(user_id), until.isoformat()),
+        )
+        self.db.commit()
+
     def counts(self) -> dict[str, int]:
         (moved,) = self.db.execute("SELECT COUNT(*) FROM moves").fetchone()
         (reclaimed,) = self.db.execute(
             "SELECT COUNT(*) FROM moves WHERE reclaimed_at IS NOT NULL"
         ).fetchone()
-        return {"moved": moved, "reclaimed": reclaimed}
+        (reuploads,) = self.db.execute(
+            "SELECT COALESCE(SUM(reupload_count), 0) FROM moves"
+        ).fetchone()
+        return {"moved": moved, "reclaimed": reclaimed, "reuploads": reuploads}

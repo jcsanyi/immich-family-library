@@ -300,3 +300,79 @@ async def test_move_all_honours_the_limit_and_continues_past_blocks_and_failures
     world.partners[FAMILY] = {ALICE, BOB}  # the share arrives; the rerun finishes 2.jpg
     again = await move_assets(accounts, ledger, OPTS, moves[2:3] + moves[4:], limit=0)
     assert [r.file_name for r in again.done] == ["2.jpg", "4.jpg"] and again.remaining == 0
+
+
+async def test_a_reupload_is_trashed_and_counted_without_touching_the_copy(world, ledger):
+    accounts = make_accounts()
+    # The family copy from an earlier move, with its edits and provenance.
+    moved_orig = uuid4()
+    copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
+    world.edits[copy.id] = ["crop"]
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(ALICE), "origin_asset_id": str(moved_orig)}
+    }
+    ledger.record_move(
+        checksum="sha-1",
+        origin_user_id=ALICE,
+        origin_asset_id=moved_orig,
+        family_asset_id=copy.id,
+        file_name="a.jpg",
+    )
+    # Alice's phone re-uploads it, into her private album this time.
+    re = alice_asset(world)
+    private = world.album("Private", ALICE, roles={BOB: VIEWER}, assets=[re])
+    world.partners[FAMILY] = {ALICE, BOB}
+
+    result = await move_asset(
+        accounts, ledger, OPTS, re.id, accounts.members["alice"], now=NOW, reupload=True
+    )
+
+    assert result.duplicate and not result.uploaded and result.reupload_count == 1
+    assert result.family_asset_id == copy.id
+    assert world.edits[copy.id] == ["crop"]  # untouched
+    assert world.metadata[copy.id]["ifl"]["origin_asset_id"] == str(moved_orig)  # untouched
+    assert copy in world.assets[private.id] and re.is_trashed
+    row = ledger.get("sha-1")
+    assert row["reupload_count"] == 1 and row["origin_asset_id"] == str(moved_orig)
+    assert not world.uploads and not any(w[0] == "tag" for w in world.writes)
+    assert "re-upload #1" in str(result)
+
+
+async def test_a_reupload_of_a_family_direct_upload_gets_a_ledger_row(world, ledger):
+    accounts = make_accounts()
+    copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
+    # No ifl entry: the family uploaded this itself. A member's copy is still redundant,
+    # but with nothing to compare, it reads as a move: provenance now names the member.
+    re = alice_asset(world)
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[re])
+    result = await move_asset(accounts, ledger, OPTS, re.id, accounts.members["alice"], now=NOW)
+    assert not result.duplicate and result.family_asset_id == copy.id and re.is_trashed
+    assert world.metadata[copy.id]["ifl"]["origin_asset_id"] == str(re.id)
+
+
+async def test_a_trashed_family_copy_is_restored_when_shared_again(world, ledger):
+    accounts = make_accounts()
+    copy = world.add_asset(
+        FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg", is_trashed=True)
+    )
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(ALICE), "origin_asset_id": str(uuid4())}
+    }
+    re = alice_asset(world)
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[re])
+
+    result = await move_asset(accounts, ledger, OPTS, re.id, accounts.members["alice"], now=NOW)
+
+    assert result.restored and result.duplicate and not result.uploaded
+    assert not copy.is_trashed and ("restore", FAMILY, copy.id) in world.writes
+    assert copy in world.assets[trip.id] and re.is_trashed
+    assert result.reupload_count == 0 and ledger.get("sha-1") is None  # a re-share isn't counted
+    assert "restored from the trash" in str(result)
+    # The same situation reached from the re-upload scan is blocked instead.
+    copy.is_trashed = True
+    re2 = world.add_asset(FakeAsset(uuid4(), ALICE, checksum="sha-1", original_file_name="a.jpg"))
+    with pytest.raises(MoveBlocked, match="in the trash"):
+        await move_asset(
+            accounts, ledger, OPTS, re2.id, accounts.members["alice"], now=NOW, reupload=True
+        )
+    assert copy.is_trashed and not re2.is_trashed

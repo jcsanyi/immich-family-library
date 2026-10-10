@@ -38,6 +38,12 @@ assets_per_pass = 20
 moved = "family"
 from_prefix = "from"
 
+# A phone that hasn't synced a deletion re-uploads moved photos once the trash
+# purges. They're trashed again automatically; above this many in one pass for
+# one member, that member is named in a warning.
+[warnings]
+reuploads_per_pass = 10
+
 # The family account owns everything that's been shared. The email is checked
 # against the account the key belongs to, so a config pointed at the wrong
 # server fails at startup instead of moving photos between the wrong accounts.

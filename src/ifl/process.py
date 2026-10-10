@@ -7,8 +7,10 @@ The order matters and is the one DESIGN.md gives:
    same pass.
 2. Reconcile: dropbox, editors, partner shares.
 3. Queue check under the admin key, if there is one. A backlog on the sidecar or
-   metadata queues means the moves wait for the next pass.
-4. Asset scan, then moves, up to `assets_per_pass`.
+   metadata queues means the moves wait for the next pass, and so does the
+   re-upload mark.
+4. Asset scan, re-uploads included, then moves, up to `assets_per_pass`. Then
+   each member's re-upload mark advances as far as what was finished.
 
 Nothing here is a loop. The long-running service (stage 7) calls this once per
 interval; `ifl process` calls it once.
@@ -23,7 +25,14 @@ from ifl.accounts import Accounts
 from ifl.config import Config
 from ifl.convert import ConvertManyResult, convert_albums
 from ifl.ledger import Ledger
-from ifl.move import MoveManyResult, MoveOptions, move_assets, pass_backlog
+from ifl.move import (
+    MoveManyResult,
+    MoveOptions,
+    advance_marks,
+    move_assets,
+    pass_backlog,
+    reupload_warnings,
+)
 from ifl.observer import (
     describe_albums,
     describe_reconcile,
@@ -76,9 +85,12 @@ async def run_pass(accounts: Accounts, cfg: Config, ledger: Ledger) -> PassResul
         log.warning("not moving anything this pass: Immich has jobs waiting: %s", backlog)
         return PassResult(converted, reconciled, backlog, None)
 
-    assets = await scan_assets(accounts, cfg.dropbox_album)
+    assets = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
     for b in assets.blocked:
         log.warning("not moving %s: %s", b.what, b.reason)
+    for s in assets.skipped_reuploads:
+        log.info("skipping re-upload %s", s)
+    reupload_warnings(assets, cfg.reuploads_per_pass)
     opts = MoveOptions(
         dropbox_album=cfg.dropbox_album,
         settle_seconds=cfg.settle_seconds,
@@ -86,4 +98,5 @@ async def run_pass(accounts: Accounts, cfg: Config, ledger: Ledger) -> PassResul
         from_prefix=cfg.from_prefix,
     )
     moved = await move_assets(accounts, ledger, opts, assets.moves, limit=cfg.assets_per_pass)
+    advance_marks(ledger, assets, moved, accounts)
     return PassResult(converted, reconciled, backlog, moved)

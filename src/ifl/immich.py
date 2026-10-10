@@ -217,14 +217,22 @@ async def shared_link_asset_ids(client: AsyncClient) -> set[UUID]:
     return {a.id for link in links if link.type == SharedLinkType.INDIVIDUAL for a in link.assets}
 
 
-async def existing_asset_by_checksum(client: AsyncClient, checksum: str) -> UUID | None:
-    """The id of this account's asset with that checksum, if it already has one."""
-    dto = AssetBulkUploadCheckDto(assets=[AssetBulkUploadCheckItem(id="x", checksum=checksum)])
-    res = await client.assets.check_bulk_upload(dto)
-    (result,) = res.results
-    if result.action.value == "reject" and result.reason and result.reason.value == "duplicate":
-        return result.asset_id
+async def existing_asset_by_checksum(client: AsyncClient, checksum: str) -> Owned | None:
+    """This account's asset with that checksum, if it already has one, trashed or not."""
+    return (await owned_checksums(client, [checksum])).get(checksum)
+
+
+async def get_asset_metadata_value(
+    client: AsyncClient, asset_id: UUID, key: str
+) -> dict[str, Any] | None:
+    for item in await client.assets.get_asset_metadata(id=asset_id):
+        if item.key == key:
+            return item.value
     return None
+
+
+async def restore_assets(client: AsyncClient, asset_ids: Iterable[UUID]) -> None:
+    await client.trash.restore_assets(BulkIdsDto(ids=list(asset_ids)))
 
 
 async def queue_backlog(client: AsyncClient) -> dict[str, int]:
@@ -296,3 +304,44 @@ async def set_asset_metadata(
 async def trash_assets(client: AsyncClient, asset_ids: Iterable[UUID]) -> None:
     """Trash, never permanent delete. See the re-upload section of DESIGN.md."""
     await client.assets.delete_assets(AssetBulkDeleteDto(ids=list(asset_ids), force=False))
+
+
+async def iter_assets_created_after(
+    client: AsyncClient, since: datetime | None, *, page_size: int = 250
+) -> AsyncIterator[AssetResponseDto]:
+    """This account's view of assets uploaded after `since` (all of them when None).
+    Includes partners' assets; callers filter by owner."""
+    page = 1
+    while True:
+        res = await client.search.search_assets(
+            MetadataSearchDto(created_after=since, page=page, size=page_size, with_exif=False)
+        )
+        for a in res.assets.items:
+            yield a
+        if not res.assets.next_page:
+            return
+        page = int(res.assets.next_page)
+
+
+@dataclass(frozen=True)
+class Owned:
+    asset_id: UUID
+    is_trashed: bool
+
+
+async def owned_checksums(
+    client: AsyncClient, checksums: Iterable[str], *, batch: int = 250
+) -> dict[str, Owned]:
+    """Which of these checksums this account already has, and whether that asset is trashed."""
+    out: dict[str, Owned] = {}
+    todo = list(dict.fromkeys(checksums))
+    for i in range(0, len(todo), batch):
+        chunk = todo[i : i + batch]
+        dto = AssetBulkUploadCheckDto(
+            assets=[AssetBulkUploadCheckItem(id=c, checksum=c) for c in chunk]
+        )
+        res = await client.assets.check_bulk_upload(dto)
+        for r in res.results:
+            if r.action.value == "reject" and r.reason and r.reason.value == "duplicate":
+                out[r.id] = Owned(r.asset_id, bool(r.is_trashed))
+    return out

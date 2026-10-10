@@ -11,6 +11,7 @@ DEFAULTS = {
     "family": {"dropbox_album": "Family Dropbox"},
     "limits": {"albums_per_pass": 5, "assets_per_pass": 20},
     "tags": {"moved": "family", "from_prefix": "from"},
+    "warnings": {"reuploads_per_pass": 10},
 }
 
 
@@ -39,6 +40,7 @@ class Config:
     moved_tag: str = "family"  # goes on a member's original when it's moved
     from_prefix: str = "from"  # the family copy is tagged "<from_prefix>/<member>"
     admin_api_key: str | None = None  # any admin user's key; only for the queue check
+    reuploads_per_pass: int = 10  # warn about a member above this many re-uploads in a pass
     config_dir: Path = field(default=Path("."), compare=False)
 
 
@@ -108,6 +110,11 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
                 f"[tags] {key} must be a tag name without leading or trailing slashes"
             )
 
+    warnings = raw.get("warnings") or {}
+    reuploads = warnings.get("reuploads_per_pass", DEFAULTS["warnings"]["reuploads_per_pass"])
+    if not isinstance(reuploads, int) or reuploads < 0:
+        raise ConfigError("[warnings] reuploads_per_pass must be a whole number")
+
     admin_api_key = immich.get("admin_api_key") or None
     if admin_api_key is not None and not isinstance(admin_api_key, str):
         raise ConfigError("[immich] admin_api_key must be a string")
@@ -125,6 +132,7 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
         moved_tag=moved_tag,
         from_prefix=from_prefix,
         admin_api_key=admin_api_key,
+        reuploads_per_pass=reuploads,
         config_dir=config_dir,
     )
 
@@ -154,14 +162,22 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
     }
     limits = {"albums_per_pass": cfg.albums_per_pass, "assets_per_pass": cfg.assets_per_pass}
     tags = {"moved": cfg.moved_tag, "from_prefix": cfg.from_prefix}
+    warnings = {"reuploads_per_pass": cfg.reuploads_per_pass}
     if minimal:
         defaults = {
             **{("service", k): v for k, v in DEFAULTS["service"].items()},
             ("service", "ledger_path"): str(default_ledger),
             **{("limits", k): v for k, v in DEFAULTS["limits"].items()},
             **{("tags", k): v for k, v in DEFAULTS["tags"].items()},
+            **{("warnings", k): v for k, v in DEFAULTS["warnings"].items()},
         }
-        for section in (("service", service), ("limits", limits), ("tags", tags)):
+        sections = (
+            ("service", service),
+            ("limits", limits),
+            ("tags", tags),
+            ("warnings", warnings),
+        )
+        for section in sections:
             name, values = section
             for key in list(values):
                 if values[key] == defaults[(name, key)]:
@@ -170,7 +186,12 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
     out: dict = {"immich": {"url": cfg.immich_url}}
     if cfg.admin_api_key:
         out["immich"]["admin_api_key"] = redact(cfg.admin_api_key)
-    for name, values in (("service", service), ("limits", limits), ("tags", tags)):
+    for name, values in (
+        ("service", service),
+        ("limits", limits),
+        ("tags", tags),
+        ("warnings", warnings),
+    ):
         if values:
             out[name] = values
     out["family"] = account(cfg.family)

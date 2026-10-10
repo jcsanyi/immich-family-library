@@ -21,10 +21,12 @@ from ifl.move import (
     MoveBlocked,
     MoveError,
     MoveOptions,
+    advance_marks,
     move_asset,
     move_assets,
     outside_partners,
     pass_backlog,
+    reupload_warnings,
 )
 from ifl.observer import (
     describe_albums,
@@ -64,8 +66,11 @@ async def run_observe(config_path: Path) -> int:
             log.info("albums: %s", "; ".join(describe_albums(albums)))
             fixes = await scan_reconcile(accounts, cfg.dropbox_album)
             log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
-            assets = await scan_assets(accounts, cfg.dropbox_album)
+            assets = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
             log.info("assets: %s", "; ".join(describe_assets(assets)))
+            for who, n in assets.reuploads_by_owner().items():
+                level = logging.WARNING if n > cfg.reuploads_per_pass else logging.INFO
+                log.log(level, "%s has %d re-uploads waiting", who, n)
             log.info("ledger: %s", ledger.counts())
             return 0
         finally:
@@ -125,49 +130,58 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
         if backlog:
             log.error("not moving anything: Immich has jobs waiting: %s", backlog)
             return 1
-        scan = await scan_assets(accounts, cfg.dropbox_album)
-        opts = MoveOptions(
-            dropbox_album=cfg.dropbox_album,
-            settle_seconds=cfg.settle_seconds,
-            moved_tag=cfg.moved_tag,
-            from_prefix=cfg.from_prefix,
-        )
-        if asset_id is None:
-            for b in scan.blocked:
-                log.warning("skipping %s: %s", b.what, b.reason)
-            ledger = Ledger(cfg.ledger_path)
-            try:
+        ledger = Ledger(cfg.ledger_path)
+        try:
+            scan = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
+            opts = MoveOptions(
+                dropbox_album=cfg.dropbox_album,
+                settle_seconds=cfg.settle_seconds,
+                moved_tag=cfg.moved_tag,
+                from_prefix=cfg.from_prefix,
+            )
+            if asset_id is None:
+                for b in scan.blocked:
+                    log.warning("skipping %s: %s", b.what, b.reason)
+                for s in scan.skipped_reuploads:
+                    log.info("skipping re-upload %s", s)
+                reupload_warnings(scan, cfg.reuploads_per_pass)
                 many = await move_assets(
                     accounts, ledger, opts, scan.moves, limit=cfg.assets_per_pass
                 )
-            finally:
-                ledger.close()
-            log.info("%s", many)
-            return 1 if many.failed else 0
-        target = next((m for m in scan.moves if m.asset_id == asset_id), None)
-        if target is None:
-            blocked = next((b for b in scan.blocked if b.asset_id == asset_id), None)
-            if blocked:
-                log.error("not moving %s: %s", blocked.what, blocked.reason)
-            else:
-                log.error("asset %s is not a member-owned asset in a family-owned album", asset_id)
-            return 1
-        for uid in await outside_partners(accounts, target.owner):
-            log.warning(
-                "%s partner-shares their library with non-participant %s", target.owner.name, uid
-            )
-        ledger = Ledger(cfg.ledger_path)
-        try:
-            result = await move_asset(accounts, ledger, opts, asset_id, target.owner)
-        except MoveBlocked as e:
-            log.warning("blocked %s: %s", target.file_name, e)
-            return 1
+                advance_marks(ledger, scan, many, accounts)
+                log.info("%s", many)
+                return 1 if many.failed else 0
+            return await _move_one(accounts, ledger, opts, scan, asset_id)
         finally:
             ledger.close()
-        for w in result.warnings:
-            log.warning("%s: %s", result.file_name, w)
-        log.info("%s", result)
-        return 0
+
+
+async def _move_one(
+    accounts: Accounts, ledger: Ledger, opts: MoveOptions, scan, asset_id: UUID
+) -> int:
+    target = next((m for m in scan.moves if m.asset_id == asset_id), None)
+    if target is None:
+        blocked = next((b for b in scan.blocked if b.asset_id == asset_id), None)
+        if blocked:
+            log.error("not moving %s: %s", blocked.what, blocked.reason)
+        else:
+            log.error("asset %s is not a member-owned asset in a family-owned album", asset_id)
+        return 1
+    for uid in await outside_partners(accounts, target.owner):
+        log.warning(
+            "%s partner-shares their library with non-participant %s", target.owner.name, uid
+        )
+    try:
+        result = await move_asset(
+            accounts, ledger, opts, asset_id, target.owner, reupload=target.reupload
+        )
+    except MoveBlocked as e:
+        log.warning("blocked %s: %s", target.file_name, e)
+        return 1
+    for w in result.warnings:
+        log.warning("%s: %s", result.file_name, w)
+    log.info("%s", result)
+    return 0
 
 
 async def run_process(config_path: Path) -> int:

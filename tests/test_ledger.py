@@ -6,7 +6,7 @@ def test_creates_file_and_starts_empty(tmp_path):
     ledger = Ledger(path)
     try:
         assert path.exists()
-        assert ledger.counts() == {"moved": 0, "reclaimed": 0}
+        assert ledger.counts() == {"moved": 0, "reclaimed": 0, "reuploads": 0}
     finally:
         ledger.close()
 
@@ -25,7 +25,7 @@ def test_record_move_upserts_and_clears_reclaim(tmp_path):
         family_asset_id=fam,
         file_name="a.jpg",
     )
-    assert led.counts() == {"moved": 1, "reclaimed": 0}
+    assert led.counts() == {"moved": 1, "reclaimed": 0, "reuploads": 0}
     led.db.execute("UPDATE moves SET reclaimed_at = 'x', reupload_count = 3 WHERE checksum = 'c1'")
     fam2 = uuid4()
     led.record_move(

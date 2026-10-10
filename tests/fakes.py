@@ -44,6 +44,7 @@ class FakeAsset:
     description: str = ""
     width: int | None = 640  # None until "extraction" has run
     height: int | None = 480
+    created_at: datetime = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @dataclass
@@ -224,13 +225,38 @@ class FakeWorld:
         return set(self.shared_links.get(client.user_id, set()))
 
     async def existing_asset_by_checksum(self, client, checksum):
-        for a in self.library.values():
-            if a.owner_id == client.user_id and a.checksum == checksum:
-                return a.id
-        return None
+        return (await self.owned_checksums(client, [checksum])).get(checksum)
+
+    async def get_asset_metadata_value(self, client, asset_id, key):
+        return self.metadata.get(asset_id, {}).get(key)
+
+    async def restore_assets(self, client, asset_ids):
+        for i in asset_ids:
+            a = self.find_asset(i)
+            assert client.user_id == a.owner_id
+            a.is_trashed = False
+            self.writes.append(("restore", client.user_id, i))
 
     async def queue_backlog(self, client):
         return dict(self.queues)
+
+    async def iter_assets_created_after(self, client, since):
+        for a in self.library.values():
+            visible = a.owner_id == client.user_id or client.user_id in self.partners.get(
+                a.owner_id, set()
+            )
+            if visible and (since is None or a.created_at > since):
+                yield a
+
+    async def owned_checksums(self, client, checksums):
+        from ifl.immich import Owned
+
+        out = {}
+        for c in checksums:
+            for a in self.library.values():
+                if a.owner_id == client.user_id and a.checksum == c:
+                    out[c] = Owned(a.id, a.is_trashed)
+        return out
 
     # Move-path writes.
 
@@ -262,7 +288,7 @@ class FakeWorld:
     ):
         existing = await self.existing_asset_by_checksum(client, checksum)
         if existing:
-            return existing, False
+            return existing.asset_id, False
         new = self.add_asset(
             FakeAsset(
                 uuid4(),
@@ -344,6 +370,10 @@ WRITE_HELPERS = (
     "set_asset_edits",
     "set_asset_metadata",
     "trash_assets",
+    "iter_assets_created_after",
+    "owned_checksums",
+    "get_asset_metadata_value",
+    "restore_assets",
 )
 
 

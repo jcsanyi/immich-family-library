@@ -16,6 +16,13 @@ State comes from Immich at every step: the family already owning the checksum
 means the upload is done, the original still existing means it hasn't been
 trashed. So a move that died anywhere is finished by running it again.
 
+The same path handles a re-upload, a member's fresh copy of something the
+family already has. The family copy's `ifl` entry names a different origin
+asset, which marks this as a duplicate rather than a crashed move: edits and
+provenance are left alone, the copy is re-linked into any album the duplicate
+sits in, the duplicate is trashed, and the ledger counts it. A family copy
+found in the trash while a member shares the photo again is restored first.
+
 Re-linking into a member-owned album runs under the album owner's key, which
 works because an owner can always add and the family partner-shares with every
 member. If the owner isn't a participant, the asset owner's key is tried, which
@@ -46,8 +53,10 @@ from ifl.immich import (
     find_sidecar,
     get_asset,
     get_asset_edits,
+    get_asset_metadata_value,
     list_partner_ids,
     queue_backlog,
+    restore_assets,
     set_asset_edits,
     set_asset_metadata,
     shared_link_asset_ids,
@@ -91,13 +100,21 @@ class MoveResult:
     file_name: str
     uploaded: bool  # False when the family already had the checksum
     edits: int
+    duplicate: bool = False  # a re-upload of something already moved; nothing rewritten
+    restored: bool = False  # the family copy came back out of the trash
+    reupload_count: int = 0  # the ledger's count for this checksum after this run
     relinked: list[str] = field(default_factory=list)  # family albums the copy was added to
     relinked_member: list[str] = field(default_factory=list)  # member-owned albums, same
     trashed: bool = False
     warnings: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
-        how = "uploaded" if self.uploaded else "family already had it"
+        if self.restored:
+            how = "family copy restored from the trash"
+        elif self.duplicate:
+            how = f"re-upload #{self.reupload_count}, family already has it"
+        else:
+            how = "uploaded" if self.uploaded else "family already had it"
         fate = "trashed" if self.trashed else "kept"
         s = (
             f"{self.file_name}: {how} as {self.family_asset_id}; {self.edits} edits; "
@@ -192,6 +209,7 @@ class MoveManyResult:
     blocked: list[tuple[str, str]] = field(default_factory=list)  # (file name, reason)
     failed: list[tuple[str, str]] = field(default_factory=list)  # (file name, error)
     remaining: int = 0  # movable assets left untouched because of the limit
+    unfinished: set[UUID] = field(default_factory=set)  # blocked, failed or over the limit
 
     def __str__(self) -> str:
         return (
@@ -208,6 +226,7 @@ async def move_assets(
     the others. Per-owner lookups happen once."""
     todo = moves if limit == 0 else moves[:limit]
     out = MoveManyResult(remaining=len(moves) - len(todo))
+    out.unfinished = {m.asset_id for m in moves[len(todo) :]}
     shared_links: dict[UUID, set[UUID]] = {}
     for m in todo:
         owner = m.owner
@@ -219,15 +238,23 @@ async def move_assets(
                 )
         try:
             result = await move_asset(
-                accounts, ledger, opts, m.asset_id, owner, shared_links=shared_links[owner.user_id]
+                accounts,
+                ledger,
+                opts,
+                m.asset_id,
+                owner,
+                shared_links=shared_links[owner.user_id],
+                reupload=m.reupload,
             )
         except MoveBlocked as e:
             log.warning("blocked %s: %s", m.file_name, e)
             out.blocked.append((m.file_name, str(e)))
+            out.unfinished.add(m.asset_id)
             continue
         except MoveError as e:
             log.error("%s not moved: %s", m.file_name, e)
             out.failed.append((m.file_name, str(e)))
+            out.unfinished.add(m.asset_id)
             continue
         for w in result.warnings:
             log.warning("%s: %s", result.file_name, w)
@@ -236,6 +263,27 @@ async def move_assets(
     if out.remaining:
         log.info("%d more assets to move; limit is %d per pass", out.remaining, limit)
     return out
+
+
+def advance_marks(ledger: Ledger, scan, many: MoveManyResult, accounts: Accounts) -> None:
+    """After a pass, record how far the re-upload scan got, per member. A member
+    whose every re-upload was handled is marked at the scan time; otherwise at
+    the upload time of their oldest unfinished one, so it's found again."""
+    if scan.scanned_at is None:
+        return
+    for member in accounts.members.values():
+        pending = [
+            m.created_at
+            for m in scan.moves
+            if m.reupload and m.owner.user_id == member.user_id and m.asset_id in many.unfinished
+        ]
+        ledger.set_mark(member.user_id, min(pending) if pending else scan.scanned_at)
+
+
+def reupload_warnings(scan, threshold: int) -> None:
+    for who, n in scan.reuploads_by_owner().items():
+        level = logging.WARNING if n > threshold else logging.INFO
+        log.log(level, "%s has %d re-uploads this pass", who, n)
 
 
 async def move_asset(
@@ -247,7 +295,11 @@ async def move_asset(
     *,
     shared_links: set[UUID] | None = None,
     now: datetime | None = None,
+    reupload: bool = False,
 ) -> MoveResult:
+    """`reupload` says the asset came from the re-upload scan rather than a family
+    album: a trashed family copy then blocks instead of being restored, and a
+    duplicate is counted in the ledger."""
     family = accounts.family
     now = now or datetime.now(UTC)
 
@@ -285,8 +337,21 @@ async def move_asset(
 
     # The family copy: found by checksum, or made now. A trashed original with no
     # copy isn't moved; a trashed original with a copy is a move that died late.
-    family_id = await existing_asset_by_checksum(family.client, asset.checksum)
-    uploaded = False
+    owned = await existing_asset_by_checksum(family.client, asset.checksum)
+    family_id = owned.asset_id if owned else None
+    uploaded = restored = duplicate = False
+    if owned and owned.is_trashed:
+        if reupload:
+            raise MoveBlocked("the family's copy is in the trash")
+        # Shared again after the family deleted it: bring the copy back.
+        await restore_assets(family.client, [owned.asset_id])
+        restored = True
+        log.info(
+            "%s: restored the family's copy %s from the trash", asset.original_file_name, family_id
+        )
+    if family_id is not None:
+        provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
+        duplicate = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
     if family_id is None:
         if asset.is_trashed:
             raise MoveError(f"{asset.original_file_name} is in the trash")
@@ -314,20 +379,22 @@ async def move_asset(
     else:
         log.info("%s: family already has it as %s", asset.original_file_name, family_id)
 
-    # Fix-ups, all idempotent.
-    if edits:
-        await _wait_for_dimensions(family, family_id, opts.extraction_timeout)
-        await set_asset_edits(family.client, family_id, edits)
-    await set_asset_metadata(
-        family.client,
-        family_id,
-        PROVENANCE_KEY,
-        {
-            "origin_user_id": str(owner.user_id),
-            "origin_asset_id": str(asset_id),
-            "moved_at": now.isoformat(timespec="seconds"),
-        },
-    )
+    # Fix-ups, all idempotent. A duplicate leaves the copy's edits and provenance
+    # alone: they describe the move that already happened.
+    if not duplicate:
+        if edits:
+            await _wait_for_dimensions(family, family_id, opts.extraction_timeout)
+            await set_asset_edits(family.client, family_id, edits)
+        await set_asset_metadata(
+            family.client,
+            family_id,
+            PROVENANCE_KEY,
+            {
+                "origin_user_id": str(owner.user_id),
+                "origin_asset_id": str(asset_id),
+                "moved_at": now.isoformat(timespec="seconds"),
+            },
+        )
     relinked = []
     for a in family_albums:
         if a.name == opts.dropbox_album:
@@ -346,20 +413,33 @@ async def move_asset(
         await trash_assets(owner.client, [asset_id])
         trashed = True
 
-    ledger.record_move(
-        checksum=asset.checksum,
-        origin_user_id=owner.user_id,
-        origin_asset_id=asset_id,
-        family_asset_id=family_id,
-        file_name=asset.original_file_name,
-    )
+    reupload_count = 0
+    if duplicate and reupload:
+        reupload_count = ledger.count_reupload(
+            checksum=asset.checksum,
+            origin_user_id=owner.user_id,
+            origin_asset_id=asset_id,
+            family_asset_id=family_id,
+            file_name=asset.original_file_name,
+        )
+    elif not duplicate:
+        ledger.record_move(
+            checksum=asset.checksum,
+            origin_user_id=owner.user_id,
+            origin_asset_id=asset_id,
+            family_asset_id=family_id,
+            file_name=asset.original_file_name,
+        )
     return MoveResult(
         asset_id=asset_id,
         family_asset_id=family_id,
         checksum=asset.checksum,
         file_name=asset.original_file_name,
         uploaded=uploaded,
-        edits=len(edits),
+        edits=len(edits) if not duplicate else 0,
+        duplicate=duplicate,
+        restored=restored,
+        reupload_count=reupload_count,
         relinked=relinked,
         relinked_member=relinked_member,
         trashed=trashed,
