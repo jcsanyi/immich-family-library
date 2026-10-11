@@ -1,6 +1,7 @@
 """Stage 5: one complete pass.
 
-The order matters and is the one DESIGN.md gives:
+The order matters and is the one docs/how-it-works.md gives under "The three
+scans":
 
 1. Album scan, then conversions, up to `albums_per_pass`. A just-converted album
    is family-owned by the time the asset scan runs, so its photos move in the

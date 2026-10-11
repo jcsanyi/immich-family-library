@@ -4,13 +4,11 @@
 
 README.md says what the system is and does, in user-facing terms, and defines the vocabulary (member, family account, dropbox, reclaim). Read it first.
 
-DESIGN.md is the working design. Read it fully before doing anything. It covers the flows, the state model, what metadata is carried, the mobile re-upload problem and how we handle it, the API key permissions, the things that still need verifying on a dev instance, and the build stages.
+`docs/` is the design and the documentation in one. Read `docs/how-it-works.md` fully before doing anything: it covers the flows, the state model, what metadata is carried, the mobile re-upload problem and how we handle it, and pacing. `docs/configuration.md` has the config reference and the API key permissions, `docs/immich-notes.md` what we've verified about Immich's behaviour and the upstream references, `docs/development.md` the test setup and the dev-instance history, `docs/cli.md` and `docs/deployment.md` the operator side, and `docs/for-members.md` is the hand-out for family members. Work still to do lives in the GitHub issues, not in a document.
 
-It is a temporary document, not the final documentation. It exists to hold the overall goal and the stages still to come while the system is built. As each stage lands, real documentation (README, config reference, docstrings) takes over from the corresponding part of DESIGN.md, and that part can be trimmed. When nothing is left but history, delete it.
+Any part of the design can still change through conversation with the user. When it does, update the relevant doc in the same change so it never disagrees with what was decided. If code and the docs disagree and there's no record of a decision, ask rather than assume either is right.
 
-Any part of the design can still change through conversation with the user. When it does, update DESIGN.md in the same change so it never disagrees with what was decided. If code and DESIGN.md disagree and there's no record of a decision, ask rather than assume either is right.
-
-Two terms DESIGN.md uses that README.md doesn't:
+Two terms the docs use that README.md doesn't:
 
 - The one rule: a member-owned asset found in a family-owned album gets moved to the family account. Every flow is a way of getting an asset into that position.
 - Ledger: the local SQLite record keyed by checksum of what moved, from whom, and where it went. A record, not a controller: the move path derives its state from Immich.
@@ -35,22 +33,24 @@ Testing happens on a separate dev instance, never production.
 - URL: https://dev.photos.csanyi.ca, nginx on the home server (tarsus) proxying to host port 2283.
 - Runs under rootless docker as user `immich-dev` on tarsus. `ssh immich-dev` works from this machine (alias in `~/.ssh/config`, key `~/.ssh/id_ed25519_immich_dev`). Rootless docker was installed with `dockerd-rootless-setuptool.sh install`; the user's docker context is `rootless`, and `loginctl enable-linger immich-dev` keeps it running without a login session (`disable-linger` undoes that). If a shell gets "permission denied" on the docker socket, `export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock`.
 - Compose files in `/data/immich-dev`: the stock Immich `docker-compose.yml`, an override naming the project `immich-dev` and containers `immich_dev_*`, and `.env` pinning `IMMICH_VERSION=v3.3.1`. Machine learning is behind the `ml` compose profile and disabled until the faces stage. Library and database are plain directories (`library/`, `pgdata/`); a full reset is `docker compose down && rm -rf library pgdata`.
-- Accounts: admin, family, and members alice, bob, carol. Emails, user ids, API keys and one shared password (`DEV_PASSWORD`, valid for all five accounts in the web UI) are in `/data/immich-dev/accounts.env` on tarsus, never in the repo.
+- Accounts: admin, family, and members alice, bob, carol. Emails, user ids, API keys (including `ADMIN_API_KEY`, a key on the admin account with only the queue and identity permissions) and one shared password (`DEV_PASSWORD`, valid for all five accounts in the web UI) are in `/data/immich-dev/accounts.env` on tarsus, never in the repo. The webhook token is only in the two config files (local and tarsus); they must agree, or `observe` reports every member's workflow as needing a fix.
+- Key permissions: a key can't change its own, so when a stage adds permissions, update the dev keys with `IFL_DEV_PASSWORD=... IFL_ADMIN_EMAIL=... uv run --group seed python scripts/dev_scenarios.py keys`, which logs in with the password and brings every key up to the sets in `accounts.py` (or do it in the web UI under Account Settings, API Keys). `observe` fails at startup until the keys match.
+- Test situations: `scripts/dev_scenarios.py` sets up, as the users would, each situation stages 2 to 7 were verified against: albums to convert (with a description and an outside viewer, a merge into an existing family album, several for the limit), a broken reconcile state, a bob-owned album holding alice's photo, a fully edited photo, re-uploads after a purge, a re-share after the family trashed its copy. Its docstring lists them. Most assume the seed has run and the photos haven't moved yet; after a full cycle, `seed_dev.py --reset` then the seed gets back to the start.
 - Local config on this machine: `config.toml` in the repo checkout (gitignored) points at the public dev URL with the real keys. To rebuild it, copy `config.example.toml` and fill in the keys from `accounts.env`.
-- Sample data: `scripts/seed_dev.py` uploads eight deterministic JPEGs with EXIF as the members and sets up the albums the observer expects (family dropbox and "Family Trip", alice's "Beach 2025" shared with the family, alice's "Alice & Bob" shared only with bob). It logs in with the shared password, so run it as `IFL_DEV_PASSWORD=... uv run --group seed python scripts/seed_dev.py`; `--reset` wipes all five accounts first. Re-running without `--reset` is a no-op thanks to Immich's dedupe.
+- Sample data: `scripts/seed_dev.py` uploads eight deterministic JPEGs with EXIF as the members and sets up the albums the observer expects (family dropbox and "Family Trip", alice's "Beach 2025" shared with the family, alice's "Alice & Bob" shared only with bob). It logs in with the shared password, so run it as `IFL_DEV_PASSWORD=... uv run --group seed python scripts/seed_dev.py`; `--reset` wipes all five accounts' assets and albums first (workflows and partner shares survive, which is fine; reconcile would recreate them anyway). Re-running without `--reset` is a no-op thanks to Immich's dedupe, which also counts trashed assets, so a moved photo isn't re-uploaded until the member's trash is emptied; that's what `dev_scenarios.py reupload` does.
 - There is no Python on tarsus; the service only runs there as the container (see deploy steps below).
 
 ## How to work on this
 
-Build and test one stage at a time, in the order listed under "Stages" in DESIGN.md. Don't scaffold later stages ahead of time. Confirm verification results with the user before moving on to the next stage.
+Work one GitHub issue, or one piece of one, at a time. Don't scaffold ahead. Confirm verification results with the user before moving on.
 
-The system deletes originals out of members' accounts, so mistakes are expensive. Several API behaviours (sidecar precedence, cluster-group recognition on new uploads, the mobile re-upload loop) are assumptions until checked on the dev instance. DESIGN.md has the list.
+The system deletes originals out of members' accounts, so mistakes are expensive. Anything about Immich's behaviour that `docs/immich-notes.md` doesn't mark as verified is an assumption until checked on the dev instance; the `verify` label on the issues tracks what's still open.
 
 ## Looking things up
 
 - The Immich API reference site is a JavaScript app and fetches as an empty page. Use the OpenAPI spec instead: https://raw.githubusercontent.com/immich-app/immich/main/open-api/immich-openapi-specs.json. Each path carries an `x-immich-permission` field naming the API key scope it needs.
 - For behaviour the spec doesn't describe (job ordering, sidecar handling, what extraction overwrites), read the server source directly. server/src/services/metadata.service.ts is where sidecar read and write live.
-- GitHub discussions and issues referenced in DESIGN.md are the record of what upstream has said about ownership transfer, the re-upload loop and tags. Check them before assuming something has changed.
+- The GitHub discussions and issues listed under "Upstream references" in `docs/immich-notes.md` are the record of what upstream has said about ownership transfer, the re-upload loop and tags. Check them before assuming something has changed.
 
 ## Persistent memory
 

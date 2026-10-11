@@ -8,6 +8,8 @@ Immich has no way to transfer ownership of a photo, so "move" means the service 
 
 ## How it works
 
+The short version. [docs/for-members.md](docs/for-members.md) says the same thing for the family, and [docs/how-it-works.md](docs/how-it-works.md) says it precisely.
+
 There's one extra Immich user, the family account, and it owns everything that's been shared. It partner-shares to every member with "show in timeline" on, which is what puts family photos in each member's timeline.
 
 The service watches for one thing: a member-owned photo sitting in an album the family account owns. When it finds one, it moves it. Every feature below is just a way of getting a photo into that position.
@@ -52,42 +54,29 @@ If a member keeps re-uploading in volume, the service logs a warning naming them
 
 ## Storage
 
-Trashed originals count against your usage until the trash purges, 30 days by default. The initial conversion of existing albums is the big spike; after that it's a rolling month of new family photos. The family account should have no quota or a generous one.
+Trashed originals count against a member's usage until the trash purges, 30 days by default. The initial conversion of existing albums is the big spike; after that it's a rolling month of new family photos. The family account should have no quota or a generous one.
 
 ## Requirements
 
 - Immich 3.3 or later. Cluster groups (3.2) and people sharing (3.3) are needed for faces to work across accounts.
-- A family Immich user with an API key.
-- An API key from every participating member. The service checks each key works before it touches anything, and skips operations it doesn't have the keys for. Members without a key can still share albums with the family user; they just won't be converted, and the service warns.
+- A family Immich user with an API key, and an API key from every participating member. The service checks each key works before it touches anything. Members without a key can still share albums with the family user; those albums are reported, not converted.
 - All accounts in one cluster group, created before face detection is turned on.
-- Optionally, a `[webhook]` section in the config. The service then gives each member an Immich workflow that posts every new upload to it, so re-uploads get caught in seconds instead of on the next pass. Member keys need the workflow permissions for that.
+- Optionally, a `[webhook]` section in the config, so re-uploads are caught in seconds rather than on the next pass.
 
 ## Running it
 
-The service is a single container running `ifl daemon`, deployed on the same docker network as Immich with a volume for its state database, so the webhook URL is just the container's name. `compose.yml` shows the deployment and `config.example.toml` is the annotated configuration: the Immich URL, the family account and its API key, one section per member with their API key, the name of the dropbox album, and the webhook.
+A single container next to Immich, on the same docker network, with a volume for its state database. `compose.yml` is the deployment and `config.example.toml` the annotated configuration. The walkthrough is in [docs/deployment.md](docs/deployment.md).
 
-Two settings guard against accidents:
+## Documentation
 
-- `readonly` under `[service]`, true unless you set it to false. While it's on, every command that would write to Immich refuses to run. Leave it on until `observe` reports what you expect.
-- `[limits]` caps how much one pass does. `albums_per_pass` (default 5) is the most albums `convert-album --all` will convert in one run and `assets_per_pass` (default 20) the most photos `move --all` will move; the rest wait for the next run. 0 means no limit. Commands given a specific id ignore the limits.
-- `settle_seconds` under `[service]` (default 60) leaves a photo alone until that long after its last change, so nothing is moved while Immich may still be processing it.
-
-`[tags]` names the two tags the move leaves behind, `moved` (default `family`) on your original and `from_prefix` (default `from`) for the family copy's `from/<member>` tag. An optional `admin_api_key` under `[immich]` is any admin user's key with the `queue.read` permission; with it, the service skips moving anything while Immich's metadata queues have a backlog.
-
-### Commands
-
-Every command except `daemon` is one pass that exits. Each takes `-c path/to/config.toml` (default `config.toml` in the current directory) and `-v` for debug logging.
-
-- `ifl observe` reports what the rules would do: albums that would be converted, family albums that need reconciling, photos that would be moved, and anything blocked and why. Never writes.
-- `ifl convert-album <album-id>` converts one album a member has shared with the family. `ifl convert-album --all` converts every such album, up to the limit.
-- `ifl reconcile-albums` creates the dropbox if it's missing, makes every configured member an editor on every family-owned album, promoting anyone who's only a viewer, and partner-shares the family library with every member. It never removes anyone. Whether family photos show in your timeline is your own partner-sharing setting.
-- `ifl move <asset-id>` moves one member-owned photo that's sitting in a family album: re-uploads it under the family account with its metadata, edits and a `from/<member>` tag, puts the copy into every album the original was in except the dropbox, and trashes the original. `ifl move --all` moves every such photo, up to the limit. A photo that changed in the last `settle_seconds`, is in a public shared link, or hasn't finished metadata extraction is left for later and reported. With `admin_api_key` set, the command refuses to start while Immich's metadata queues have a backlog. A move that fails partway leaves the original in place; running it again finishes the job.
-- `ifl process` runs one complete pass: converts shared albums, reconciles the family albums, then moves photos, each under its limit. A just-converted album's photos move in the same pass. With `admin_api_key` set, the moves are skipped for the pass while Immich's metadata queues have a backlog; the album work still happens.
-- `ifl daemon` is the service: a pass every `interval_seconds` (default ten minutes), plus, with `[webhook]` configured, the receiver Immich posts new uploads to. A re-upload is trashed within seconds of landing; everything else waits for the next pass, so the limits and the interval stay the only pacing for real moves. This is the container's default command.
-- `ifl show-config` prints the effective configuration as TOML with keys redacted to their last four characters. `--minimal` prints only what differs from the defaults.
-
-More arrives with the stages listed below.
+- [docs/for-members.md](docs/for-members.md): the page to hand to family members. What they'll see, the one phone setting, what carries.
+- [docs/how-it-works.md](docs/how-it-works.md): the model. The one rule, the flows, the move step by step, re-uploads, state and pacing.
+- [docs/cli.md](docs/cli.md): every command, exit codes, a first run.
+- [docs/configuration.md](docs/configuration.md): every setting with its default, and the API key permissions.
+- [docs/deployment.md](docs/deployment.md): compose, the webhook, the ledger, upgrading, what to check before production.
+- [docs/immich-notes.md](docs/immich-notes.md): what the service relies on in Immich 3.3.1 and how each point was confirmed.
+- [docs/development.md](docs/development.md): tests, the fake Immich, the dev scripts.
 
 ## Status
 
-Under development, in the stages listed in [DESIGN.md](DESIGN.md). That's the working design document: flows, state model, failure handling, API permissions, and the list of Immich behaviours still being verified on a dev instance. It'll shrink as real documentation replaces it.
+Stages 1 to 7 are built and verified on a dev instance: observing, album conversion, family album consistency, the per-asset move, the full pass, re-upload detection, and the daemon with the webhook receiver. What's left before a first release, and the improvements after it, are the [issues](https://github.com/jcsanyi/immich-family-library/issues).

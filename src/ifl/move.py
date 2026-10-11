@@ -2,8 +2,8 @@
 
 A member-owned asset in a family-owned album is re-uploaded under the family
 account with everything Immich lets us carry, re-linked into the albums it was
-in, and the original is trashed. DESIGN.md walks through every step and the
-key each call runs under. In short:
+in, and the original is trashed. docs/how-it-works.md walks through every step
+and the key each call runs under. In short:
 
 - read everything with the owner's key: the asset, its albums, its edits;
 - tag the original with the moved tag, which makes Immich write a fresh

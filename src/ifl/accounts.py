@@ -20,8 +20,7 @@ log = logging.getLogger(__name__)
 
 MIN_SERVER = (3, 3, 0)
 
-# Permissions the stages built so far need. Later stages extend these.
-# DESIGN.md has the table and which call needs what.
+# docs/configuration.md has the table and which call needs what.
 MEMBER_PERMISSIONS = {
     "user.read",
     "apiKey.read",

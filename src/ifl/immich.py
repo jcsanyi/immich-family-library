@@ -307,7 +307,7 @@ async def set_asset_metadata(
 
 
 async def trash_assets(client: AsyncClient, asset_ids: Iterable[UUID]) -> None:
-    """Trash, never permanent delete. See the re-upload section of DESIGN.md."""
+    """Trash, never permanent delete. See "Re-uploads" in docs/how-it-works.md."""
     await client.assets.delete_assets(AssetBulkDeleteDto(ids=list(asset_ids), force=False))
 
 
