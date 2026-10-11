@@ -89,7 +89,9 @@ class Ledger:
         file_name: str,
     ) -> int:
         """One more re-upload of this checksum. A photo the family got some other
-        way has no row yet; it gets one naming this member. Returns the new count."""
+        way has no row yet; it gets one naming this member, who is the one the
+        count is about rather than where the family's copy came from. Returns
+        the new count."""
         self.db.execute(
             """
             INSERT INTO moves (checksum, origin_user_id, origin_asset_id, family_asset_id,

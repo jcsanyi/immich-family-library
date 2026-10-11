@@ -178,9 +178,12 @@ What the service does about it:
   member's. But if a member shares that photo into a family album again, the
   service restores the family's copy from the trash rather than uploading it
   anew.
-- The service counts re-uploads per checksum and per member. A member with the
-  setting on produces none. A member who passes `reuploads_per_pass` in one
-  pass gets a warning naming them.
+- The service counts re-uploads per checksum and per member. A re-upload here
+  means what the re-upload scan or the webhook found: an upload a phone made
+  on its own. A photo a member puts into a family album by hand is a move or
+  a re-share, never a loop, so it isn't counted even when the family already
+  has it. A member with the setting on produces none. A member who passes
+  `reuploads_per_pass` in one pass gets a warning naming them.
 
 Trashing a re-upload quickly saves Immich no work, since every job already
 queued for it runs regardless. What it does is restart the 30-day clock and
