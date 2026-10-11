@@ -58,10 +58,10 @@ class Daemon:
             loop.add_signal_handler(sig, self.stopping.set)
         tasks = [asyncio.create_task(self.passes(), name="passes")]
         runner = None
-        if self.cfg.webhook:
-            tasks.append(asyncio.create_task(self.drain(), name="webhook-drain"))
-            runner = await self.serve()
         try:
+            if self.cfg.webhook:
+                tasks.append(asyncio.create_task(self.drain(), name="webhook-drain"))
+                runner = await self.serve()
             await self.stopping.wait()
             log.info("stopping")
         finally:
