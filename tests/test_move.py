@@ -471,3 +471,16 @@ async def test_a_failed_per_owner_lookup_does_not_leave_the_asset_in_flight(
     assert [f[0] for f in result.failed] == ["a.jpg"] and result.unfinished == {a.id}
     assert not in_flight  # otherwise both paths skip this asset until a restart
     assert not a.is_trashed
+
+
+async def test_a_video_carries_its_duration(world, ledger):
+    accounts = make_accounts()
+    v = world.add_asset(
+        FakeAsset(uuid4(), ALICE, checksum="sha-v", original_file_name="clip.mp4", duration=12_345)
+    )
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[v])
+
+    result = await move_asset(accounts, ledger, OPTS, v.id, accounts.members["alice"], now=NOW)
+
+    (up,) = world.uploads
+    assert result.uploaded and up["duration"] == 12_345 and v.is_trashed

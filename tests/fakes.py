@@ -37,7 +37,7 @@ class FakeAsset:
     file_created_at: datetime = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
     file_modified_at: datetime = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
     is_favorite: bool = False
-    duration: str | None = "0:00:00.00000"
+    duration: int | None = None  # milliseconds; None for a still image, as immichpy has it
     live_photo_video_id: UUID | None = None
     stack: object | None = None
     tags: list[FakeTag] = field(default_factory=list)

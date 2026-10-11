@@ -125,11 +125,6 @@ class MoveResult:
         return s
 
 
-def _duration(value: str | None) -> str | None:
-    """Immich reports images as a zero duration; only pass a real one."""
-    return value if value and not value.startswith("0:00:00") else None
-
-
 async def pass_backlog(accounts: Accounts) -> dict[str, int] | None:
     """Waiting jobs on the queues the move depends on, or None without an admin key."""
     if accounts.admin is None:
@@ -408,7 +403,7 @@ async def move_asset(
             is_favorite=asset.is_favorite,
             visibility=asset.visibility,
             sidecar=sidecar,
-            duration=_duration(asset.duration),
+            duration=asset.duration or None,  # milliseconds; None or 0 for a still image
         )
         how = "uploaded" if uploaded else "duplicate of"
         log.info("%s: %s as %s", asset.original_file_name, how, family_id)

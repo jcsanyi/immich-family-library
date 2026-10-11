@@ -271,7 +271,7 @@ async def upload_asset(
     is_favorite: bool,
     visibility: AssetVisibility,
     sidecar: bytes | None,
-    duration: str | None = None,
+    duration: int | None = None,  # milliseconds, videos only
 ) -> tuple[UUID, bool]:
     """Upload bytes plus sidecar. Returns (asset id, created). A duplicate of
     something this account already has returns that asset's id and False."""
