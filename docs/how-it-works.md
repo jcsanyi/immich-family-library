@@ -164,10 +164,15 @@ What the service does about it:
   through the same move: the copy is found by checksum, nothing is uploaded,
   the copy is re-linked into any album the duplicate sits in, the duplicate
   is trashed, and the ledger counts it.
-- The family copy's `ifl` entry tells a duplicate from a crashed move: a
-  duplicate's entry names a different original. A duplicate leaves the copy's edits and
-  provenance alone, and skips the extraction and settle checks, since it needs
-  nothing the new upload's jobs produce.
+- The moved tag tells a duplicate from a crashed move. The service puts that
+  tag on an original before it uploads, so an original wearing it is a move
+  that died partway, and the member's photo is the one to finish from. An
+  original without it is a re-upload, or a photo the family got some other
+  way, and the family's copy is the one that counts: its edits and provenance
+  are left alone, and the move skips the extraction and settle checks, since
+  it needs nothing the new upload's jobs produce. The copy's `ifl` entry has
+  the last word: if it names a different original, the copy already has its
+  owner, whatever tag the member's photo wears.
 - A match whose family copy is itself in the trash is left alone. The family
   deleting a photo is a signal, not something to answer by trashing the
   member's. But if a member shares that photo into a family album again, the

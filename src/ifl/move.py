@@ -16,12 +16,17 @@ State comes from Immich at every step: the family already owning the checksum
 means the upload is done, the original still existing means it hasn't been
 trashed. So a move that died anywhere is finished by running it again.
 
-The same path handles a re-upload, a member's fresh copy of something the
-family already has. The family copy's `ifl` entry names a different origin
-asset, which marks this as a duplicate rather than a crashed move: edits and
-provenance are left alone, the copy is re-linked into any album the duplicate
-sits in, the duplicate is trashed, and the ledger counts it. A family copy
-found in the trash while a member shares the photo again is restored first.
+The same path handles a duplicate, a member's asset whose bytes the family
+already has. The moved tag on the original tells the two apart: the service
+puts it there before it uploads, so an original wearing it is an interrupted
+move and the member's asset is authoritative. An original without it is a
+re-upload, or a photo the family got some other way, and the family copy is
+authoritative: edits and provenance are left alone, the copy is re-linked into
+any album the duplicate sits in, the duplicate is trashed, and the ledger
+counts it. The copy's `ifl` entry is a veto on top: if it names a different
+original, the copy already has its owner, whatever tag this asset wears. A
+family copy found in the trash while a member shares the photo again is
+restored first.
 
 Re-linking into a member-owned album runs under the album owner's key, which
 works because an owner can always add and the family partner-shares with every
@@ -346,16 +351,23 @@ async def move_asset(
     if asset.live_photo_video_id is not None:
         raise MoveBlocked("live photo; not handled yet")
 
-    # The family copy, looked up first: a live copy with another asset's
-    # provenance means this is a duplicate, and a duplicate needs nothing the
-    # asset's own jobs produce, so it skips the extraction and settle checks.
-    # That's what lets the webhook trash a re-upload seconds after it lands.
+    # The family copy, looked up first. With a live copy, the moved tag on the
+    # original decides: without it this is a duplicate, and the copy is
+    # authoritative. A duplicate needs nothing the asset's own jobs produce, so
+    # it skips the extraction and settle checks, which is what lets the webhook
+    # trash a re-upload seconds after it lands.
+    have_tag = any(t.value == opts.moved_tag for t in asset.tags or [])
+
+    async def is_duplicate() -> bool:
+        provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
+        foreign = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
+        return foreign or not have_tag
+
     owned = await existing_asset_by_checksum(family.client, asset.checksum)
     family_id = owned.asset_id if owned else None
     duplicate = False
     if owned and not owned.is_trashed:
-        provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
-        duplicate = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
+        duplicate = await is_duplicate()
 
     if not duplicate:
         if asset.exif_info is None:
@@ -395,13 +407,11 @@ async def move_asset(
         log.info(
             "%s: restored the family copy %s from the trash", asset.original_file_name, family_id
         )
-        provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
-        duplicate = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
+        duplicate = await is_duplicate()
     if family_id is None:
         if asset.is_trashed:
             raise MoveError(f"{asset.original_file_name} is in the trash")
         # The sidecar, written by Immich after the moved tag goes on.
-        have_tag = any(t.value == opts.moved_tag for t in asset.tags or [])
         if not have_tag:
             await tag_asset(owner.client, await upsert_tag(owner.client, opts.moved_tag), asset_id)
         xmp = await _fresh_sidecar(owner, asset_id, opts.moved_tag, opts.sidecar_timeout)

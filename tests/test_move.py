@@ -15,6 +15,7 @@ from fakes import (
     VIEWER,
     FakeAsset,
     make_accounts,
+    make_tag,
     patch_world,
 )
 from immichpy.client.generated.models.asset_visibility import AssetVisibility
@@ -94,15 +95,19 @@ async def test_move_carries_everything_and_trashes_the_original(world, ledger):
 
 async def test_rerun_after_upload_finishes_without_uploading_again(world, ledger):
     accounts = make_accounts()
-    a = alice_asset(world)
+    # A previous run tagged the original, uploaded the copy, and died before it
+    # wrote the provenance. The moved tag is what says this is ours to finish.
+    a = alice_asset(world, tags=[make_tag("family")])
+    world.edits[a.id] = ["crop"]
     trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
-    # A previous run got as far as the upload and died.
     copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
 
     result = await move_asset(accounts, ledger, OPTS, a.id, accounts.members["alice"], now=NOW)
 
-    assert result.family_asset_id == copy.id and not result.uploaded
+    assert result.family_asset_id == copy.id and not result.uploaded and not result.duplicate
     assert not world.uploads and not any(w[0] in ("download", "tag") for w in world.writes)
+    assert world.edits[copy.id] == ["crop"]
+    assert world.metadata[copy.id]["ifl"]["origin_asset_id"] == str(a.id)
     assert copy in world.assets[trip.id] and a.is_trashed
     # And once more, with the original already trashed: nothing to trash, same answer.
     world.writes.clear()
@@ -361,16 +366,51 @@ async def test_a_reupload_is_trashed_and_counted_without_touching_the_copy(world
     assert "re-upload #1" in str(result)
 
 
-async def test_a_reupload_of_a_family_direct_upload_gets_a_ledger_row(world, ledger):
+async def test_a_copy_the_family_got_some_other_way_is_authoritative(world, ledger):
     accounts = make_accounts()
+    # No ifl entry: the family uploaded this itself, with its own crop. Alice's
+    # copy of the same bytes carries no moved tag, so it is the duplicate.
     copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
-    # No ifl entry: the family uploaded this itself. A member's copy is still redundant,
-    # but with nothing to compare, it reads as a move: provenance now names the member.
+    world.edits[copy.id] = ["family-crop"]
     re = alice_asset(world)
-    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[re])
+    world.edits[re.id] = ["alice-crop"]
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[re])
+
     result = await move_asset(accounts, ledger, OPTS, re.id, accounts.members["alice"], now=NOW)
-    assert not result.duplicate and result.family_asset_id == copy.id and re.is_trashed
-    assert world.metadata[copy.id]["ifl"]["origin_asset_id"] == str(re.id)
+
+    assert result.duplicate and result.family_asset_id == copy.id and not result.uploaded
+    assert world.edits[copy.id] == ["family-crop"] and copy.id not in world.metadata
+    assert copy in world.assets[trip.id] and re.is_trashed
+    assert not any(w[0] in ("tag", "download", "upload") for w in world.writes)
+    # From the re-upload scan, the same situation is counted against the member.
+    re2 = world.add_asset(FakeAsset(uuid4(), ALICE, checksum="sha-1", original_file_name="a.jpg"))
+    again = await move_asset(
+        accounts, ledger, OPTS, re2.id, accounts.members["alice"], now=NOW, reupload=True
+    )
+    assert again.duplicate and again.reupload_count == 1 and re2.is_trashed
+    assert copy.id not in world.metadata
+
+
+async def test_two_members_with_the_same_bytes_keep_the_first_movers_provenance(world, ledger):
+    accounts = make_accounts()
+    # bob's copy moved fully. alice's identical photo was tagged by an earlier
+    # attempt that blocked at the sidecar, so it wears the moved tag too. The
+    # copy's entry names bob's asset: alice's is a duplicate whatever it wears.
+    bobs_orig = uuid4()
+    copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
+    world.edits[copy.id] = ["bob-crop"]
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(BOB), "origin_asset_id": str(bobs_orig)}
+    }
+    a = alice_asset(world, tags=[make_tag("family")])
+    world.edits[a.id] = ["alice-crop"]
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR}, assets=[a])
+
+    result = await move_asset(accounts, ledger, OPTS, a.id, accounts.members["alice"], now=NOW)
+
+    assert result.duplicate and a.is_trashed and not result.uploaded
+    assert world.edits[copy.id] == ["bob-crop"]
+    assert world.metadata[copy.id]["ifl"]["origin_asset_id"] == str(bobs_orig)
 
 
 async def test_a_trashed_family_copy_is_restored_when_shared_again(world, ledger):

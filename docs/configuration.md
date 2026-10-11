@@ -47,6 +47,11 @@ together are the rate. See pacing in [how-it-works.md](how-it-works.md).
 
 Both are tag names, with no leading or trailing slash.
 
+The `moved` tag is also a marker. When a member's photo has the same bytes as
+a family photo, the service reads the tag to tell a move that stopped partway
+from a re-upload. Choose a name that members do not use for their own tags,
+and that does not occur as a keyword in their files.
+
 ## `[warnings]`
 
 | Setting | Default | What it is |
