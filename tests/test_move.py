@@ -574,3 +574,34 @@ def test_reupload_warnings_name_members_over_the_threshold(caplog):
         "alice has 3 re-uploads this pass": logging.WARNING,
         "bob has 1 re-uploads this pass": logging.INFO,
     }
+
+
+def test_advance_marks_holds_a_member_at_their_oldest_unfinished_reupload(ledger, caplog):
+    import logging
+
+    from ifl.move import MoveManyResult, advance_marks
+    from ifl.observer import AssetScan, MoveAsset
+
+    accounts = make_accounts()
+    alice, bob = accounts.members["alice"], accounts.members["bob"]
+    t1, t2 = NOW - timedelta(days=3), NOW - timedelta(days=1)
+    done, stuck_old, stuck_new = uuid4(), uuid4(), uuid4()
+    scan = AssetScan(
+        moves=[
+            MoveAsset(done, "c1", alice, None, "a.jpg", reupload=True, created_at=t2),
+            MoveAsset(stuck_new, "c2", bob, None, "b2.jpg", reupload=True, created_at=t2),
+            MoveAsset(stuck_old, "c3", bob, None, "b1.jpg", reupload=True, created_at=t1),
+            MoveAsset(uuid4(), "c4", bob, None, "plain.jpg", created_at=t1),  # not a re-upload
+        ],
+        scanned_at=NOW,
+    )
+    many = MoveManyResult(unfinished={stuck_old, stuck_new})
+
+    with caplog.at_level(logging.INFO, logger="ifl.move"):
+        advance_marks(ledger, scan, many, accounts)
+
+    assert ledger.get_mark(alice.user_id) == NOW  # everything of hers finished
+    assert ledger.get_mark(bob.user_id) == t1  # held at his oldest unfinished one
+    assert [r.getMessage() for r in caplog.records] == [
+        f"bob's re-upload mark held at {t1.isoformat(timespec='seconds')} by 2 unfinished re-upload(s)"
+    ]

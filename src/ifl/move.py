@@ -306,7 +306,8 @@ def advance_marks(
 ) -> None:
     """After a pass, record how far the re-upload scan got, per member. A member
     whose every re-upload was handled is marked at the scan time; otherwise at
-    the upload time of their oldest unfinished one, so it's found again."""
+    the upload time of their oldest unfinished one, so it's found again. A mark
+    that stays held means a re-read of that stretch every pass, so say so."""
     if scan.scanned_at is None:
         return
     for member in accounts.members.values():
@@ -315,7 +316,15 @@ def advance_marks(
             for m in scan.moves
             if m.reupload and m.owner.user_id == member.user_id and m.asset_id in many.unfinished
         ]
-        ledger.set_mark(member.user_id, min(pending) if pending else scan.scanned_at)
+        if pending:
+            held_at = min(pending)
+            log.info(
+                "%s's re-upload mark held at %s by %d unfinished re-upload(s)",
+                member.name,
+                held_at.isoformat(timespec="seconds"),
+                len(pending),
+            )
+        ledger.set_mark(member.user_id, held_at if pending else scan.scanned_at)
 
 
 def reupload_warnings(scan: AssetScan, threshold: int, *, when: str = "this pass") -> None:

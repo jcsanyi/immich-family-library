@@ -223,6 +223,14 @@ The daemon's pass and its webhook receiver share a set of in-flight asset ids,
 so they never work on the same photo at once. Whoever is second skips, and a
 skipped re-upload holds its member's mark back so it's found again.
 
+Any unfinished re-upload holds the mark the same way: one that's blocked,
+failed, or left over the per-pass cap. The next pass re-reads that member's
+uploads from the oldest unfinished one onward, so a re-upload that stays
+blocked, say in one of the member's shared links, means the scan re-reads
+that stretch of their library every pass until the block clears. Nothing is
+missed, but the work grows with their uploads since then, and the pass log
+says whose mark is held and from when.
+
 ## Pacing
 
 Two caps in the config, `albums_per_pass` and `assets_per_pass`, bound what
