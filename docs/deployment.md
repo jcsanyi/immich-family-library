@@ -8,8 +8,10 @@ shares, and one workflow per member.
 
 ## Before the first run
 
-1. **Accounts.** Create the family user. Every participating member needs
-   their own user, which they already have.
+1. **Accounts.** Create the family user. Give it no quota, or a generous
+   one. Every participating member needs their own user, which they already
+   have. A trashed original counts against the member's quota until the
+   trash purges, 30 days by default.
 2. **Cluster group.** If face detection is going to be on, first put every
    member and the family account in one cluster group. Then faces pool across
    accounts from the first recognition pass. If face detection is on before
@@ -100,6 +102,7 @@ version needs a matching release of the service. Check the changelog.
 Two gaps are open as issues:
 
 - The mobile app's "Sync remote deletions" setting is what ends the re-upload
-  loop for a photo. It has never been exercised on a phone (issue 13). Do it
-  on prod with one hand-moved photo before you move anything else.
+  loop for a photo. It exists only on Android 12 or later, and it has never
+  been exercised on a phone (issue 13). Do it on prod with one hand-moved
+  photo, from an Android phone, before you move anything else.
 - Live photos are blocked by the move, not handled (issue 14).

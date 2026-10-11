@@ -1,24 +1,22 @@
 # Immich Family Library
 
-A small service that runs next to a self-hosted [Immich](https://immich.app) instance. It gives a family one shared photo library while each member keeps their own account.
+A small service that runs next to a self-hosted [Immich](https://immich.app) instance. It gives a family a shared photo library while each member keeps their own account and decides what to contribute.
 
-Members upload to their own accounts as usual. When a member shares an album with the family, or drops photos into the family dropbox, the service moves those photos into a dedicated family account. The family account shares its library back with every member through partner sharing. Nobody has to share their whole library with anyone.
+Members upload to their own accounts as usual. When a member shares an album with the family, or drops photos into a family album, the service moves those photos into a dedicated family account. The family account shares its library back with every member through partner sharing.
 
 Immich cannot transfer ownership of a photo. So "move" means the service re-uploads the photo under the family account with all of its metadata, then trashes the original. The original sits in the member's trash for 30 days by default. Nothing is ever deleted outright.
 
 ## How it works
 
-There is one extra Immich user, the family account, and it owns everything the family has shared. The service watches for one thing: a member-owned photo sitting in an album the family account owns. When it finds one, it moves it. Sharing an album, adding to a family album, and the dropbox are all ways of getting a photo into that position.
+There is one extra Immich user, the family account, and it owns the family library. The service watches for one thing: a member-owned photo sitting in an album the family account owns. When it finds one, it moves it. Sharing an album, adding to a family album, and adding to the family dropbox are all ways of getting a photo into that position.
 
-[docs/how-it-works.md](docs/how-it-works.md) explains each flow, what metadata travels with a photo, and how the service handles the phone's re-uploads. [docs/for-members.md](docs/for-members.md) says the same thing for the family.
+[docs/how-it-works.md](docs/how-it-works.md) explains each flow, what metadata travels with a photo, and how the service handles the phone's re-uploads. [docs/for-members.md](docs/for-members.md) explains the same thing for the non-technical family members who will use the system.
 
 ## Requirements
 
-- Immich 3.3 or later. Faces across accounts need cluster groups (3.2) and people sharing (3.3).
-- A family Immich user with an API key, and an API key from each participating member. The service checks that each key works before it touches anything. A member without a key can still share an album with the family user. The service reports that album and does not convert it.
-- All accounts in one cluster group, created before face detection is turned on.
-- The family account needs no quota, or a generous one. A trashed original counts against the member's quota until the trash purges, 30 days by default.
-- Optional: a `[webhook]` section in the config. With it, the service catches a re-upload in seconds instead of on the next pass.
+- Immich 3.3 or later.
+- A family Immich user with an API key, and an API key from each participating member.
+- If face detection will be on, all accounts in one cluster group, created before face detection is turned on. [docs/deployment.md](docs/deployment.md) has the order of steps.
 
 ## Running it
 

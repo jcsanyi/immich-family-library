@@ -109,6 +109,19 @@ are listed here so that the next Immich upgrade knows what to re-check.
   core plugin allows any host. Confirmed on dev: a re-upload was trashed 2.1s
   after the upload call returned.
 
+## Mobile app (`mobile/lib`)
+
+- The bottom tabs are Photos, Search, Albums and Library
+  (`pages/common/tab_shell.page.dart`). Partners are listed on the Library
+  tab (`presentation/pages/library.page.dart`). The partner's page has the
+  "Show in timeline" switch (`presentation/pages/partner_detail.page.dart`).
+  On the web, that switch is under Account Settings, Partner Sharing
+  (`web/src/routes/(user)/user-settings/SharingSettings.svelte`). The
+  partner's page on the web has no switch.
+- "Sync remote deletions" is under Settings, Advanced, and is shown only on
+  Android with SDK 31 (Android 12) or later
+  (`widgets/settings/advanced_settings.dart`). There is no iOS equivalent.
+
 ## Faces (unverified)
 
 Cluster groups (3.2) pool recognition across accounts. Whether a single new

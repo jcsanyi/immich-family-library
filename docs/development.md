@@ -151,7 +151,7 @@ tool attribution.
 
 ## Writing style
 
-The docs follow two rule sets, chosen by reader:
+Each doc follows one of two rule sets, depending on who reads it and why:
 
 - `how-it-works.md`, `for-members.md`, and the opening of `README.md` are
   plain English in the Orwell and Gowers tradition: active voice, concrete

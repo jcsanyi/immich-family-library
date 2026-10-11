@@ -16,9 +16,8 @@ you'll see and what the few settings do.
 The family account shares its whole library with you. In Immich that's called
 partner sharing. You can always browse it:
 
-- **In the app:** open the Sharing tab (the people icon at the bottom). The
-  family account is listed under partners. Tap it to see everything the
-  family owns.
+- **In the app:** open the Library tab at the bottom. The family account is
+  listed under Partners. Tap it to see everything the family owns.
 - **On the web:** Sharing in the left-hand menu, then the family account under
   Partners.
 
@@ -26,10 +25,10 @@ By default those photos only appear there, not in your main timeline. If you'd
 rather have them mixed in with your own photos, turn on **Show in timeline**
 for the family account:
 
-- **App:** Sharing tab, tap the family account, and flip the switch at the top
-  of that screen.
-- **Web:** Sharing, click the family account, and use the toggle in the top
-  corner.
+- **App:** Library tab, tap the family account, and flip the **Show in
+  timeline** switch on that screen.
+- **Web:** open Account Settings (your avatar, top right), find the family
+  account under Partner Sharing, and turn on **Show in timeline**.
 
 That's your own setting. Turn it on or off whenever you like. It changes
 nothing for anyone else. Most of us leave it on, so the family's photos and
@@ -90,12 +89,16 @@ back in the trash, so nothing ends up duplicated. But it's wasted upload for
 your phone and wasted work for the server, and it would happen again every
 month.
 
-To stop it, turn on one setting in the app: **Settings → Advanced → Sync
-remote deletions** (it's marked experimental). With it on, the next time you
-open the app after a photo has moved, the app moves your phone's copy to the
-phone's own trash, and the loop never starts. Please turn it on. If you're not
-sure whether you have, whoever runs the service can tell. They see a count of
-re-uploads for each person.
+**On an Android phone** (Android 12 or newer), one setting stops it:
+**Settings → Advanced → Sync remote deletions** (it's marked experimental).
+With it on, the next time you open the app after a photo has moved, the app
+moves your phone's copy to the phone's own trash, and the loop never starts.
+Please turn it on. If you're not sure whether you have, whoever runs the
+service can tell. They see a count of re-uploads for each person.
+
+**On an iPhone** there is no such setting, so there's nothing for you to do.
+The service puts each re-upload back in the trash on its own. The only cost is
+the wasted upload, once a month per photo.
 
 ## A few things to know
 

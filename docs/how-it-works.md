@@ -152,10 +152,11 @@ and upstream has no fix.
 What the service does about it:
 
 - Originals are trashed, never deleted, so the phone leaves them alone until
-  the trash purges, 30 days by default. Members are asked to turn on the
-  app's "Sync remote deletions" setting, which makes the phone drop its local
-  copy while the original is still in the server trash. That ends the loop
-  for that photo. The service never force-empties trash, for exactly this
+  the trash purges, 30 days by default. Members on Android are asked to turn
+  on the app's "Sync remote deletions" setting, which makes the phone drop
+  its local copy while the original is still in the server trash. That ends
+  the loop for that photo. The setting exists only on Android 12 or later, so
+  an iPhone keeps looping and the service keeps trashing. The service never force-empties trash, for exactly this
   reason.
 - The asset scan has a second source: per member, the photos uploaded since
   the last look, with their checksums batched through the family's bulk
