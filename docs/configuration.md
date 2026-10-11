@@ -7,6 +7,11 @@ with the keys redacted.
 
 Relative paths are resolved against the config file's directory.
 
+The sections and settings below are the only ones the file can hold. A
+section or setting with any other name is an error, and the service does not
+start. This catches a typo or an old name, which would otherwise take the
+default without a message.
+
 ## `[immich]`
 
 | Setting | Default | What it is |
