@@ -20,6 +20,7 @@ ifl = "ifl.cli:main"
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=7.1.0",
     "ruff>=0.8",
 ]
 # Only for scripts/seed_dev.py
