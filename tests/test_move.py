@@ -445,3 +445,29 @@ async def test_an_unexpected_error_on_one_asset_does_not_stop_the_others(
     assert [r.file_name for r in result.done] == ["1.jpg"]
     assert not assets[0].is_trashed and assets[1].is_trashed
     assert result.unfinished == {assets[0].id} and not in_flight
+
+
+async def test_a_failed_per_owner_lookup_does_not_leave_the_asset_in_flight(
+    world, ledger, monkeypatch
+):
+    from ifl.move import move_assets
+    from ifl.observer import MoveAsset
+
+    accounts = make_accounts()
+    alice = accounts.members["alice"]
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR})
+    a = alice_asset(world)
+    world.assets[trip.id].append(a)
+
+    async def down(client):
+        raise ConnectionError("immich went away")
+
+    monkeypatch.setattr("ifl.move.shared_link_asset_ids", down)
+    moves = [MoveAsset(a.id, a.checksum, alice, trip, a.original_file_name)]
+    in_flight: set = set()
+
+    result = await move_assets(accounts, ledger, OPTS, moves, limit=0, in_flight=in_flight)
+
+    assert [f[0] for f in result.failed] == ["a.jpg"] and result.unfinished == {a.id}
+    assert not in_flight  # otherwise both paths skip this asset until a restart
+    assert not a.is_trashed

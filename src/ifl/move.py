@@ -247,13 +247,13 @@ async def move_assets(
                 out.unfinished.add(m.asset_id)
                 continue
             in_flight.add(m.asset_id)
-        if owner.user_id not in shared_links:
-            shared_links[owner.user_id] = await shared_link_asset_ids(owner.client)
-            for uid in await outside_partners(accounts, owner):
-                log.warning(
-                    "%s partner-shares their library with non-participant %s", owner.name, uid
-                )
         try:
+            if owner.user_id not in shared_links:
+                shared_links[owner.user_id] = await shared_link_asset_ids(owner.client)
+                for uid in await outside_partners(accounts, owner):
+                    log.warning(
+                        "%s partner-shares their library with non-participant %s", owner.name, uid
+                    )
             result = await move_asset(
                 accounts,
                 ledger,
