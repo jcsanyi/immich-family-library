@@ -25,8 +25,10 @@ CREATE TABLE IF NOT EXISTS moves (
     reclaimed_at    TEXT,
     reupload_count  INTEGER NOT NULL DEFAULT 0
 );
--- How far the re-upload scan has looked, per member. A record: losing it means
--- one slow full rescan, nothing worse.
+-- How far the re-upload scan has looked, per member. A member with no row has
+-- never been scanned and starts at the next pass's time, since nothing the
+-- service hasn't moved can be a re-upload. So losing this table means that
+-- re-uploads from the gap are never found; they sit as harmless duplicates.
 CREATE TABLE IF NOT EXISTS scan_marks (
     user_id         TEXT PRIMARY KEY,
     scanned_until   TEXT NOT NULL

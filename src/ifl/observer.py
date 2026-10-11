@@ -257,15 +257,25 @@ async def scan_assets(
 async def _scan_reuploads(
     accounts: Accounts, ledger: Ledger, scan: AssetScan, seen: set[UUID], now: datetime
 ) -> None:
-    """Members' assets uploaded since the last look that the family already owns."""
+    """Members' assets uploaded since the last look that the family already owns.
+
+    A member with no mark has never been scanned, and nothing the service
+    hasn't moved can be a re-upload, so their library isn't read: the pass
+    starts their mark at this scan's time. Photos they and the family both
+    held before then are left alone."""
     scan.scanned_at = now
     candidates: list[tuple[Account, list[AssetResponseDto]]] = []
     for member in accounts.members.values():
         mark = ledger.get_mark(member.user_id)
-        since = mark - REUPLOAD_MARGIN if mark else None
+        if mark is None:
+            log.info(
+                "%s: first re-upload scan; the mark starts now, nothing earlier can be a re-upload",
+                member.name,
+            )
+            continue
         recent = [
             a
-            async for a in iter_assets_created_after(member.client, since)
+            async for a in iter_assets_created_after(member.client, mark - REUPLOAD_MARGIN)
             if a.owner_id == member.user_id and not a.is_trashed and a.id not in seen
         ]
         candidates.append((member, recent))

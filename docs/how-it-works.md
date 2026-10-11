@@ -164,6 +164,12 @@ What the service does about it:
   through the same move: the copy is found by checksum, nothing is uploaded,
   the copy is re-linked into any album the duplicate sits in, the duplicate
   is trashed, and the ledger counts it.
+- A member's first scan reads nothing. Before the service has moved anything
+  of theirs, nothing they hold can be a re-upload, so the mark simply starts
+  at that pass. Photos they and the family both held from before are left
+  where they are. The same goes for a lost ledger: re-uploads from the gap
+  are never looked for, and sit as harmless duplicates in the member's
+  library.
 - The moved tag tells a duplicate from a crashed move. The service puts that
   tag on an original before it uploads, so an original wearing it is a move
   that died partway, and the member's photo is the one to finish from. An
