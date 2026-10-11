@@ -17,6 +17,7 @@ from ifl.sidecar import with_only_tag
 
 FAMILY, ALICE, BOB, STRANGER = (uuid4() for _ in range(4))
 EDITOR, VIEWER, OWNER = AlbumUserRole.EDITOR, AlbumUserRole.VIEWER, AlbumUserRole.OWNER
+EMAILS = {FAMILY: "family@x", ALICE: "alice@x", BOB: "bob@x", STRANGER: "stranger@x"}
 
 
 @dataclass
@@ -55,7 +56,19 @@ class BulkResult:
     error_message: str | None = None
 
 
+class FakeUsers:
+    """The one generated-client call the observer makes directly: a user lookup
+    for someone who isn't on the album, so their email can be shown."""
+
+    async def get_user(self, id):
+        if id in EMAILS:
+            return SimpleNamespace(id=id, email=EMAILS[id])
+        raise RuntimeError("unknown user")
+
+
 class FakeClient:
+    users = FakeUsers()
+
     def __init__(self, user_id):
         self.user_id = user_id
 
@@ -81,7 +94,7 @@ class FakeWorld:
         self.fail_adds: dict[UUID, BulkIdErrorReason] = {}
         self.on_read: list = []  # callbacks run once each, in order, on asset reads
 
-    def album(self, name, owner, roles=None, assets=(), description=""):
+    def album(self, name, owner, roles=None, assets=(), description="", shared_link=False):
         aid = uuid4()
         roles = {owner: OWNER, **(roles or {})}
         self.albums[aid] = AlbumSummary(
@@ -91,6 +104,8 @@ class FakeWorld:
             user_ids=frozenset(roles),
             asset_count=len(assets),
             description=description,
+            has_shared_link=shared_link,
+            emails={u: EMAILS.get(u, str(u)) for u in roles},
             roles=roles,
         )
         self.assets[aid] = list(assets)
