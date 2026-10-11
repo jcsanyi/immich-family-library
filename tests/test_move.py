@@ -119,7 +119,6 @@ async def test_rerun_after_upload_finishes_without_uploading_again(world, ledger
         (lambda w, a: setattr(a, "visibility", AssetVisibility.LOCKED), "visibility is locked"),
         (lambda w, a: setattr(a, "live_photo_video_id", str(uuid4())), "live photo"),
         (lambda w, a: w.shared_links.__setitem__(ALICE, {a.id}), "shared links"),
-        (lambda w, a: setattr(w, "sidecar_writes", False), "sidecar not written"),
         (
             lambda w, a: w.album("Theirs", STRANGER, roles={ALICE: VIEWER}, assets=[a]),
             "owned by a non-participant",
@@ -135,7 +134,29 @@ async def test_blocked_conditions_leave_everything_untouched(world, ledger, setu
     with pytest.raises(MoveBlocked, match=reason):
         await move_asset(accounts, ledger, OPTS, a.id, accounts.members["alice"], now=NOW)
 
+    assert world.writes == [] and not world.uploads
+    assert not a.is_trashed and ledger.get("sha-1") is None
+
+
+async def test_a_sidecar_that_never_arrives_blocks_with_only_the_tag_written(world, ledger):
+    accounts = make_accounts()
+    a = alice_asset(world)
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    world.sidecar_writes = False
+
+    with pytest.raises(MoveBlocked, match="sidecar not written"):
+        await move_asset(accounts, ledger, OPTS, a.id, accounts.members["alice"], now=NOW)
+
+    # The moved tag is the one write before this block: it is what asks Immich
+    # for a fresh sidecar. Nothing was downloaded, uploaded, trashed or recorded.
+    assert [w[0] for w in world.writes] == ["tag"] and [t.value for t in a.tags] == ["family"]
     assert not world.uploads and not a.is_trashed and ledger.get("sha-1") is None
+
+    # The next pass sees the tag already there and writes nothing at all.
+    world.writes.clear()
+    with pytest.raises(MoveBlocked, match="sidecar not written"):
+        await move_asset(accounts, ledger, OPTS, a.id, accounts.members["alice"], now=NOW)
+    assert world.writes == []
 
 
 async def test_relink_picks_the_album_owner_then_the_editor(world, ledger):
