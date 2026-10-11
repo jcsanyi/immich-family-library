@@ -40,7 +40,9 @@ def tags_in(xmp: bytes) -> list[str]:
     """Entries of the digiKam TagsList, if any."""
     root = ET.fromstring(xmp)
     return [
-        li.text or "" for li in root.iter(_q("digiKam:TagsList")) for li in li.iter(_q("rdf:li"))
+        li.text or ""
+        for tags in root.iter(_q("digiKam:TagsList"))
+        for li in tags.iter(_q("rdf:li"))
     ]
 
 

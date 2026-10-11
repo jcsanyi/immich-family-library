@@ -107,7 +107,7 @@ async def _add_assets(
         results = await add_album_assets(owner.client, album.id, ids)
         failed = [r for r in results if not r.success and r.error != BulkIdErrorReason.DUPLICATE]
         if failed:
-            why = f"{failed[0].error}: {failed[0].error_message or 'no detail'}"
+            why = f"{failed[0].error.value}: {failed[0].error_message or 'no detail'}"
             raise ConvertError(
                 f"{owner.name} could not add {len(failed)} of {len(ids)} assets to "
                 f"{album.name!r} ({why})"
@@ -129,8 +129,8 @@ async def convert_albums(
 ) -> ConvertManyResult:
     """Convert albums in scan order, at most `limit` of them (0 for no limit).
 
-    One album failing doesn't stop the others; it's reported and will be found
-    again by the next scan.
+    One album failing doesn't stop the others, whatever the exception; it's
+    reported and will be found again by the next scan.
     """
     todo = conversions if limit == 0 else conversions[:limit]
     out = ConvertManyResult(done=[], failed=[], remaining=len(conversions) - len(todo))
@@ -140,6 +140,9 @@ async def convert_albums(
         except ConvertError as e:
             log.error("album %r not converted: %s", conv.album.name, e)
             out.failed.append((conv, e))
+        except Exception as e:  # noqa: BLE001 - the original is only deleted last; the rest go on
+            log.exception("album %r not converted", conv.album.name)
+            out.failed.append((conv, ConvertError(f"{type(e).__name__}: {e}")))
     if out.remaining:
         log.info("%d more albums to convert; limit is %d per pass", out.remaining, limit)
     return out

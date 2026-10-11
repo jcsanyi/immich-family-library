@@ -16,12 +16,17 @@ State comes from Immich at every step: the family already owning the checksum
 means the upload is done, the original still existing means it hasn't been
 trashed. So a move that died anywhere is finished by running it again.
 
-The same path handles a re-upload, a member's fresh copy of something the
-family already has. The family copy's `ifl` entry names a different origin
-asset, which marks this as a duplicate rather than a crashed move: edits and
-provenance are left alone, the copy is re-linked into any album the duplicate
-sits in, the duplicate is trashed, and the ledger counts it. A family copy
-found in the trash while a member shares the photo again is restored first.
+The same path handles a duplicate, a member's asset whose bytes the family
+already has. The moved tag on the original tells the two apart: the service
+puts it there before it uploads, so an original wearing it is an interrupted
+move and the member's asset is authoritative. An original without it is a
+re-upload, or a photo the family got some other way, and the family copy is
+authoritative: edits and provenance are left alone, the copy is re-linked into
+any album the duplicate sits in, the duplicate is trashed, and the ledger
+counts it. The copy's `ifl` entry is a veto on top: if it names a different
+original, the copy already has its owner, whatever tag this asset wears. A
+family copy found in the trash while a member shares the photo again is
+restored first.
 
 Re-linking into a member-owned album runs under the album owner's key, which
 works because an owner can always add and the family partner-shares with every
@@ -43,6 +48,7 @@ from immichpy.client.generated.models.asset_visibility import AssetVisibility
 from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 
 from ifl.accounts import Account, Accounts
+from ifl.config import Config
 from ifl.immich import (
     AlbumSummary,
     add_album_assets,
@@ -66,6 +72,7 @@ from ifl.immich import (
     upsert_tag,
 )
 from ifl.ledger import Ledger
+from ifl.observer import AssetScan, MoveAsset
 from ifl.sidecar import tags_in, with_only_tag
 
 log = logging.getLogger(__name__)
@@ -90,6 +97,15 @@ class MoveOptions:
     from_prefix: str
     sidecar_timeout: float = 15.0
     extraction_timeout: float = 30.0  # edits need the copy's dimensions, which extraction sets
+
+    @classmethod
+    def from_config(cls, cfg: Config) -> MoveOptions:
+        return cls(
+            dropbox_album=cfg.dropbox_album,
+            settle_seconds=cfg.settle_seconds,
+            moved_tag=cfg.moved_tag,
+            from_prefix=cfg.from_prefix,
+        )
 
 
 @dataclass
@@ -125,11 +141,6 @@ class MoveResult:
         return s
 
 
-def _duration(value: str | None) -> str | None:
-    """Immich reports images as a zero duration; only pass a real one."""
-    return value if value and not value.startswith("0:00:00") else None
-
-
 async def pass_backlog(accounts: Accounts) -> dict[str, int] | None:
     """Waiting jobs on the queues the move depends on, or None without an admin key."""
     if accounts.admin is None:
@@ -160,7 +171,7 @@ async def _fresh_sidecar(owner: Account, asset_id: UUID, tag: str, timeout: floa
 async def _add_to_album(client, album: AlbumSummary, asset_id: UUID) -> None:
     for r in await add_album_assets(client, album.id, [asset_id]):
         if not r.success and r.error != BulkIdErrorReason.DUPLICATE:
-            raise RuntimeError(f"{r.error}: {r.error_message or 'no detail'}")
+            raise RuntimeError(f"{r.error.value}: {r.error_message or 'no detail'}")
 
 
 async def _relink_member_album(
@@ -223,14 +234,14 @@ async def move_assets(
     accounts: Accounts,
     ledger: Ledger,
     opts: MoveOptions,
-    moves: list,
+    moves: list[MoveAsset],
     *,
     limit: int,
     in_flight: set[UUID] | None = None,
 ) -> MoveManyResult:
     """Move assets in scan order, at most `limit` of them (0 for no limit). Each
     item is a MoveAsset from the scan. One asset blocking or failing doesn't stop
-    the others. Per-owner lookups happen once.
+    the others, whatever the exception. Per-owner lookups happen once.
 
     `in_flight` is shared between the daemon's pass and its webhook receiver:
     an asset the other path is already on is skipped here, and ours are held in
@@ -247,13 +258,13 @@ async def move_assets(
                 out.unfinished.add(m.asset_id)
                 continue
             in_flight.add(m.asset_id)
-        if owner.user_id not in shared_links:
-            shared_links[owner.user_id] = await shared_link_asset_ids(owner.client)
-            for uid in await outside_partners(accounts, owner):
-                log.warning(
-                    "%s partner-shares their library with non-participant %s", owner.name, uid
-                )
         try:
+            if owner.user_id not in shared_links:
+                shared_links[owner.user_id] = await shared_link_asset_ids(owner.client)
+                for uid in await outside_partners(accounts, owner):
+                    log.warning(
+                        "%s partner-shares their library with non-participant %s", owner.name, uid
+                    )
             result = await move_asset(
                 accounts,
                 ledger,
@@ -273,6 +284,11 @@ async def move_assets(
             out.failed.append((m.file_name, str(e)))
             out.unfinished.add(m.asset_id)
             continue
+        except Exception as e:  # noqa: BLE001 - the move stops before the trash; the rest go on
+            log.exception("%s not moved", m.file_name)
+            out.failed.append((m.file_name, f"{type(e).__name__}: {e}"))
+            out.unfinished.add(m.asset_id)
+            continue
         finally:
             if in_flight is not None:
                 in_flight.discard(m.asset_id)
@@ -285,10 +301,13 @@ async def move_assets(
     return out
 
 
-def advance_marks(ledger: Ledger, scan, many: MoveManyResult, accounts: Accounts) -> None:
+def advance_marks(
+    ledger: Ledger, scan: AssetScan, many: MoveManyResult, accounts: Accounts
+) -> None:
     """After a pass, record how far the re-upload scan got, per member. A member
     whose every re-upload was handled is marked at the scan time; otherwise at
-    the upload time of their oldest unfinished one, so it's found again."""
+    the upload time of their oldest unfinished one, so it's found again. A mark
+    that stays held means a re-read of that stretch every pass, so say so."""
     if scan.scanned_at is None:
         return
     for member in accounts.members.values():
@@ -297,13 +316,22 @@ def advance_marks(ledger: Ledger, scan, many: MoveManyResult, accounts: Accounts
             for m in scan.moves
             if m.reupload and m.owner.user_id == member.user_id and m.asset_id in many.unfinished
         ]
-        ledger.set_mark(member.user_id, min(pending) if pending else scan.scanned_at)
+        if pending:
+            held_at = min(pending)
+            log.info(
+                "%s's re-upload mark held at %s by %d unfinished re-upload(s)",
+                member.name,
+                held_at.isoformat(timespec="seconds"),
+                len(pending),
+            )
+        ledger.set_mark(member.user_id, held_at if pending else scan.scanned_at)
 
 
-def reupload_warnings(scan, threshold: int) -> None:
+def reupload_warnings(scan: AssetScan, threshold: int, *, when: str = "this pass") -> None:
+    """One line per member with re-uploads, a warning above the threshold."""
     for who, n in scan.reuploads_by_owner().items():
         level = logging.WARNING if n > threshold else logging.INFO
-        log.log(level, "%s has %d re-uploads this pass", who, n)
+        log.log(level, "%s has %d re-uploads %s", who, n, when)
 
 
 async def move_asset(
@@ -332,16 +360,23 @@ async def move_asset(
     if asset.live_photo_video_id is not None:
         raise MoveBlocked("live photo; not handled yet")
 
-    # The family copy, looked up first: a live copy with another asset's
-    # provenance means this is a duplicate, and a duplicate needs nothing the
-    # asset's own jobs produce, so it skips the extraction and settle checks.
-    # That's what lets the webhook trash a re-upload seconds after it lands.
+    # The family copy, looked up first. With a live copy, the moved tag on the
+    # original decides: without it this is a duplicate, and the copy is
+    # authoritative. A duplicate needs nothing the asset's own jobs produce, so
+    # it skips the extraction and settle checks, which is what lets the webhook
+    # trash a re-upload seconds after it lands.
+    have_tag = any(t.value == opts.moved_tag for t in asset.tags or [])
+
+    async def is_duplicate() -> bool:
+        provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
+        foreign = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
+        return foreign or not have_tag
+
     owned = await existing_asset_by_checksum(family.client, asset.checksum)
     family_id = owned.asset_id if owned else None
     duplicate = False
     if owned and not owned.is_trashed:
-        provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
-        duplicate = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
+        duplicate = await is_duplicate()
 
     if not duplicate:
         if asset.exif_info is None:
@@ -381,13 +416,11 @@ async def move_asset(
         log.info(
             "%s: restored the family copy %s from the trash", asset.original_file_name, family_id
         )
-        provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
-        duplicate = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
+        duplicate = await is_duplicate()
     if family_id is None:
         if asset.is_trashed:
             raise MoveError(f"{asset.original_file_name} is in the trash")
         # The sidecar, written by Immich after the moved tag goes on.
-        have_tag = any(t.value == opts.moved_tag for t in asset.tags or [])
         if not have_tag:
             await tag_asset(owner.client, await upsert_tag(owner.client, opts.moved_tag), asset_id)
         xmp = await _fresh_sidecar(owner, asset_id, opts.moved_tag, opts.sidecar_timeout)
@@ -403,7 +436,7 @@ async def move_asset(
             is_favorite=asset.is_favorite,
             visibility=asset.visibility,
             sidecar=sidecar,
-            duration=_duration(asset.duration),
+            duration=asset.duration or None,  # milliseconds; None or 0 for a still image
         )
         how = "uploaded" if uploaded else "duplicate of"
         log.info("%s: %s as %s", asset.original_file_name, how, family_id)

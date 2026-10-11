@@ -47,6 +47,7 @@ async def test_reuploads_are_found_and_the_mark_is_only_read(world, ledger):
     world.add_asset(
         FakeAsset(uuid4(), BOB, checksum="old", original_file_name="old.jpg", created_at=T0)
     )
+    ledger.set_mark(ALICE, T0)
     ledger.set_mark(BOB, T1)
 
     scan = await scan_assets(accounts, "Drop", ledger=ledger, now=NOW)
@@ -58,7 +59,40 @@ async def test_reuploads_are_found_and_the_mark_is_only_read(world, ledger):
     assert scan.scanned_at == NOW and scan.reuploads_by_owner() == {"alice": 1}
     assert describe_assets(scan) == ["REUPLOAD beach.jpg from alice: family already has it"]
     # The scan never advances a mark.
-    assert ledger.get_mark(ALICE) is None and ledger.get_mark(BOB) == T1
+    assert ledger.get_mark(ALICE) == T0 and ledger.get_mark(BOB) == T1
+
+
+async def test_a_member_with_no_mark_is_not_scanned_for_reuploads(
+    world, ledger, caplog, monkeypatch
+):
+    import logging
+
+    accounts = make_accounts()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    # The family holds a photo alice also holds, from before the service. The
+    # service moved nothing yet, so nothing of alice's can be a re-upload.
+    world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg"))
+    world.add_asset(
+        FakeAsset(uuid4(), ALICE, checksum="beach", original_file_name="beach.jpg", created_at=T1)
+    )
+    reads = []
+    real = world.iter_assets_created_after
+
+    async def counting(client, since):
+        reads.append(client.user_id)
+        async for a in real(client, since):
+            yield a
+
+    monkeypatch.setattr("ifl.observer.iter_assets_created_after", counting)
+    ledger.set_mark(BOB, T1)
+
+    with caplog.at_level(logging.INFO, logger="ifl.observer"):
+        scan = await scan_assets(accounts, "Drop", ledger=ledger, now=NOW)
+
+    assert not scan.moves and scan.scanned_at == NOW
+    assert reads == [BOB]  # alice's library was never read
+    assert "alice: first re-upload scan" in caplog.text
+    assert ledger.get_mark(ALICE) is None  # the scan only reads; advance_marks sets it
 
 
 async def test_a_trashed_family_copy_is_skipped_and_a_family_album_asset_is_not_doubled(
@@ -72,6 +106,7 @@ async def test_a_trashed_family_copy_is_skipped_and_a_family_album_asset_is_not_
     world.add_asset(
         FakeAsset(uuid4(), ALICE, checksum="cat", original_file_name="cat.jpg", created_at=T1)
     )
+    ledger.set_mark(ALICE, T0)
     # An asset already found in a family album is a plain move, not also a re-upload.
     world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="trip", original_file_name="trip.jpg"))
     trip = world.add_asset(

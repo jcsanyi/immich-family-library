@@ -6,6 +6,7 @@ from ifl.config import ConfigError, parse_config
 
 GOOD = {
     "immich": {"url": "https://x.example/"},
+    "service": {},
     "family": {"email": "f@x", "api_key": "k", "dropbox_album": "Drop"},
     "members": {"a": {"email": "a@x", "api_key": "k"}},
 }
@@ -33,6 +34,17 @@ def test_parse_good():
         (lambda r: r.update({"limits": {"albums_per_pass": -1}}), "albums_per_pass"),
         (lambda r: r.update({"limits": {"albums_per_pass": "5"}}), "albums_per_pass"),
         (lambda r: r.update({"limits": {"assets_per_pass": -2}}), "assets_per_pass"),
+        # Unknown names are errors, not silent defaults.
+        (
+            lambda r: r["service"].update({"poll_interval_seconds": 60}),
+            r"\[service\] has an unknown key 'poll_interval_seconds'",
+        ),
+        (
+            lambda r: r["members"]["a"].update({"name": "Alice"}),
+            r"\[members.a\] has an unknown key 'name'",
+        ),
+        (lambda r: r.update({"serivce": {"readonly": False}}), r"unknown section \[serivce\]"),
+        (lambda r: r.update({"service": 5}), r"\[service\] must be a table"),
     ],
 )
 def test_parse_errors(mutate, msg):

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from uuid import UUID
 
 from ifl.accounts import Accounts
 from ifl.config import Config
@@ -55,7 +56,11 @@ class PassResult:
 
     @property
     def failed(self) -> bool:
-        return bool(self.converted.failed or (self.moved and self.moved.failed))
+        return bool(
+            self.converted.failed
+            or (self.reconciled and self.reconciled.failed)
+            or (self.moved and self.moved.failed)
+        )
 
     def __str__(self) -> str:
         c = self.converted
@@ -71,7 +76,7 @@ class PassResult:
 
 
 async def run_pass(
-    accounts: Accounts, cfg: Config, ledger: Ledger, *, in_flight: set | None = None
+    accounts: Accounts, cfg: Config, ledger: Ledger, *, in_flight: set[UUID] | None = None
 ) -> PassResult:
     albums = await scan_albums(accounts)
     for b in albums.blocked:
@@ -94,12 +99,7 @@ async def run_pass(
     for s in assets.skipped_reuploads:
         log.info("skipping re-upload %s", s)
     reupload_warnings(assets, cfg.reuploads_per_pass)
-    opts = MoveOptions(
-        dropbox_album=cfg.dropbox_album,
-        settle_seconds=cfg.settle_seconds,
-        moved_tag=cfg.moved_tag,
-        from_prefix=cfg.from_prefix,
-    )
+    opts = MoveOptions.from_config(cfg)
     moved = await move_assets(
         accounts, ledger, opts, assets.moves, limit=cfg.assets_per_pass, in_flight=in_flight
     )

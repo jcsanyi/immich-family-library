@@ -54,10 +54,20 @@ metadata, shared links, partners, workflows, queues, and a log of every write.
 It enforces the access rules that matter, so a test can prove which key did
 what. The `patch_world` helper points a module's imported helpers at one fake.
 
+The fake's assets and albums are real `immichpy` response models. `FakeAsset`
+builds an `AssetResponseDto` and `FakeWorld.album` builds an `AlbumResponseDto`
+and runs it through `summarize_album`. The models validate every field, on
+construction and on assignment, so the fake cannot drift from the shapes the
+service reads when the `immichpy` pin changes.
+
 Test files follow the source: `test_observer`, `test_convert`,
 `test_reconcile`, `test_move`, `test_reuploads`, `test_process`,
 `test_daemon` (which runs the receiver on a real aiohttp test server),
-`test_sidecar`, `test_config`, `test_ledger`.
+`test_sidecar`, `test_config`, `test_ledger`, and `test_cli` for the exit
+codes. Two files test the layers the
+fake replaces, against stub clients that return real models: `test_immich`
+covers each adapter helper that has logic in it, and `test_accounts` covers
+the startup checks on each key.
 
 ## The dev instance
 
@@ -93,9 +103,12 @@ creating a key is a thing a member does in the UI, and the service keys
 deliberately cannot do it.
 
 `scripts/seed_dev.py` uploads eight deterministic JPEGs with EXIF as the
-members. It also creates the albums the observer expects. Those are the family
-dropbox and "Family Trip", alice's "Beach 2025" shared with the family, and
-alice's "Alice & Bob" shared only with bob. Run it as:
+members, plus one two-second video clip as alice. The clip is the checked-in
+file `scripts/fixtures/seed-clip.mp4`, so that its bytes never change. The
+script also creates the albums the observer expects. Those are the family
+dropbox and "Family Trip" (which holds alice's trip photo and her clip),
+alice's "Beach 2025" shared with the family, and alice's "Alice & Bob" shared
+only with bob. Run it as:
 
 ```
 IFL_DEV_PASSWORD=... uv run --group seed python scripts/seed_dev.py

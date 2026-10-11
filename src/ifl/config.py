@@ -21,6 +21,20 @@ DEFAULTS = {
 }
 
 
+# Every section and key the file may hold. Anything else is an error, so a
+# typo or an old name fails at startup instead of silently taking the default.
+SCHEMA = {
+    "immich": {"url", "admin_api_key"},
+    "service": {"readonly", "ledger_path", "settle_seconds", "interval_seconds"},
+    "webhook": {"url", "token", "listen", "path"},
+    "family": {"email", "api_key", "dropbox_album"},
+    "members": {"email", "api_key"},  # per [members.<name>] table
+    "limits": {"albums_per_pass", "assets_per_pass"},
+    "tags": {"moved", "from_prefix"},
+    "warnings": {"reuploads_per_pass"},
+}
+
+
 class ConfigError(Exception):
     pass
 
@@ -77,7 +91,27 @@ def load_config(path: Path) -> Config:
     return parse_config(raw, config_dir=path.parent)
 
 
+def _check_keys(raw: dict) -> None:
+    for section, body in raw.items():
+        if section not in SCHEMA:
+            raise ConfigError(f"unknown section [{section}]")
+        if not isinstance(body, dict):
+            raise ConfigError(f"[{section}] must be a table")
+        if section == "members":
+            for name, member in body.items():
+                if not isinstance(member, dict):
+                    raise ConfigError(f"[members.{name}] must be a table")
+                for key in member:
+                    if key not in SCHEMA["members"]:
+                        raise ConfigError(f"[members.{name}] has an unknown key '{key}'")
+            continue
+        for key in body:
+            if key not in SCHEMA[section]:
+                raise ConfigError(f"[{section}] has an unknown key '{key}'")
+
+
 def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
+    _check_keys(raw)
     immich = raw.get("immich") or {}
     if not immich.get("url"):
         raise ConfigError("[immich] url is required")

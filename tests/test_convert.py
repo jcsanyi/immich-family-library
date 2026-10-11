@@ -31,7 +31,7 @@ def world(monkeypatch):
 
 def conversion(accounts, album) -> ConvertAlbum:
     owner = next(a for a in accounts.members.values() if a.user_id == album.owner_id)
-    return ConvertAlbum(album=album, owner=owner, contributor_ids=frozenset())
+    return ConvertAlbum(album=album, owner=owner)
 
 
 async def test_convert_creates_family_album_and_deletes_original(world):
@@ -148,3 +148,28 @@ async def test_convert_albums_honours_the_limit_and_continues_past_failures(worl
 
     unlimited = await convert_albums(accounts, convs[3:], limit=0)
     assert len(unlimited.done) == 1 and unlimited.remaining == 0
+
+
+async def test_an_unexpected_error_on_one_album_does_not_stop_the_others(world, monkeypatch):
+    from ifl.convert import convert_albums
+
+    accounts = make_accounts()
+    albums = [
+        world.album(f"A{i}", ALICE, roles={FAMILY: EDITOR}, assets=[FakeAsset(uuid4(), ALICE)])
+        for i in range(2)
+    ]
+    real_delete = world.delete_album
+
+    async def delete(client, album_id):
+        if album_id == albums[0].id:
+            raise ConnectionError("immich went away")
+        await real_delete(client, album_id)
+
+    monkeypatch.setattr("ifl.convert.delete_album", delete)
+
+    result = await convert_albums(accounts, [conversion(accounts, a) for a in albums], limit=0)
+
+    assert [c.album.name for c, _ in result.failed] == ["A0"]
+    assert "immich went away" in str(result.failed[0][1])
+    assert [r.family_album.name for r in result.done] == ["A1"]
+    assert albums[0].id in world.albums and albums[1].id not in world.albums

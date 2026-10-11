@@ -30,6 +30,7 @@ from ifl.move import (
     reupload_warnings,
 )
 from ifl.observer import (
+    AssetScan,
     describe_albums,
     describe_assets,
     describe_reconcile,
@@ -58,7 +59,8 @@ async def opened(config_path: Path, *, writes: bool) -> AsyncIterator[tuple[Conf
 
 
 async def run_observe(config_path: Path) -> int:
-    """One pass: report what the rules would do. Never writes."""
+    """One pass: report what the rules would do. Never writes to Immich. The
+    ledger file is created if missing, so the counts can be reported."""
     async with opened(config_path, writes=False) as (cfg, accounts):
         ledger = Ledger(cfg.ledger_path)
         try:
@@ -69,9 +71,7 @@ async def run_observe(config_path: Path) -> int:
             log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
             assets = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
             log.info("assets: %s", "; ".join(describe_assets(assets)))
-            for who, n in assets.reuploads_by_owner().items():
-                level = logging.WARNING if n > cfg.reuploads_per_pass else logging.INFO
-                log.log(level, "%s has %d re-uploads waiting", who, n)
+            reupload_warnings(assets, cfg.reuploads_per_pass, when="waiting")
             log.info("ledger: %s", ledger.counts())
             return 0
         finally:
@@ -134,12 +134,7 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
         ledger = Ledger(cfg.ledger_path)
         try:
             scan = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
-            opts = MoveOptions(
-                dropbox_album=cfg.dropbox_album,
-                settle_seconds=cfg.settle_seconds,
-                moved_tag=cfg.moved_tag,
-                from_prefix=cfg.from_prefix,
-            )
+            opts = MoveOptions.from_config(cfg)
             if asset_id is None:
                 for b in scan.blocked:
                     log.warning("skipping %s: %s", b.what, b.reason)
@@ -158,7 +153,7 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
 
 
 async def _move_one(
-    accounts: Accounts, ledger: Ledger, opts: MoveOptions, scan, asset_id: UUID
+    accounts: Accounts, ledger: Ledger, opts: MoveOptions, scan: AssetScan, asset_id: UUID
 ) -> int:
     target = next((m for m in scan.moves if m.asset_id == asset_id), None)
     if target is None:
@@ -224,7 +219,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-c", "--config", type=Path, default=Path("config.toml"))
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("observe", help="one pass: report what the rules would do; writes nothing")
+    sub.add_parser(
+        "observe", help="one pass: report what the rules would do; writes nothing to Immich"
+    )
     conv = sub.add_parser(
         "convert-album", help="turn a member album shared with the family into a family album"
     )
@@ -257,20 +254,20 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
+    commands = {
+        "observe": lambda: run_observe(args.config),
+        "convert-album": lambda: run_convert_album(
+            args.config, None if args.all else args.album_id
+        ),
+        "move": lambda: run_move(args.config, None if args.all else args.asset_id),
+        "reconcile-albums": lambda: run_reconcile_albums(args.config),
+        "process": lambda: run_process(args.config),
+        "daemon": lambda: run_daemon(args.config),
+    }
     try:
         if args.command == "show-config":
             return run_show_config(args.config, args.minimal)
-        if args.command == "observe":
-            return asyncio.run(run_observe(args.config))
-        if args.command == "reconcile-albums":
-            return asyncio.run(run_reconcile_albums(args.config))
-        if args.command == "move":
-            return asyncio.run(run_move(args.config, None if args.all else args.asset_id))
-        if args.command == "process":
-            return asyncio.run(run_process(args.config))
-        if args.command == "daemon":
-            return asyncio.run(run_daemon(args.config))
-        return asyncio.run(run_convert_album(args.config, None if args.all else args.album_id))
+        return asyncio.run(commands[args.command]())
     except (ConfigError, AccountError) as e:
         log.error("%s", e)
         return 2

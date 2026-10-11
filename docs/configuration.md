@@ -7,6 +7,11 @@ with the keys redacted.
 
 Relative paths are resolved against the config file's directory.
 
+The sections and settings below are the only ones the file can hold. A
+section or setting with any other name is an error, and the service does not
+start. This catches a typo or an old name, which would otherwise take the
+default without a message.
+
 ## `[immich]`
 
 | Setting | Default | What it is |
@@ -41,6 +46,11 @@ together are the rate. See pacing in [how-it-works.md](how-it-works.md).
 | `from_prefix` | `"from"` | The family copy is tagged `<from_prefix>/<member>`, with the member's section name. |
 
 Both are tag names, with no leading or trailing slash.
+
+The `moved` tag is also a marker. When a member's photo has the same bytes as
+a family photo, the service reads the tag to tell a move that stopped partway
+from a re-upload. Choose a name that members do not use for their own tags,
+and that does not occur as a keyword in their files.
 
 ## `[warnings]`
 

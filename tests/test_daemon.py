@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from uuid import uuid4
 
+import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -131,3 +133,97 @@ async def test_drain_coalesces_events(world, ledger, daemon, monkeypatch):
     await asyncio.sleep(0.2)
     task.cancel()
     assert seen == [ids]
+
+
+async def test_a_server_that_fails_to_start_takes_the_pass_task_down_with_it(
+    world, ledger, daemon, monkeypatch
+):
+    started = asyncio.Event()
+
+    async def pass_forever(*a, **kw):
+        started.set()
+        await asyncio.sleep(3600)
+
+    async def cannot_bind(self):
+        await started.wait()  # the pass task is already running when the bind fails
+        raise OSError("address already in use")
+
+    monkeypatch.setattr("ifl.daemon.run_pass", pass_forever)
+    monkeypatch.setattr(Daemon, "serve", cannot_bind)
+
+    with pytest.raises(OSError, match="address already in use"):
+        await daemon.run()
+
+    left = [
+        t.get_name() for t in asyncio.all_tasks() if t.get_name() in ("passes", "webhook-drain")
+    ]
+    assert left == []
+
+
+def local_daemon(ledger, **service) -> Daemon:
+    """A daemon whose receiver binds an ephemeral port on loopback."""
+    raw = {
+        **RAW,
+        "service": {**RAW["service"], **service},
+        "webhook": {**RAW["webhook"], "listen": "127.0.0.1:0"},
+    }
+    return Daemon(make_accounts(), parse_config(raw), ledger)
+
+
+async def test_run_does_a_pass_serves_and_stops_when_told(world, ledger, monkeypatch):
+    daemon = local_daemon(ledger)
+    passes = []
+
+    async def one_pass(accounts, cfg, led, *, in_flight):
+        passes.append(in_flight)
+        daemon.stopping.set()
+        return SimpleNamespace()
+
+    monkeypatch.setattr("ifl.daemon.run_pass", one_pass)
+
+    await asyncio.wait_for(daemon.run(), 5)
+
+    assert passes == [daemon.in_flight]  # the pass shares the receiver's in-flight set
+    left = [
+        t.get_name() for t in asyncio.all_tasks() if t.get_name() in ("passes", "webhook-drain")
+    ]
+    assert left == []
+
+
+async def test_a_failing_pass_is_logged_and_the_next_one_still_runs(
+    world, ledger, monkeypatch, caplog
+):
+    daemon = local_daemon(ledger, interval_seconds=1)
+    calls = []
+
+    async def flaky(*a, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("immich went away")
+        daemon.stopping.set()
+        return SimpleNamespace()
+
+    monkeypatch.setattr("ifl.daemon.run_pass", flaky)
+
+    with caplog.at_level("ERROR", logger="ifl.daemon"):
+        await asyncio.wait_for(daemon.passes(), 5)
+
+    assert len(calls) == 2
+    assert "pass failed; next one in 1s" in caplog.text and "immich went away" in caplog.text
+
+
+async def test_serve_binds_the_listen_address_and_the_receiver_answers(world, ledger):
+    daemon = local_daemon(ledger)
+    runner = await daemon.serve()
+    try:
+        host, port = runner.addresses[0][:2]
+        aid = uuid4()
+        async with aiohttp.ClientSession() as http:
+            ok = await http.post(
+                f"http://{host}:{port}/hook", json=event(aid, ALICE), headers={TOKEN_HEADER: "t0k"}
+            )
+            bad = await http.post(f"http://{host}:{port}/hook", json=event(aid, ALICE))
+        assert (ok.status, bad.status) == (202, 401)
+    finally:
+        await runner.cleanup()
+    assert daemon.events.get_nowait() == (aid, ALICE)

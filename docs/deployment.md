@@ -86,9 +86,10 @@ still catches every re-upload, only later.
 
 `/data/ledger.sqlite` is the audit trail. It is the only place that knows who
 a family photo came from once the original is purged. Back it up with the
-rest of your data. If it is lost, the re-upload marks reset, which costs one
-slow full scan, and reclaim, when it exists, cannot tell owners apart.
-Nothing else depends on it.
+rest of your data. If it is lost, the re-upload marks start again at the next
+pass. Re-uploads from the gap are not found and stay in the member's library
+as duplicates of family photos. Reclaim, when it exists, cannot tell owners
+apart. Nothing else depends on it.
 
 ## Upgrading
 

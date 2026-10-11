@@ -36,6 +36,25 @@ are listed here so that the next Immich upgrade knows what to re-check.
   needs an admin key.
 - Workflows belong to a user and fire only for that user's assets.
 
+## Per-asset metadata store (`/assets/{id}/metadata`)
+
+- Each asset has a key-value store. The owner reads and writes it through the
+  API, with `asset.read` and `asset.update`. The service writes one key,
+  `ifl`, on each family copy: the origin user id, the origin asset id, and
+  the move time.
+- The key column accepts any string. Immich defines one key of its own,
+  `mobile-app`, which the phone app uses for an iCloud id. No page in the web
+  app or the mobile app shows the store. Read it with the API, as the owner.
+- An audit table beside the store feeds Immich's sync protocol, and Immich's
+  own mobile app depends on the store. Both make its removal unlikely. A
+  change to its semantics, for example a fixed list of keys, is possible. Check
+  this section on each upgrade.
+- The service does not depend on the store alone. The ledger holds the same
+  facts, and the `from/<member>` tag holds the member. The move reads the
+  entry only as a veto: a copy whose entry names a different original is not
+  this asset's. If the store changes, the fallback is a second tag on the
+  copy, `ifl/<origin-asset-id>`, backfilled from the ledger.
+
 ## Sidecar (`services/metadata.service.ts`)
 
 - Immich writes an XMP sidecar whenever the description, date, location,
@@ -70,6 +89,10 @@ are listed here so that the next Immich upgrade knows what to re-check.
 - The edits endpoint refuses until the asset has dimensions, which extraction
   sets a few seconds after upload ("Asset dimensions are not available for
   editing"). The move waits for them before it applies edits.
+- The asset response gives `duration` as an integer in milliseconds, and null
+  for a still image. The upload endpoint takes the same integer. Confirmed on
+  dev: a two-second clip reads as 2000 on the original and on the family copy.
+  Older Immich versions gave a string, and the first move code expected one.
 
 ## Jobs
 

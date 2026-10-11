@@ -25,8 +25,10 @@ CREATE TABLE IF NOT EXISTS moves (
     reclaimed_at    TEXT,
     reupload_count  INTEGER NOT NULL DEFAULT 0
 );
--- How far the re-upload scan has looked, per member. A record: losing it means
--- one slow full rescan, nothing worse.
+-- How far the re-upload scan has looked, per member. A member with no row has
+-- never been scanned and starts at the next pass's time, since nothing the
+-- service hasn't moved can be a re-upload. So losing this table means that
+-- re-uploads from the gap are never found; they sit as harmless duplicates.
 CREATE TABLE IF NOT EXISTS scan_marks (
     user_id         TEXT PRIMARY KEY,
     scanned_until   TEXT NOT NULL
@@ -38,6 +40,7 @@ class Ledger:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
+        self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
 
     def close(self) -> None:
@@ -88,7 +91,9 @@ class Ledger:
         file_name: str,
     ) -> int:
         """One more re-upload of this checksum. A photo the family got some other
-        way has no row yet; it gets one naming this member. Returns the new count."""
+        way has no row yet; it gets one naming this member, who is the one the
+        count is about rather than where the family's copy came from. Returns
+        the new count."""
         self.db.execute(
             """
             INSERT INTO moves (checksum, origin_user_id, origin_asset_id, family_asset_id,
@@ -113,15 +118,7 @@ class Ledger:
 
     def get(self, checksum: str) -> dict | None:
         row = self.db.execute("SELECT * FROM moves WHERE checksum = ?", (checksum,)).fetchone()
-        if row is None:
-            return None
-        return dict(
-            zip(
-                [c[0] for c in self.db.execute("SELECT * FROM moves LIMIT 0").description],
-                row,
-                strict=True,
-            )
-        )
+        return dict(row) if row is not None else None
 
     def get_mark(self, user_id: UUID) -> datetime | None:
         row = self.db.execute(

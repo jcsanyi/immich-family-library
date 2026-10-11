@@ -143,6 +143,8 @@ async def test_reuploads_are_handled_and_marks_advance_only_past_what_finished(w
         FakeAsset(uuid4(), BOB, checksum="beach", original_file_name="beach.jpg", created_at=old)
     )
     world.shared_links[BOB] = {bobs.id}
+    for uid in (ALICE, BOB):
+        ledger.set_mark(uid, old - timedelta(days=1))  # both have been scanned before
 
     result = await run_pass(accounts, cfg, ledger)
 
@@ -174,6 +176,9 @@ async def test_in_flight_assets_are_left_to_the_other_path(world, ledger):
         FakeAsset(uuid4(), ALICE, checksum="beach", original_file_name="beach.jpg")
     )
     busy = {re.id}  # the receiver has it
+    from datetime import UTC, datetime
+
+    ledger.set_mark(ALICE, datetime(2025, 1, 1, tzinfo=UTC))
 
     result = await run_pass(accounts, cfg, ledger, in_flight=busy)
 
@@ -182,8 +187,30 @@ async def test_in_flight_assets_are_left_to_the_other_path(world, ledger):
     assert busy == {re.id}  # not ours to remove
 
 
+async def test_a_first_pass_starts_each_members_mark_at_now_without_reading_their_library(
+    world, ledger
+):
+    from datetime import UTC, datetime
+
+    accounts = make_accounts()
+    cfg = parse_config(RAW)
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    # A photo both the family and alice held before the service: left alone.
+    world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg"))
+    alices = world.add_asset(
+        FakeAsset(uuid4(), ALICE, checksum="beach", original_file_name="beach.jpg")
+    )
+    before = datetime.now(UTC)
+
+    result = await run_pass(accounts, cfg, ledger)
+
+    assert not result.moved.done and not alices.is_trashed
+    assert all(ledger.get_mark(m.user_id) >= before for m in accounts.members.values())
+    assert ledger.counts()["reuploads"] == 0
+
+
 async def test_reconcile_sets_up_each_members_webhook_workflow(world, ledger):
-    from types import SimpleNamespace
+    from fakes import make_workflow
 
     from ifl.immich import webhook_step
     from ifl.observer import WORKFLOW_NAME
@@ -192,9 +219,7 @@ async def test_reconcile_sets_up_each_members_webhook_workflow(world, ledger):
     cfg = parse_config({**RAW, "webhook": {"url": "http://ifl:8080/hook", "token": "t0k"}})
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     # bob has one pointing at an old URL; alice has none.
-    stale = SimpleNamespace(
-        id=uuid4(), name=WORKFLOW_NAME, enabled=True, steps=[webhook_step("http://old/hook", "t0k")]
-    )
+    stale = make_workflow(WORKFLOW_NAME, [webhook_step("http://old/hook", "t0k")])
     world.workflows[BOB] = [stale]
 
     result = await run_pass(accounts, cfg, ledger)

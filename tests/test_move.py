@@ -15,9 +15,12 @@ from fakes import (
     VIEWER,
     FakeAsset,
     make_accounts,
+    make_tag,
     patch_world,
 )
 from immichpy.client.generated.models.asset_visibility import AssetVisibility
+from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
+from immichpy.client.generated.models.bulk_id_response_dto import BulkIdResponseDto
 
 from ifl.ledger import Ledger
 from ifl.move import MoveBlocked, MoveError, MoveOptions, move_asset, pass_backlog
@@ -92,15 +95,19 @@ async def test_move_carries_everything_and_trashes_the_original(world, ledger):
 
 async def test_rerun_after_upload_finishes_without_uploading_again(world, ledger):
     accounts = make_accounts()
-    a = alice_asset(world)
+    # A previous run tagged the original, uploaded the copy, and died before it
+    # wrote the provenance. The moved tag is what says this is ours to finish.
+    a = alice_asset(world, tags=[make_tag("family")])
+    world.edits[a.id] = ["crop"]
     trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
-    # A previous run got as far as the upload and died.
     copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
 
     result = await move_asset(accounts, ledger, OPTS, a.id, accounts.members["alice"], now=NOW)
 
-    assert result.family_asset_id == copy.id and not result.uploaded
+    assert result.family_asset_id == copy.id and not result.uploaded and not result.duplicate
     assert not world.uploads and not any(w[0] in ("download", "tag") for w in world.writes)
+    assert world.edits[copy.id] == ["crop"]
+    assert world.metadata[copy.id]["ifl"]["origin_asset_id"] == str(a.id)
     assert copy in world.assets[trip.id] and a.is_trashed
     # And once more, with the original already trashed: nothing to trash, same answer.
     world.writes.clear()
@@ -115,9 +122,8 @@ async def test_rerun_after_upload_finishes_without_uploading_again(world, ledger
         (lambda w, a: setattr(a, "exif_info", None), "extraction"),
         (lambda w, a: setattr(a, "updated_at", NOW - timedelta(seconds=10)), "settling"),
         (lambda w, a: setattr(a, "visibility", AssetVisibility.LOCKED), "visibility is locked"),
-        (lambda w, a: setattr(a, "live_photo_video_id", uuid4()), "live photo"),
+        (lambda w, a: setattr(a, "live_photo_video_id", str(uuid4())), "live photo"),
         (lambda w, a: w.shared_links.__setitem__(ALICE, {a.id}), "shared links"),
-        (lambda w, a: setattr(w, "sidecar_writes", False), "sidecar not written"),
         (
             lambda w, a: w.album("Theirs", STRANGER, roles={ALICE: VIEWER}, assets=[a]),
             "owned by a non-participant",
@@ -133,7 +139,29 @@ async def test_blocked_conditions_leave_everything_untouched(world, ledger, setu
     with pytest.raises(MoveBlocked, match=reason):
         await move_asset(accounts, ledger, OPTS, a.id, accounts.members["alice"], now=NOW)
 
+    assert world.writes == [] and not world.uploads
+    assert not a.is_trashed and ledger.get("sha-1") is None
+
+
+async def test_a_sidecar_that_never_arrives_blocks_with_only_the_tag_written(world, ledger):
+    accounts = make_accounts()
+    a = alice_asset(world)
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    world.sidecar_writes = False
+
+    with pytest.raises(MoveBlocked, match="sidecar not written"):
+        await move_asset(accounts, ledger, OPTS, a.id, accounts.members["alice"], now=NOW)
+
+    # The moved tag is the one write before this block: it is what asks Immich
+    # for a fresh sidecar. Nothing was downloaded, uploaded, trashed or recorded.
+    assert [w[0] for w in world.writes] == ["tag"] and [t.value for t in a.tags] == ["family"]
     assert not world.uploads and not a.is_trashed and ledger.get("sha-1") is None
+
+    # The next pass sees the tag already there and writes nothing at all.
+    world.writes.clear()
+    with pytest.raises(MoveBlocked, match="sidecar not written"):
+        await move_asset(accounts, ledger, OPTS, a.id, accounts.members["alice"], now=NOW)
+    assert world.writes == []
 
 
 async def test_relink_picks_the_album_owner_then_the_editor(world, ledger):
@@ -338,16 +366,51 @@ async def test_a_reupload_is_trashed_and_counted_without_touching_the_copy(world
     assert "re-upload #1" in str(result)
 
 
-async def test_a_reupload_of_a_family_direct_upload_gets_a_ledger_row(world, ledger):
+async def test_a_copy_the_family_got_some_other_way_is_authoritative(world, ledger):
     accounts = make_accounts()
+    # No ifl entry: the family uploaded this itself, with its own crop. Alice's
+    # copy of the same bytes carries no moved tag, so it is the duplicate.
     copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
-    # No ifl entry: the family uploaded this itself. A member's copy is still redundant,
-    # but with nothing to compare, it reads as a move: provenance now names the member.
+    world.edits[copy.id] = ["family-crop"]
     re = alice_asset(world)
-    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[re])
+    world.edits[re.id] = ["alice-crop"]
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[re])
+
     result = await move_asset(accounts, ledger, OPTS, re.id, accounts.members["alice"], now=NOW)
-    assert not result.duplicate and result.family_asset_id == copy.id and re.is_trashed
-    assert world.metadata[copy.id]["ifl"]["origin_asset_id"] == str(re.id)
+
+    assert result.duplicate and result.family_asset_id == copy.id and not result.uploaded
+    assert world.edits[copy.id] == ["family-crop"] and copy.id not in world.metadata
+    assert copy in world.assets[trip.id] and re.is_trashed
+    assert not any(w[0] in ("tag", "download", "upload") for w in world.writes)
+    # From the re-upload scan, the same situation is counted against the member.
+    re2 = world.add_asset(FakeAsset(uuid4(), ALICE, checksum="sha-1", original_file_name="a.jpg"))
+    again = await move_asset(
+        accounts, ledger, OPTS, re2.id, accounts.members["alice"], now=NOW, reupload=True
+    )
+    assert again.duplicate and again.reupload_count == 1 and re2.is_trashed
+    assert copy.id not in world.metadata
+
+
+async def test_two_members_with_the_same_bytes_keep_the_first_movers_provenance(world, ledger):
+    accounts = make_accounts()
+    # bob's copy moved fully. alice's identical photo was tagged by an earlier
+    # attempt that blocked at the sidecar, so it wears the moved tag too. The
+    # copy's entry names bob's asset: alice's is a duplicate whatever it wears.
+    bobs_orig = uuid4()
+    copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
+    world.edits[copy.id] = ["bob-crop"]
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(BOB), "origin_asset_id": str(bobs_orig)}
+    }
+    a = alice_asset(world, tags=[make_tag("family")])
+    world.edits[a.id] = ["alice-crop"]
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR}, assets=[a])
+
+    result = await move_asset(accounts, ledger, OPTS, a.id, accounts.members["alice"], now=NOW)
+
+    assert result.duplicate and a.is_trashed and not result.uploaded
+    assert world.edits[copy.id] == ["bob-crop"]
+    assert world.metadata[copy.id]["ifl"]["origin_asset_id"] == str(bobs_orig)
 
 
 async def test_a_trashed_family_copy_is_restored_when_shared_again(world, ledger):
@@ -405,3 +468,140 @@ async def test_a_duplicate_skips_the_extraction_and_settle_checks(world, ledger)
     world.album("Trip2", FAMILY, roles={ALICE: EDITOR}, assets=[fresh])
     with pytest.raises(MoveBlocked, match="extraction"):
         await move_asset(accounts, ledger, OPTS, fresh.id, accounts.members["alice"], now=NOW)
+
+
+async def test_an_unexpected_error_on_one_asset_does_not_stop_the_others(
+    world, ledger, monkeypatch
+):
+    from ifl.move import move_assets
+    from ifl.observer import MoveAsset
+
+    accounts = make_accounts()
+    alice = accounts.members["alice"]
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR})
+    assets = []
+    for i in range(2):
+        a = world.add_asset(
+            FakeAsset(uuid4(), ALICE, checksum=f"sha-{i}", original_file_name=f"{i}.jpg")
+        )
+        world.assets[trip.id].append(a)
+        assets.append(a)
+    # The family copy of 0.jpg can't go into Trip, for a reason that isn't "duplicate".
+    # That path raises RuntimeError, not MoveError.
+    real_add = world.add_album_assets
+
+    async def add(client, album_id, ids):
+        ids = list(ids)
+        if client.user_id == FAMILY and any(world.library[i].checksum == "sha-0" for i in ids):
+            return [
+                BulkIdResponseDto(
+                    id=i, success=False, error=BulkIdErrorReason.UNKNOWN, error_message="boom"
+                )
+                for i in ids
+            ]
+        return await real_add(client, album_id, ids)
+
+    monkeypatch.setattr("ifl.move.add_album_assets", add)
+    moves = [MoveAsset(a.id, a.checksum, alice, trip, a.original_file_name) for a in assets]
+    in_flight: set = set()
+
+    result = await move_assets(accounts, ledger, OPTS, moves, limit=0, in_flight=in_flight)
+
+    assert [f[0] for f in result.failed] == ["0.jpg"] and "boom" in result.failed[0][1]
+    assert [r.file_name for r in result.done] == ["1.jpg"]
+    assert not assets[0].is_trashed and assets[1].is_trashed
+    assert result.unfinished == {assets[0].id} and not in_flight
+
+
+async def test_a_failed_per_owner_lookup_does_not_leave_the_asset_in_flight(
+    world, ledger, monkeypatch
+):
+    from ifl.move import move_assets
+    from ifl.observer import MoveAsset
+
+    accounts = make_accounts()
+    alice = accounts.members["alice"]
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR})
+    a = alice_asset(world)
+    world.assets[trip.id].append(a)
+
+    async def down(client):
+        raise ConnectionError("immich went away")
+
+    monkeypatch.setattr("ifl.move.shared_link_asset_ids", down)
+    moves = [MoveAsset(a.id, a.checksum, alice, trip, a.original_file_name)]
+    in_flight: set = set()
+
+    result = await move_assets(accounts, ledger, OPTS, moves, limit=0, in_flight=in_flight)
+
+    assert [f[0] for f in result.failed] == ["a.jpg"] and result.unfinished == {a.id}
+    assert not in_flight  # otherwise both paths skip this asset until a restart
+    assert not a.is_trashed
+
+
+async def test_a_video_carries_its_duration(world, ledger):
+    accounts = make_accounts()
+    v = world.add_asset(
+        FakeAsset(uuid4(), ALICE, checksum="sha-v", original_file_name="clip.mp4", duration=12_345)
+    )
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[v])
+
+    result = await move_asset(accounts, ledger, OPTS, v.id, accounts.members["alice"], now=NOW)
+
+    (up,) = world.uploads
+    assert result.uploaded and up["duration"] == 12_345 and v.is_trashed
+
+
+def test_reupload_warnings_name_members_over_the_threshold(caplog):
+    import logging
+
+    from ifl.move import reupload_warnings
+    from ifl.observer import AssetScan, MoveAsset
+
+    accounts = make_accounts()
+    alice, bob = accounts.members["alice"], accounts.members["bob"]
+    scan = AssetScan(
+        moves=[
+            *(MoveAsset(uuid4(), "c", alice, None, "a.jpg", reupload=True) for _ in range(3)),
+            MoveAsset(uuid4(), "c", bob, None, "b.jpg", reupload=True),
+            MoveAsset(uuid4(), "c", bob, None, "plain.jpg"),  # a real move, not counted
+        ]
+    )
+    with caplog.at_level(logging.INFO, logger="ifl.move"):
+        reupload_warnings(scan, threshold=2)
+    levels = {r.getMessage(): r.levelno for r in caplog.records}
+    assert levels == {
+        "alice has 3 re-uploads this pass": logging.WARNING,
+        "bob has 1 re-uploads this pass": logging.INFO,
+    }
+
+
+def test_advance_marks_holds_a_member_at_their_oldest_unfinished_reupload(ledger, caplog):
+    import logging
+
+    from ifl.move import MoveManyResult, advance_marks
+    from ifl.observer import AssetScan, MoveAsset
+
+    accounts = make_accounts()
+    alice, bob = accounts.members["alice"], accounts.members["bob"]
+    t1, t2 = NOW - timedelta(days=3), NOW - timedelta(days=1)
+    done, stuck_old, stuck_new = uuid4(), uuid4(), uuid4()
+    scan = AssetScan(
+        moves=[
+            MoveAsset(done, "c1", alice, None, "a.jpg", reupload=True, created_at=t2),
+            MoveAsset(stuck_new, "c2", bob, None, "b2.jpg", reupload=True, created_at=t2),
+            MoveAsset(stuck_old, "c3", bob, None, "b1.jpg", reupload=True, created_at=t1),
+            MoveAsset(uuid4(), "c4", bob, None, "plain.jpg", created_at=t1),  # not a re-upload
+        ],
+        scanned_at=NOW,
+    )
+    many = MoveManyResult(unfinished={stuck_old, stuck_new})
+
+    with caplog.at_level(logging.INFO, logger="ifl.move"):
+        advance_marks(ledger, scan, many, accounts)
+
+    assert ledger.get_mark(alice.user_id) == NOW  # everything of hers finished
+    assert ledger.get_mark(bob.user_id) == t1  # held at his oldest unfinished one
+    assert [r.getMessage() for r in caplog.records] == [
+        f"bob's re-upload mark held at {t1.isoformat(timespec='seconds')} by 2 unfinished re-upload(s)"
+    ]

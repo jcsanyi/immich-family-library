@@ -73,3 +73,23 @@ async def test_reconcile_applies_and_is_then_a_no_op(world):
     assert not again
     assert await reconcile(accounts, again) == type(result)(None, 0, 0, 0)
     assert not world.writes
+
+
+async def test_one_failing_fix_does_not_stop_the_others(world, monkeypatch):
+    accounts = make_accounts()
+    handmade = world.album("Handmade", FAMILY)
+    world.partners[FAMILY] = set()
+
+    async def partner(client, user_id):
+        raise ConnectionError("immich went away")
+
+    monkeypatch.setattr("ifl.reconcile.create_partner", partner)
+
+    result = await reconcile(accounts, await scan_reconcile(accounts, "Drop"))
+
+    # The partner shares failed; the dropbox and the album share still happened.
+    assert result.created_dropbox is not None
+    assert world.albums[handmade.id].roles == {FAMILY: OWNER, ALICE: EDITOR, BOB: EDITOR}
+    assert result.partnered == 0 and len(result.failed) == 2
+    assert all("immich went away" in f for f in result.failed)
+    assert "failed 2" in str(result)

@@ -58,10 +58,10 @@ class Daemon:
             loop.add_signal_handler(sig, self.stopping.set)
         tasks = [asyncio.create_task(self.passes(), name="passes")]
         runner = None
-        if self.cfg.webhook:
-            tasks.append(asyncio.create_task(self.drain(), name="webhook-drain"))
-            runner = await self.serve()
         try:
+            if self.cfg.webhook:
+                tasks.append(asyncio.create_task(self.drain(), name="webhook-drain"))
+                runner = await self.serve()
             await self.stopping.wait()
             log.info("stopping")
         finally:
@@ -151,12 +151,7 @@ class Daemon:
             log.debug("webhook: %d new uploads, none the family has", len(batch))
             return
         log.info("webhook: %s", "; ".join(describe_assets(scan)))
-        opts = MoveOptions(
-            dropbox_album=self.cfg.dropbox_album,
-            settle_seconds=self.cfg.settle_seconds,
-            moved_tag=self.cfg.moved_tag,
-            from_prefix=self.cfg.from_prefix,
-        )
+        opts = MoveOptions.from_config(self.cfg)
         result = await move_assets(
             self.accounts, self.ledger, opts, scan.moves, limit=0, in_flight=self.in_flight
         )

@@ -164,18 +164,32 @@ What the service does about it:
   through the same move: the copy is found by checksum, nothing is uploaded,
   the copy is re-linked into any album the duplicate sits in, the duplicate
   is trashed, and the ledger counts it.
-- The family copy's `ifl` entry tells a duplicate from a crashed move: a
-  duplicate's entry names a different original. A duplicate leaves the copy's edits and
-  provenance alone, and skips the extraction and settle checks, since it needs
-  nothing the new upload's jobs produce.
+- A member's first scan reads nothing. Before the service has moved anything
+  of theirs, nothing they hold can be a re-upload, so the mark simply starts
+  at that pass. Photos they and the family both held from before are left
+  where they are. The same goes for a lost ledger: re-uploads from the gap
+  are never looked for, and sit as harmless duplicates in the member's
+  library.
+- The moved tag tells a duplicate from a crashed move. The service puts that
+  tag on an original before it uploads, so an original wearing it is a move
+  that died partway, and the member's photo is the one to finish from. An
+  original without it is a re-upload, or a photo the family got some other
+  way, and the family's copy is the one that counts: its edits and provenance
+  are left alone, and the move skips the extraction and settle checks, since
+  it needs nothing the new upload's jobs produce. The copy's `ifl` entry has
+  the last word: if it names a different original, the copy already has its
+  owner, whatever tag the member's photo wears.
 - A match whose family copy is itself in the trash is left alone. The family
   deleting a photo is a signal, not something to answer by trashing the
   member's. But if a member shares that photo into a family album again, the
   service restores the family's copy from the trash rather than uploading it
   anew.
-- The service counts re-uploads per checksum and per member. A member with the
-  setting on produces none. A member who passes `reuploads_per_pass` in one
-  pass gets a warning naming them.
+- The service counts re-uploads per checksum and per member. A re-upload here
+  means what the re-upload scan or the webhook found: an upload a phone made
+  on its own. A photo a member puts into a family album by hand is a move or
+  a re-share, never a loop, so it isn't counted even when the family already
+  has it. A member with the setting on produces none. A member who passes
+  `reuploads_per_pass` in one pass gets a warning naming them.
 
 Trashing a re-upload quickly saves Immich no work, since every job already
 queued for it runs regardless. What it does is restart the 30-day clock and
@@ -214,6 +228,14 @@ the `from/<member>` tag.
 The daemon's pass and its webhook receiver share a set of in-flight asset ids,
 so they never work on the same photo at once. Whoever is second skips, and a
 skipped re-upload holds its member's mark back so it's found again.
+
+Any unfinished re-upload holds the mark the same way: one that's blocked,
+failed, or left over the per-pass cap. The next pass re-reads that member's
+uploads from the oldest unfinished one onward, so a re-upload that stays
+blocked, say in one of the member's shared links, means the scan re-reads
+that stretch of their library every pass until the block clears. Nothing is
+missed, but the work grows with their uploads since then, and the pass log
+says whose mark is held and from when.
 
 ## Pacing
 
