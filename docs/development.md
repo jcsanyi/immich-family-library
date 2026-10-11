@@ -39,7 +39,8 @@ receiver on a real aiohttp test server), `test_sidecar`, `test_config`,
 
 Testing happens on a separate Immich instance, never production. It needs an
 admin, a family account and a few member accounts sharing one password, with
-API keys in a config file. `AGENTS.md` describes the one this project uses.
+API keys in a config file. `AGENTS.local.md`, which is gitignored, describes
+the one this project uses.
 
 Two scripts act as the users would, through password login, because sharing
 an album or creating a key is a thing a member does in the UI and the service
