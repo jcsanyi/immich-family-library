@@ -31,7 +31,7 @@ def world(monkeypatch):
 
 def conversion(accounts, album) -> ConvertAlbum:
     owner = next(a for a in accounts.members.values() if a.user_id == album.owner_id)
-    return ConvertAlbum(album=album, owner=owner, contributor_ids=frozenset())
+    return ConvertAlbum(album=album, owner=owner)
 
 
 async def test_convert_creates_family_album_and_deletes_original(world):

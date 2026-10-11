@@ -444,13 +444,11 @@ class FakeWorld:
 
 
 def make_accounts() -> Accounts:
-    def acct(name, uid, fam=False):
-        return Account(
-            name=name, email=f"{name}@x", user_id=uid, client=FakeClient(uid), is_family=fam
-        )
+    def acct(name, uid):
+        return Account(name=name, email=f"{name}@x", user_id=uid, client=FakeClient(uid))
 
     return Accounts(
-        family=acct("family", FAMILY, True),
+        family=acct("family", FAMILY),
         members={"alice": acct("alice", ALICE), "bob": acct("bob", BOB)},
     )
 

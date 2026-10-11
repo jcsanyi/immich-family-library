@@ -73,7 +73,6 @@ class Account:
     email: str
     user_id: UUID
     client: AsyncClient
-    is_family: bool = False
 
     def __str__(self) -> str:
         return f"{self.name} <{self.email}>"
@@ -101,7 +100,6 @@ async def open_account(
     cfg: AccountConfig,
     *,
     required: set[str],
-    is_family: bool = False,
     must_be_admin: bool = False,
 ) -> Account:
     client = AsyncClient(base_url=url, api_key=cfg.api_key)
@@ -126,7 +124,7 @@ async def open_account(
         await client.close()
         raise AccountError(f"[{cfg.name}] key check failed: {e}") from e
     log.info("account ok: %s (%s)", cfg.name, me.email)
-    return Account(name=cfg.name, email=me.email, user_id=me.id, client=client, is_family=is_family)
+    return Account(name=cfg.name, email=me.email, user_id=me.id, client=client)
 
 
 async def check_server(client: AsyncClient) -> str:
@@ -142,9 +140,7 @@ async def check_server(client: AsyncClient) -> str:
 async def open_accounts(cfg: Config) -> Accounts:
     opened: list[Account] = []
     try:
-        family = await open_account(
-            cfg.immich_url, cfg.family, required=FAMILY_PERMISSIONS, is_family=True
-        )
+        family = await open_account(cfg.immich_url, cfg.family, required=FAMILY_PERMISSIONS)
         opened.append(family)
         version = await check_server(family.client)
         log.info("server %s at %s", version, cfg.immich_url)

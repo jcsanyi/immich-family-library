@@ -156,24 +156,20 @@ async def add_to_album(acct: Account, album_id: UUID, asset_ids: list[UUID]) -> 
     )
 
 
-async def login(url: str, acct: AccountConfig, password: str, *, is_family: bool) -> Account:
+async def login(url: str, acct: AccountConfig, password: str) -> Account:
     anon = AsyncClient(base_url=url)
     try:
         res = await anon.auth.login(LoginCredentialDto(email=acct.email, password=password))
     finally:
         await anon.close()
     client = AsyncClient(base_url=url, access_token=res.access_token)
-    return Account(
-        name=acct.name, email=acct.email, user_id=res.user_id, client=client, is_family=is_family
-    )
+    return Account(name=acct.name, email=acct.email, user_id=res.user_id, client=client)
 
 
 async def login_all(config_path: Path, password: str) -> tuple[Accounts, str]:
     cfg = load_config(config_path)
-    family = await login(cfg.immich_url, cfg.family, password, is_family=True)
-    members = {
-        n: await login(cfg.immich_url, m, password, is_family=False) for n, m in cfg.members.items()
-    }
+    family = await login(cfg.immich_url, cfg.family, password)
+    members = {n: await login(cfg.immich_url, m, password) for n, m in cfg.members.items()}
     return Accounts(family=family, members=members), cfg.dropbox_album
 
 

@@ -58,7 +58,6 @@ class Blocked:
 class ConvertAlbum:
     album: AlbumSummary
     owner: Account
-    contributor_ids: frozenset[UUID]
 
 
 @dataclass
@@ -147,6 +146,7 @@ async def scan_albums(accounts: Accounts) -> AlbumScan:
                     )
                 )
                 continue
+            # The walk is the outsider check: conversion re-reads the album itself.
             contributors: set[UUID] = set()
             async for asset in iter_album_assets(member.client, album.id):
                 contributors.add(asset.owner_id)
@@ -161,9 +161,7 @@ async def scan_albums(accounts: Accounts) -> AlbumScan:
                     )
                 )
                 continue
-            scan.conversions.append(
-                ConvertAlbum(album=album, owner=member, contributor_ids=frozenset(contributors))
-            )
+            scan.conversions.append(ConvertAlbum(album=album, owner=member))
     return scan
 
 

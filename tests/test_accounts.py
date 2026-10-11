@@ -193,7 +193,7 @@ async def test_open_accounts_opens_every_key_and_closes_them_all_if_one_fails(st
     }
     opened = await open_accounts(cfg)
     assert set(opened.members) == {"alice", "bob"} and opened.admin.email == "root@x"
-    assert opened.family.is_family and not opened.members["alice"].is_family
+    assert opened.family.email == "f@x"
     assert set(opened.by_user_id()) == {
         opened.family.user_id,
         *(m.user_id for m in opened.members.values()),

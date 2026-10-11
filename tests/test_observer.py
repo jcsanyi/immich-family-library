@@ -74,7 +74,7 @@ async def test_member_album_shared_with_family_is_a_conversion(world):
     )
     scan = await scan_albums(make_accounts())
     assert [c.album.id for c in scan.conversions] == [shared.id]
-    assert scan.conversions[0].contributor_ids == {ALICE, BOB}
+    assert scan.conversions[0].owner.name == "alice"
     assert describe_albums(scan)[0].startswith("CONVERT album 'Shared'")
 
 
