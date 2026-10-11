@@ -19,6 +19,20 @@ repo's `COMPATIBILITY.csv` maps package versions to Immich versions. This is
 the one place in the docs that records the pin. When it changes, update it
 here.
 
+A new `immichpy` major is generated from a new Immich minor and drops support
+for older servers. Dependabot opens a pull request for each one, and the tests
+on it usually fail, because the fake Immich builds the real response models.
+That pull request is the prompt to upgrade. Do these steps together:
+
+1. Upgrade the dev instance to the matching Immich version.
+2. Take the new pin, and raise `MIN_SERVER` in `src/ifl/accounts.py` to that
+   Immich version. Update the version in `README.md` and in this section.
+3. Re-check every point in `immich-notes.md` on the dev instance, and fix the
+   code and the docs where Immich changed.
+
+Patch and minor releases of `immichpy` keep the same minimum server. Merge
+those when the tests pass.
+
 For moves, use the generated `upload_asset`. Do not use the path-based
 `assets.upload()` helper, which is a bulk uploader. If the immichpy project
 goes quiet, the fallback is to regenerate the client from the spec with the
@@ -68,6 +82,18 @@ codes. Two files test the layers the
 fake replaces, against stub clients that return real models: `test_immich`
 covers each adapter helper that has logic in it, and `test_accounts` covers
 the startup checks on each key.
+
+## Continuous integration
+
+The `Tests` workflow in `.github/workflows/tests.yml` runs on every pull
+request to `main` and on every push to `main`. It installs the locked
+dependencies with `uv sync --frozen`, runs `ruff check` and `ruff format
+--check`, then runs the tests with coverage. The job summary shows the
+coverage table. The HTML coverage report is an artifact of the run, kept for
+14 days.
+
+Dependabot (`.github/dependabot.yml`) opens a pull request each week for
+updates to the GitHub Actions and to the Python dependencies in `uv.lock`.
 
 ## The dev instance
 
