@@ -2,7 +2,7 @@
 
 Each subcommand arranges one situation the service should then handle, the way
 a member or the family would arrange it in the UI. They were used to verify
-stages 2 to 7 and are kept so the same checks can be re-run after a change.
+each action and are kept so the same checks can be re-run after a change.
 Most assume the seed has run (`scripts/seed_dev.py`) and refer to its photos by
 file name. Like the seed, they log in with the shared dev password:
 

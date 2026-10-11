@@ -2,8 +2,8 @@
 
 `ifl` is one entry point with subcommands. Every command takes:
 
-- `-c PATH`, `--config PATH`: the config file. Default `config.toml` in the
-  current directory. In the container it's `/config/config.toml`.
+- `-c PATH`, `--config PATH`: the config file. The default is `config.toml`
+  in the current directory. In the container it is `/config/config.toml`.
 - `-v`, `--verbose`: debug logging.
 
 Logging goes to stderr. `show-config` is the only command that writes to
@@ -11,101 +11,106 @@ stdout.
 
 ## Startup
 
-Every command except `show-config` opens every account first: the key must
+Every command except `show-config` opens every account first. The key must
 work, belong to the configured email, and carry the permissions the service
 needs (listed in [configuration.md](configuration.md)). The server must be
-Immich 3.3 or later. A problem here exits with code 2 before anything is
-touched. A config pointed at the wrong server fails this way too, which is
-the point of checking emails.
+Immich 3.3 or later. If any of this fails, the command exits with code 2
+before it touches anything. A config pointed at the wrong server fails the
+same way, which is why the emails are checked.
 
-While `readonly` is true in the config, every command that would write to
-Immich refuses to start. `observe` and `show-config` still work.
+While `readonly` is true in the config, every command that writes to Immich
+refuses to start. `observe` and `show-config` still work.
 
 ## `ifl observe`
 
-One pass of the three scans, reported and nothing more. Never writes to
-Immich; it does create the ledger file if it's missing, to report its counts.
-Reports:
+One pass of the three scans, reported and nothing more. It never writes to
+Immich. If the ledger file is missing, it creates it, so that it can report
+the counts. It reports:
 
-- `CONVERT` albums the album scan would convert, and `BLOCKED` ones with why.
-- The family album fixes reconcile would make: `CREATE dropbox`, `SHARE`,
+- `CONVERT` for each album that a pass converts, and `BLOCKED` with the
+  reason for each one it does not.
+- The family album fixes that reconcile makes: `CREATE dropbox`, `SHARE`,
   `PROMOTE`, `PARTNER-SHARE`, `CREATE webhook workflow`, or "family albums
   consistent".
-- `MOVE` lines for member photos in family albums, `[dropbox]` marked;
-  `REUPLOAD` lines for members' recent uploads the family already has; `SKIP`
-  lines for re-uploads whose family copy is trashed; `BLOCKED` photos.
-- A count of re-uploads waiting per member, as a warning above
-  `reuploads_per_pass`.
+- `MOVE` lines for member photos in family albums, with `[dropbox]` marked.
+  `REUPLOAD` lines for members' recent uploads that the family already has.
+  `SKIP` lines for re-uploads whose family copy is trashed. `BLOCKED` photos.
+- A count of re-uploads waiting per member. Above `reuploads_per_pass`, it is
+  a warning.
 - The ledger's counts.
 
-Run it first on any new install, and after any config change, before flipping
-`readonly`.
+Run it first on any new install. Run it again after any config change, before
+you set `readonly` to false.
 
 ## `ifl convert-album <album-id>` and `ifl convert-album --all`
 
-Converts one member album that's shared with the family, or every such album
-up to `albums_per_pass`. Both only convert what `observe` would: the same
-scan decides, so a blocked album stays blocked here, and the single-id form
-tells you why. The single-id form ignores the limit. `--all` logs each result
-and a summary (converted, failed, remaining) and exits 1 if anything failed.
+Converts one member album that is shared with the family, or every such album
+up to `albums_per_pass`. Both forms convert only what `observe` reports. The
+same scan decides, so a blocked album stays blocked here, and the single-id
+form tells you why. The single-id form ignores the limit. `--all` logs each
+result and a summary (converted, failed, remaining). If anything failed, it
+exits 1.
 
 The album id is in the web UI's address bar when the album is open.
 
 ## `ifl reconcile-albums`
 
-Makes the family albums consistent: creates the dropbox if missing, adds
-every member as an editor to every family-owned album and promotes viewers,
-partner-shares the family library with every member, and, with `[webhook]`
-configured, creates or fixes each member's webhook workflow. Removes nothing.
-Running it on a consistent instance does nothing and says so.
+Makes the family albums consistent. It creates the dropbox if it is missing.
+It adds every member as an editor to every family-owned album and promotes
+viewers. It partner-shares the family library with every member. With
+`[webhook]` configured, it creates or fixes each member's webhook workflow. It
+removes nothing. On a consistent instance it does nothing and says so.
 
 ## `ifl move <asset-id>` and `ifl move --all`
 
-Moves one member photo that's in a family album (or is a re-upload the family
-already has), or every such photo up to `assets_per_pass`. Same decision as
-`observe`. A photo that's blocked is reported with the reason and exits 1.
+Moves one member photo that is in a family album, or that is a re-upload the
+family already has. `--all` moves every such photo up to `assets_per_pass`.
+The decision is the same as in `observe`. If the photo is blocked, the command
+reports the reason and exits 1.
 
 The asset id is in the address bar when the photo is open. `--all` reports
-moved, blocked, failed and remaining, advances the re-upload marks for what
-finished, and exits 1 if anything failed.
+moved, blocked, failed and remaining. It advances the re-upload marks for what
+finished. If anything failed, it exits 1.
 
 With `admin_api_key` set, both forms refuse to start while Immich's sidecar or
 metadata queues have jobs waiting.
 
-A move that fails partway leaves the original in place. Run it again and it
+A move that fails partway leaves the original in place. Run it again, and it
 resumes from what Immich has.
 
 ## `ifl process`
 
-One complete pass: album scan and conversions under `albums_per_pass`,
-reconcile, the queue check if an admin key is configured, asset scan and moves
-under `assets_per_pass`, re-uploads included. A just-converted album's photos
-move in the same pass. A queue backlog skips the moves for this pass, not the
-album work. Ends with one summary line and the ledger counts. Exit 1 if any
-conversion or move failed.
+One complete pass: the album scan and conversions under `albums_per_pass`,
+reconcile, the queue check if an admin key is configured, then the asset scan
+and moves under `assets_per_pass`, re-uploads included. A just-converted
+album's photos move in the same pass. A queue backlog skips the moves for this
+pass, not the album work. It ends with one summary line and the ledger
+counts. If any conversion or move failed, it exits 1.
 
-Run by hand, or from cron, as an alternative to the daemon.
+Run it by hand, or from cron, as an alternative to the daemon.
 
 ## `ifl daemon`
 
-The service. A `process` pass every `interval_seconds`, and, with `[webhook]`
-configured, the receiver Immich's per-member workflows post new uploads to.
-A re-upload posted there is trashed within seconds; nothing else the receiver
-sees is acted on, so the interval and the limits remain the only pacing for
-real moves. Stops cleanly on SIGINT or SIGTERM. A pass that fails is logged
-and the next one runs on schedule; a failed webhook batch is logged and the
-next pass picks up what it missed. This is the container's default command.
+The service. It runs a `process` pass every `interval_seconds`. With
+`[webhook]` configured, it also runs the receiver that Immich's per-member
+workflows post new uploads to. A re-upload posted there is trashed within
+seconds. Nothing else the receiver sees is acted on, so the interval and the
+limits remain the only pacing for real moves. It stops cleanly on SIGINT or
+SIGTERM. If a pass fails, the failure is logged and the next pass runs on
+schedule. If a webhook batch fails, the failure is logged and the next pass
+picks up what it missed. This is the container's default command.
 
 ## `ifl show-config [--minimal]`
 
-The effective configuration as TOML on stdout, every key and token redacted
-to its last four characters. `--minimal` leaves out settings that match their
-defaults. Needs no network, so it works before the keys do.
+Prints the effective configuration as TOML on stdout, with every key and
+token redacted to its last four characters. `--minimal` leaves out settings
+that match their defaults. It needs no network, so it works before the keys
+do.
 
 ## Exit codes
 
 - `0`: everything asked for was done.
-- `1`: something was blocked or failed; the log says what. For `--all` and
+- `1`: something was blocked or failed. The log says what. For `--all` and
   `process`, only failures count, not blocks.
 - `2`: the config or a key is wrong, or `readonly` refused the command.
 
