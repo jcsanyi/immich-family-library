@@ -69,9 +69,7 @@ async def run_observe(config_path: Path) -> int:
             log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
             assets = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
             log.info("assets: %s", "; ".join(describe_assets(assets)))
-            for who, n in assets.reuploads_by_owner().items():
-                level = logging.WARNING if n > cfg.reuploads_per_pass else logging.INFO
-                log.log(level, "%s has %d re-uploads waiting", who, n)
+            reupload_warnings(assets, cfg.reuploads_per_pass, when="waiting")
             log.info("ledger: %s", ledger.counts())
             return 0
         finally:
@@ -134,12 +132,7 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
         ledger = Ledger(cfg.ledger_path)
         try:
             scan = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
-            opts = MoveOptions(
-                dropbox_album=cfg.dropbox_album,
-                settle_seconds=cfg.settle_seconds,
-                moved_tag=cfg.moved_tag,
-                from_prefix=cfg.from_prefix,
-            )
+            opts = MoveOptions.from_config(cfg)
             if asset_id is None:
                 for b in scan.blocked:
                     log.warning("skipping %s: %s", b.what, b.reason)

@@ -43,6 +43,7 @@ from immichpy.client.generated.models.asset_visibility import AssetVisibility
 from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 
 from ifl.accounts import Account, Accounts
+from ifl.config import Config
 from ifl.immich import (
     AlbumSummary,
     add_album_assets,
@@ -90,6 +91,15 @@ class MoveOptions:
     from_prefix: str
     sidecar_timeout: float = 15.0
     extraction_timeout: float = 30.0  # edits need the copy's dimensions, which extraction sets
+
+    @classmethod
+    def from_config(cls, cfg: Config) -> MoveOptions:
+        return cls(
+            dropbox_album=cfg.dropbox_album,
+            settle_seconds=cfg.settle_seconds,
+            moved_tag=cfg.moved_tag,
+            from_prefix=cfg.from_prefix,
+        )
 
 
 @dataclass
@@ -300,10 +310,11 @@ def advance_marks(ledger: Ledger, scan, many: MoveManyResult, accounts: Accounts
         ledger.set_mark(member.user_id, min(pending) if pending else scan.scanned_at)
 
 
-def reupload_warnings(scan, threshold: int) -> None:
+def reupload_warnings(scan, threshold: int, *, when: str = "this pass") -> None:
+    """One line per member with re-uploads, a warning above the threshold."""
     for who, n in scan.reuploads_by_owner().items():
         level = logging.WARNING if n > threshold else logging.INFO
-        log.log(level, "%s has %d re-uploads this pass", who, n)
+        log.log(level, "%s has %d re-uploads %s", who, n, when)
 
 
 async def move_asset(

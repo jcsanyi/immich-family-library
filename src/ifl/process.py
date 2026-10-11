@@ -98,12 +98,7 @@ async def run_pass(
     for s in assets.skipped_reuploads:
         log.info("skipping re-upload %s", s)
     reupload_warnings(assets, cfg.reuploads_per_pass)
-    opts = MoveOptions(
-        dropbox_album=cfg.dropbox_album,
-        settle_seconds=cfg.settle_seconds,
-        moved_tag=cfg.moved_tag,
-        from_prefix=cfg.from_prefix,
-    )
+    opts = MoveOptions.from_config(cfg)
     moved = await move_assets(
         accounts, ledger, opts, assets.moves, limit=cfg.assets_per_pass, in_flight=in_flight
     )
