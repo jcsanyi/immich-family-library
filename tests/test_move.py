@@ -13,13 +13,13 @@ from fakes import (
     FAMILY,
     STRANGER,
     VIEWER,
-    BulkResult,
     FakeAsset,
     make_accounts,
     patch_world,
 )
 from immichpy.client.generated.models.asset_visibility import AssetVisibility
 from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
+from immichpy.client.generated.models.bulk_id_response_dto import BulkIdResponseDto
 
 from ifl.ledger import Ledger
 from ifl.move import MoveBlocked, MoveError, MoveOptions, move_asset, pass_backlog
@@ -117,7 +117,7 @@ async def test_rerun_after_upload_finishes_without_uploading_again(world, ledger
         (lambda w, a: setattr(a, "exif_info", None), "extraction"),
         (lambda w, a: setattr(a, "updated_at", NOW - timedelta(seconds=10)), "settling"),
         (lambda w, a: setattr(a, "visibility", AssetVisibility.LOCKED), "visibility is locked"),
-        (lambda w, a: setattr(a, "live_photo_video_id", uuid4()), "live photo"),
+        (lambda w, a: setattr(a, "live_photo_video_id", str(uuid4())), "live photo"),
         (lambda w, a: w.shared_links.__setitem__(ALICE, {a.id}), "shared links"),
         (lambda w, a: setattr(w, "sidecar_writes", False), "sidecar not written"),
         (
@@ -432,7 +432,12 @@ async def test_an_unexpected_error_on_one_asset_does_not_stop_the_others(
     async def add(client, album_id, ids):
         ids = list(ids)
         if client.user_id == FAMILY and any(world.library[i].checksum == "sha-0" for i in ids):
-            return [BulkResult(i, False, BulkIdErrorReason.UNKNOWN, "boom") for i in ids]
+            return [
+                BulkIdResponseDto(
+                    id=i, success=False, error=BulkIdErrorReason.UNKNOWN, error_message="boom"
+                )
+                for i in ids
+            ]
         return await real_add(client, album_id, ids)
 
     monkeypatch.setattr("ifl.move.add_album_assets", add)

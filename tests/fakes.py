@@ -1,59 +1,119 @@
-"""A fake Immich for the write paths: albums, users, assets, and a log of every write."""
+"""A fake Immich for the write paths: albums, users, assets, and a log of every write.
+
+Assets and albums are real immichpy response models, built by `FakeAsset` and
+`FakeWorld.album`, so the fake can't drift from the shapes the service reads:
+every field is validated on construction and on assignment. Albums go through
+`summarize_album`, the same way the service's own reads do.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
+from immichpy.client.generated.models.album_user_response_dto import AlbumUserResponseDto
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
+from immichpy.client.generated.models.asset_response_dto import AssetResponseDto
+from immichpy.client.generated.models.asset_type_enum import AssetTypeEnum
 from immichpy.client.generated.models.asset_visibility import AssetVisibility
 from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
+from immichpy.client.generated.models.bulk_id_response_dto import BulkIdResponseDto
+from immichpy.client.generated.models.exif_response_dto import ExifResponseDto
+from immichpy.client.generated.models.tag_response_dto import TagResponseDto
+from immichpy.client.generated.models.user_avatar_color import UserAvatarColor
+from immichpy.client.generated.models.user_response_dto import UserResponseDto
+from immichpy.client.generated.models.workflow_response_dto import WorkflowResponseDto
+from immichpy.client.generated.models.workflow_step_dto import WorkflowStepDto
+from immichpy.client.generated.models.workflow_trigger import WorkflowTrigger
 
 from ifl.accounts import Account, Accounts
-from ifl.immich import AlbumSummary
+from ifl.immich import AlbumSummary, Owned, summarize_album, webhook_step
 from ifl.sidecar import with_only_tag
 
 FAMILY, ALICE, BOB, STRANGER = (uuid4() for _ in range(4))
 EDITOR, VIEWER, OWNER = AlbumUserRole.EDITOR, AlbumUserRole.VIEWER, AlbumUserRole.OWNER
 EMAILS = {FAMILY: "family@x", ALICE: "alice@x", BOB: "bob@x", STRANGER: "stranger@x"}
+T0 = datetime(2026, 1, 1, tzinfo=UTC)
+TAKEN = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
 
 
-@dataclass
-class FakeTag:
-    value: str
+def make_user(uid: UUID) -> UserResponseDto:
+    email = EMAILS.get(uid, str(uid))
+    return UserResponseDto(
+        avatar_color=UserAvatarColor.PRIMARY,
+        email=email,
+        id=uid,
+        name=email.split("@")[0],
+        profile_changed_at=T0,
+        profile_image_path="",
+    )
 
 
-@dataclass
-class FakeAsset:
-    id: UUID
-    owner_id: UUID
-    checksum: str = "c"
-    original_file_name: str = "img.jpg"
-    is_trashed: bool = False
-    visibility: AssetVisibility = AssetVisibility.TIMELINE
-    exif_info: object | None = field(default_factory=lambda: SimpleNamespace(description=""))
-    updated_at: datetime = datetime(2026, 1, 1, tzinfo=UTC)
-    file_created_at: datetime = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
-    file_modified_at: datetime = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
-    is_favorite: bool = False
-    duration: int | None = None  # milliseconds; None for a still image, as immichpy has it
-    live_photo_video_id: UUID | None = None
-    stack: object | None = None
-    tags: list[FakeTag] = field(default_factory=list)
-    description: str = ""
-    width: int | None = 640  # None until "extraction" has run
-    height: int | None = 480
-    created_at: datetime = datetime(2026, 1, 1, tzinfo=UTC)
+def make_tag(value: str) -> TagResponseDto:
+    return TagResponseDto(
+        created_at=T0, id=uuid4(), name=value.rsplit("/", 1)[-1], updated_at=T0, value=value
+    )
 
 
-@dataclass
-class BulkResult:
-    id: UUID
-    success: bool
-    error: BulkIdErrorReason | None = None
-    error_message: str | None = None
+def make_workflow(
+    name: str, steps: list[WorkflowStepDto], enabled: bool = True
+) -> WorkflowResponseDto:
+    return WorkflowResponseDto(
+        created_at="",
+        description=None,
+        enabled=enabled,
+        id=uuid4(),
+        logging=False,
+        name=name,
+        steps=steps,
+        trigger=WorkflowTrigger.ASSETCREATE,
+        updated_at="",
+    )
+
+
+def FakeAsset(  # noqa: N802 - reads like the model it builds
+    id: UUID,
+    owner_id: UUID,
+    checksum: str = "c",
+    original_file_name: str = "img.jpg",
+    *,
+    description: str = "",
+    **overrides,
+) -> AssetResponseDto:
+    """A real AssetResponseDto with the defaults of a settled, extracted still
+    image. `description` lands in exif_info, where Immich keeps it. Any field
+    can be overridden; `exif_info=None` means extraction hasn't run, and
+    `width=None` means the copy has no dimensions yet."""
+    fields = {
+        "id": id,
+        "owner_id": owner_id,
+        "checksum": checksum,
+        "original_file_name": original_file_name,
+        "original_path": f"upload/{original_file_name}",
+        "type": AssetTypeEnum.VIDEO if overrides.get("duration") else AssetTypeEnum.IMAGE,
+        "created_at": T0,
+        "updated_at": T0,
+        "file_created_at": TAKEN,
+        "file_modified_at": TAKEN,
+        "local_date_time": TAKEN,
+        "duration": None,  # milliseconds; None for a still image
+        "width": 640,
+        "height": 480,
+        "has_metadata": True,
+        "is_archived": False,
+        "is_edited": False,
+        "is_favorite": False,
+        "is_offline": False,
+        "is_trashed": False,
+        "thumbhash": None,
+        "visibility": AssetVisibility.TIMELINE,
+        "exif_info": ExifResponseDto(description=description),
+        "tags": [],
+    }
+    fields.update(overrides)
+    return AssetResponseDto(**fields)
 
 
 class FakeUsers:
@@ -62,7 +122,7 @@ class FakeUsers:
 
     async def get_user(self, id):
         if id in EMAILS:
-            return SimpleNamespace(id=id, email=EMAILS[id])
+            return make_user(id)
         raise RuntimeError("unknown user")
 
 
@@ -95,21 +155,25 @@ class FakeWorld:
         self.on_read: list = []  # callbacks run once each, in order, on asset reads
 
     def album(self, name, owner, roles=None, assets=(), description="", shared_link=False):
-        aid = uuid4()
+        """An album as Immich would return it, summarised the way the service does."""
         roles = {owner: OWNER, **(roles or {})}
-        self.albums[aid] = AlbumSummary(
-            id=aid,
-            name=name,
-            owner_id=owner,
-            user_ids=frozenset(roles),
+        dto = AlbumResponseDto(
+            id=uuid4(),
+            album_name=name,
+            album_thumbnail_asset_id=None,
+            album_users=[AlbumUserResponseDto(role=r, user=make_user(u)) for u, r in roles.items()],
             asset_count=len(assets),
+            created_at=T0,
+            updated_at=T0,
             description=description,
             has_shared_link=shared_link,
-            emails={u: EMAILS.get(u, str(u)) for u in roles},
-            roles=roles,
+            is_activity_enabled=False,
+            shared=len(roles) > 1,
         )
-        self.assets[aid] = list(assets)
-        return self.albums[aid]
+        summary = summarize_album(dto)
+        self.albums[summary.id] = summary
+        self.assets[summary.id] = list(assets)
+        return summary
 
     # The helpers convert.py imports, as this account would see them.
 
@@ -153,14 +217,27 @@ class FakeWorld:
         present = {a.id for a in self.assets[album_id]}
         for i in ids:
             if i in self.fail_adds:
-                out.append(BulkResult(i, False, self.fail_adds[i], "nope"))
+                out.append(
+                    BulkIdResponseDto(
+                        id=i, success=False, error=self.fail_adds[i], error_message="nope"
+                    )
+                )
             elif not self._may_add(client, album, self.find_asset(i)):
-                out.append(BulkResult(i, False, BulkIdErrorReason.NO_PERMISSION, "no access"))
+                out.append(
+                    BulkIdResponseDto(
+                        id=i,
+                        success=False,
+                        error=BulkIdErrorReason.NO_PERMISSION,
+                        error_message="no access",
+                    )
+                )
             elif i in present:
-                out.append(BulkResult(i, False, BulkIdErrorReason.DUPLICATE))
+                out.append(
+                    BulkIdResponseDto(id=i, success=False, error=BulkIdErrorReason.DUPLICATE)
+                )
             else:
                 self.assets[album_id].append(self.find_asset(i))
-                out.append(BulkResult(i, True))
+                out.append(BulkIdResponseDto(id=i, success=True))
         return out
 
     async def delete_album(self, client, album_id):
@@ -180,16 +257,12 @@ class FakeWorld:
         return next((w for w in self.workflows.get(client.user_id, []) if w.name == name), None)
 
     async def create_workflow(self, client, name, url, token):
-        from ifl.immich import webhook_step
-
-        w = SimpleNamespace(id=uuid4(), name=name, enabled=True, steps=[webhook_step(url, token)])
+        w = make_workflow(name, [webhook_step(url, token)])
         self.workflows.setdefault(client.user_id, []).append(w)
         self.writes.append(("workflow", client.user_id, "create"))
         return w.id
 
     async def update_workflow(self, client, workflow_id, url, token):
-        from ifl.immich import webhook_step
-
         w = next(w for w in self.workflows[client.user_id] if w.id == workflow_id)
         w.steps, w.enabled = [webhook_step(url, token)], True
         self.writes.append(("workflow", client.user_id, "update"))
@@ -205,20 +278,21 @@ class FakeWorld:
             return self.library[asset_id]
         return next(a for lst in self.assets.values() for a in lst if a.id == asset_id)
 
-    def add_asset(self, asset: FakeAsset) -> FakeAsset:
+    def add_asset(self, asset: AssetResponseDto) -> AssetResponseDto:
         self.library[asset.id] = asset
         return asset
 
-    def _write_sidecar(self, asset: FakeAsset) -> None:
+    def _write_sidecar(self, asset: AssetResponseDto) -> None:
         """What Immich's sidecar job would write: the asset's tags (plus whatever
         edited fields; the fake only tracks description)."""
         xmp = with_only_tag(None, "placeholder")
         xmp = xmp.replace(
             b"<rdf:li>placeholder</rdf:li>",
-            b"".join(f"<rdf:li>{t.value}</rdf:li>".encode() for t in asset.tags),
+            b"".join(f"<rdf:li>{t.value}</rdf:li>".encode() for t in asset.tags or []),
         )
-        if asset.description:
-            desc = f'<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:description><rdf:Alt><rdf:li xml:lang="x-default">{asset.description}</rdf:li></rdf:Alt></dc:description></rdf:Description>'
+        description = asset.exif_info.description if asset.exif_info else None
+        if description:
+            desc = f'<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:description><rdf:Alt><rdf:li xml:lang="x-default">{description}</rdf:li></rdf:Alt></dc:description></rdf:Description>'
             xmp = xmp.replace(b"<rdf:Description", desc.encode() + b"<rdf:Description", 1)
         self.sidecars[asset.id] = xmp
 
@@ -283,8 +357,6 @@ class FakeWorld:
                 yield a
 
     async def owned_checksums(self, client, checksums):
-        from ifl.immich import Owned
-
         out = {}
         for c in checksums:
             for a in self.library.values():
@@ -302,7 +374,7 @@ class FakeWorld:
         a = self.find_asset(asset_id)
         assert client.user_id == a.owner_id
         self.writes.append(("tag", client.user_id, asset_id))
-        a.tags.append(FakeTag(self._pending_tag_name))
+        a.tags = [*(a.tags or []), make_tag(self._pending_tag_name)]
         if self.sidecar_writes:
             self._write_sidecar(a)
 
@@ -333,6 +405,7 @@ class FakeWorld:
                 is_favorite=is_favorite,
                 file_created_at=file_created_at,
                 file_modified_at=file_modified_at,
+                duration=duration,
             )
         )
         self.uploads.append(

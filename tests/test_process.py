@@ -183,7 +183,7 @@ async def test_in_flight_assets_are_left_to_the_other_path(world, ledger):
 
 
 async def test_reconcile_sets_up_each_members_webhook_workflow(world, ledger):
-    from types import SimpleNamespace
+    from fakes import make_workflow
 
     from ifl.immich import webhook_step
     from ifl.observer import WORKFLOW_NAME
@@ -192,9 +192,7 @@ async def test_reconcile_sets_up_each_members_webhook_workflow(world, ledger):
     cfg = parse_config({**RAW, "webhook": {"url": "http://ifl:8080/hook", "token": "t0k"}})
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     # bob has one pointing at an old URL; alice has none.
-    stale = SimpleNamespace(
-        id=uuid4(), name=WORKFLOW_NAME, enabled=True, steps=[webhook_step("http://old/hook", "t0k")]
-    )
+    stale = make_workflow(WORKFLOW_NAME, [webhook_step("http://old/hook", "t0k")])
     world.workflows[BOB] = [stale]
 
     result = await run_pass(accounts, cfg, ledger)

@@ -54,10 +54,19 @@ metadata, shared links, partners, workflows, queues, and a log of every write.
 It enforces the access rules that matter, so a test can prove which key did
 what. The `patch_world` helper points a module's imported helpers at one fake.
 
+The fake's assets and albums are real `immichpy` response models. `FakeAsset`
+builds an `AssetResponseDto` and `FakeWorld.album` builds an `AlbumResponseDto`
+and runs it through `summarize_album`. The models validate every field, on
+construction and on assignment, so the fake cannot drift from the shapes the
+service reads when the `immichpy` pin changes.
+
 Test files follow the source: `test_observer`, `test_convert`,
 `test_reconcile`, `test_move`, `test_reuploads`, `test_process`,
 `test_daemon` (which runs the receiver on a real aiohttp test server),
-`test_sidecar`, `test_config`, `test_ledger`.
+`test_sidecar`, `test_config`, `test_ledger`. Two files test the layers the
+fake replaces, against stub clients that return real models: `test_immich`
+covers each adapter helper that has logic in it, and `test_accounts` covers
+the startup checks on each key.
 
 ## The dev instance
 
