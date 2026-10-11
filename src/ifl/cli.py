@@ -30,6 +30,7 @@ from ifl.move import (
     reupload_warnings,
 )
 from ifl.observer import (
+    AssetScan,
     describe_albums,
     describe_assets,
     describe_reconcile,
@@ -151,7 +152,7 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
 
 
 async def _move_one(
-    accounts: Accounts, ledger: Ledger, opts: MoveOptions, scan, asset_id: UUID
+    accounts: Accounts, ledger: Ledger, opts: MoveOptions, scan: AssetScan, asset_id: UUID
 ) -> int:
     target = next((m for m in scan.moves if m.asset_id == asset_id), None)
     if target is None:

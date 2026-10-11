@@ -67,6 +67,7 @@ from ifl.immich import (
     upsert_tag,
 )
 from ifl.ledger import Ledger
+from ifl.observer import AssetScan, MoveAsset
 from ifl.sidecar import tags_in, with_only_tag
 
 log = logging.getLogger(__name__)
@@ -228,7 +229,7 @@ async def move_assets(
     accounts: Accounts,
     ledger: Ledger,
     opts: MoveOptions,
-    moves: list,
+    moves: list[MoveAsset],
     *,
     limit: int,
     in_flight: set[UUID] | None = None,
@@ -295,7 +296,9 @@ async def move_assets(
     return out
 
 
-def advance_marks(ledger: Ledger, scan, many: MoveManyResult, accounts: Accounts) -> None:
+def advance_marks(
+    ledger: Ledger, scan: AssetScan, many: MoveManyResult, accounts: Accounts
+) -> None:
     """After a pass, record how far the re-upload scan got, per member. A member
     whose every re-upload was handled is marked at the scan time; otherwise at
     the upload time of their oldest unfinished one, so it's found again."""
@@ -310,7 +313,7 @@ def advance_marks(ledger: Ledger, scan, many: MoveManyResult, accounts: Accounts
         ledger.set_mark(member.user_id, min(pending) if pending else scan.scanned_at)
 
 
-def reupload_warnings(scan, threshold: int, *, when: str = "this pass") -> None:
+def reupload_warnings(scan: AssetScan, threshold: int, *, when: str = "this pass") -> None:
     """One line per member with re-uploads, a warning above the threshold."""
     for who, n in scan.reuploads_by_owner().items():
         level = logging.WARNING if n > threshold else logging.INFO

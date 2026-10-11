@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from uuid import UUID
 
 from ifl.accounts import Accounts
 from ifl.config import Config
@@ -75,7 +76,7 @@ class PassResult:
 
 
 async def run_pass(
-    accounts: Accounts, cfg: Config, ledger: Ledger, *, in_flight: set | None = None
+    accounts: Accounts, cfg: Config, ledger: Ledger, *, in_flight: set[UUID] | None = None
 ) -> PassResult:
     albums = await scan_albums(accounts)
     for b in albums.blocked:
