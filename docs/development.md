@@ -118,8 +118,14 @@ Test files follow the source: `test_observer`, `test_convert`,
 `test_sidecar`, `test_config`, `test_ledger`, and `test_cli` for the exit
 codes. Two files test the layers the
 fake replaces, against stub clients that return real models: `test_immich`
-covers each adapter helper that has logic in it, and `test_accounts` covers
-the startup checks on each key.
+covers every adapter helper, and `test_accounts` covers the startup checks on
+each key.
+
+Each stub method in `test_immich` carries the signature of the installed
+client's real method, and pydantic validates every call against it. The stub
+refuses a call that the real client would refuse. So when the `immichpy` pin
+changes and a method loses a parameter, changes a type, or disappears, the
+tests fail before the code reaches the dev instance.
 
 ## Continuous integration
 

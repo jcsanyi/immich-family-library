@@ -173,3 +173,24 @@ async def test_an_unexpected_error_on_one_album_does_not_stop_the_others(world, 
     assert "immich went away" in str(result.failed[0][1])
     assert [r.family_album.name for r in result.done] == ["A1"]
     assert albums[0].id in world.albums and albums[1].id not in world.albums
+
+
+async def test_original_stays_if_the_family_album_does_not_hold_every_asset(world, monkeypatch):
+    accounts = make_accounts()
+    a1, a2 = FakeAsset(uuid4(), ALICE), FakeAsset(uuid4(), ALICE)
+    orig = world.album("Beach", ALICE, roles={FAMILY: EDITOR}, assets=[a1, a2])
+    real_add = world.add_album_assets
+
+    async def add_but_lose_one(client, album_id, asset_ids):
+        # The server says yes to every id, yet one never lands in the album.
+        results = await real_add(client, album_id, asset_ids)
+        world.assets[album_id] = [a for a in world.assets[album_id] if a.id != a2.id]
+        return results
+
+    monkeypatch.setattr("ifl.convert.add_album_assets", add_but_lose_one)
+
+    with pytest.raises(ConvertError, match="1 of 2 assets from 'Beach' are not in the family"):
+        await convert_album(accounts, conversion(accounts, orig))
+
+    assert orig.id in world.albums
+    assert not any(w[0] == "delete" for w in world.writes)

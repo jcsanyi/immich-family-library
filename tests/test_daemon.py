@@ -227,3 +227,26 @@ async def test_serve_binds_the_listen_address_and_the_receiver_answers(world, le
     finally:
         await runner.cleanup()
     assert daemon.events.get_nowait() == (aid, ALICE)
+
+
+async def test_a_failing_batch_is_logged_and_the_drain_keeps_going(
+    world, ledger, daemon, monkeypatch, caplog
+):
+    monkeypatch.setattr("ifl.daemon.BATCH_WAIT", 0.05)
+    seen = []
+
+    async def flaky_batch(batch):
+        seen.append(batch)
+        if len(seen) == 1:
+            raise ConnectionError("immich went away")
+
+    daemon.handle_batch = flaky_batch
+    task = asyncio.create_task(daemon.drain())
+    first, second = (uuid4(), ALICE), (uuid4(), BOB)
+    await daemon.events.put(first)
+    await asyncio.sleep(0.15)
+    await daemon.events.put(second)
+    await asyncio.sleep(0.15)
+    task.cancel()
+    assert seen == [[first], [second]]
+    assert "webhook batch failed" in caplog.text and "immich went away" in caplog.text

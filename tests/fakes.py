@@ -39,8 +39,8 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 TAKEN = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
 
 
-def make_user(uid: UUID) -> UserResponseDto:
-    email = EMAILS.get(uid, str(uid))
+def make_user(uid: UUID, email: str | None = None) -> UserResponseDto:
+    email = email or EMAILS.get(uid, str(uid))
     return UserResponseDto(
         avatar_color=UserAvatarColor.PRIMARY,
         email=email,
