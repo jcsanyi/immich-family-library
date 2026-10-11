@@ -132,6 +132,9 @@ class FakeClient:
     def __init__(self, user_id):
         self.user_id = user_id
 
+    async def close(self):
+        pass
+
 
 class FakeWorld:
     """Albums, their users and their assets, plus a log of every write."""

@@ -510,3 +510,27 @@ async def test_a_video_carries_its_duration(world, ledger):
 
     (up,) = world.uploads
     assert result.uploaded and up["duration"] == 12_345 and v.is_trashed
+
+
+def test_reupload_warnings_name_members_over_the_threshold(caplog):
+    import logging
+
+    from ifl.move import reupload_warnings
+    from ifl.observer import AssetScan, MoveAsset
+
+    accounts = make_accounts()
+    alice, bob = accounts.members["alice"], accounts.members["bob"]
+    scan = AssetScan(
+        moves=[
+            *(MoveAsset(uuid4(), "c", alice, None, "a.jpg", reupload=True) for _ in range(3)),
+            MoveAsset(uuid4(), "c", bob, None, "b.jpg", reupload=True),
+            MoveAsset(uuid4(), "c", bob, None, "plain.jpg"),  # a real move, not counted
+        ]
+    )
+    with caplog.at_level(logging.INFO, logger="ifl.move"):
+        reupload_warnings(scan, threshold=2)
+    levels = {r.getMessage(): r.levelno for r in caplog.records}
+    assert levels == {
+        "alice has 3 re-uploads this pass": logging.WARNING,
+        "bob has 1 re-uploads this pass": logging.INFO,
+    }

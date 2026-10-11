@@ -63,7 +63,8 @@ service reads when the `immichpy` pin changes.
 Test files follow the source: `test_observer`, `test_convert`,
 `test_reconcile`, `test_move`, `test_reuploads`, `test_process`,
 `test_daemon` (which runs the receiver on a real aiohttp test server),
-`test_sidecar`, `test_config`, `test_ledger`. Two files test the layers the
+`test_sidecar`, `test_config`, `test_ledger`, and `test_cli` for the exit
+codes. Two files test the layers the
 fake replaces, against stub clients that return real models: `test_immich`
 covers each adapter helper that has logic in it, and `test_accounts` covers
 the startup checks on each key.
