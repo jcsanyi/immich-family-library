@@ -231,7 +231,7 @@ async def test_tag_asset_accepts_a_duplicate_and_raises_on_anything_else():
     calls = []
     client = SimpleNamespace(tags=SimpleNamespace(tag_assets=canned(calls, "tag", dup, denied)))
     await immich.tag_asset(client, tag_id, asset_id)  # duplicate: already tagged, fine
-    with pytest.raises(RuntimeError, match="NO_PERMISSION nope"):
+    with pytest.raises(RuntimeError, match="no_permission nope"):
         await immich.tag_asset(client, tag_id, asset_id)
     assert all(kw["id"] == tag_id and kw["bulk_ids_dto"].ids == [asset_id] for _, _, kw in calls)
 

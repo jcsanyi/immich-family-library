@@ -38,6 +38,7 @@ class Ledger:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
+        self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
 
     def close(self) -> None:
@@ -113,15 +114,7 @@ class Ledger:
 
     def get(self, checksum: str) -> dict | None:
         row = self.db.execute("SELECT * FROM moves WHERE checksum = ?", (checksum,)).fetchone()
-        if row is None:
-            return None
-        return dict(
-            zip(
-                [c[0] for c in self.db.execute("SELECT * FROM moves LIMIT 0").description],
-                row,
-                strict=True,
-            )
-        )
+        return dict(row) if row is not None else None
 
     def get_mark(self, user_id: UUID) -> datetime | None:
         row = self.db.execute(

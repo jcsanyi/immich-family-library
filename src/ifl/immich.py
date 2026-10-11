@@ -257,7 +257,8 @@ async def tag_asset(client: AsyncClient, tag_id: UUID, asset_id: UUID) -> None:
     results = await client.tags.tag_assets(id=tag_id, bulk_ids_dto=BulkIdsDto(ids=[asset_id]))
     for r in results:
         if not r.success and r.error != BulkIdErrorReason.DUPLICATE:
-            raise RuntimeError(f"tagging failed: {r.error} {r.error_message or ''}".strip())
+            why = r.error.value if r.error else "unknown"
+            raise RuntimeError(f"tagging failed: {why} {r.error_message or ''}".strip())
 
 
 async def upload_asset(

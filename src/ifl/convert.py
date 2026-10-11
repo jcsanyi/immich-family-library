@@ -107,7 +107,7 @@ async def _add_assets(
         results = await add_album_assets(owner.client, album.id, ids)
         failed = [r for r in results if not r.success and r.error != BulkIdErrorReason.DUPLICATE]
         if failed:
-            why = f"{failed[0].error}: {failed[0].error_message or 'no detail'}"
+            why = f"{failed[0].error.value}: {failed[0].error_message or 'no detail'}"
             raise ConvertError(
                 f"{owner.name} could not add {len(failed)} of {len(ids)} assets to "
                 f"{album.name!r} ({why})"

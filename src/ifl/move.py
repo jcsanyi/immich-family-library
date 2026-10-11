@@ -166,7 +166,7 @@ async def _fresh_sidecar(owner: Account, asset_id: UUID, tag: str, timeout: floa
 async def _add_to_album(client, album: AlbumSummary, asset_id: UUID) -> None:
     for r in await add_album_assets(client, album.id, [asset_id]):
         if not r.success and r.error != BulkIdErrorReason.DUPLICATE:
-            raise RuntimeError(f"{r.error}: {r.error_message or 'no detail'}")
+            raise RuntimeError(f"{r.error.value}: {r.error_message or 'no detail'}")
 
 
 async def _relink_member_album(
