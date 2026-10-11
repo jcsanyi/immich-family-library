@@ -70,6 +70,10 @@ are listed here so that the next Immich upgrade knows what to re-check.
 - The edits endpoint refuses until the asset has dimensions, which extraction
   sets a few seconds after upload ("Asset dimensions are not available for
   editing"). The move waits for them before it applies edits.
+- The asset response gives `duration` as an integer in milliseconds, and null
+  for a still image. The upload endpoint takes the same integer. Confirmed on
+  dev: a two-second clip reads as 2000 on the original and on the family copy.
+  Older Immich versions gave a string, and the first move code expected one.
 
 ## Jobs
 

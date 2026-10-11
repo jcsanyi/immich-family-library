@@ -1,12 +1,12 @@
 """Seed the dev instance with sample photos and albums for testing.
 
 Generates small JPEGs with distinct EXIF (date, GPS, description), uploads them
-as the test members, and sets up the album situations the observer and the
-move path need to see:
+as the test members along with one short video clip, and sets up the album
+situations the observer and the move path need to see:
 
   - family-owned "Family Dropbox", shared with all members as editors
   - family-owned "Family Trip", shared with all members, with one of alice's
-    photos added by alice (a move)
+    photos and her video clip added by alice (two moves, one of them a video)
   - alice-owned "Beach 2025" shared with the family user (a conversion)
   - alice-owned "Alice & Bob" shared with bob only (left alone)
   - bob's photos uploaded, in no album
@@ -16,8 +16,9 @@ from config.toml and the shared dev password, because sharing an album is a
 thing a member does in the UI and the service keys deliberately can't. The
 password comes from the IFL_DEV_PASSWORD environment variable.
 
-Deterministic: the same photos get the same bytes every run, so Immich
-deduplicates re-uploads and albums are found by name. `--reset` first trashes
+Deterministic: the same photos get the same bytes every run, and the clip is a
+checked-in fixture, so Immich deduplicates re-uploads and albums are found by
+name. `--reset` first trashes
 every asset and deletes every album for all configured accounts, then empties
 the trash. Dev instance only.
 
@@ -70,6 +71,11 @@ PHOTOS = [
     ("bob", "bob-kitchen.jpg", 5, 44.6500, -63.5800, "Bread attempt #4"),
     ("carol", "carol-cat.jpg", 30, 44.6500, -63.5800, "Cat"),
 ]
+
+# A two-second 64x64 clip, made once with ffmpeg and checked in so its bytes
+# never change. Immich reads its duration itself; the move must carry it over.
+CLIP = Path(__file__).with_name("fixtures") / "seed-clip.mp4"
+CLIP_OWNER, CLIP_NAME, CLIP_DAYS = "alice", "alice-trip-clip.mp4", 60
 
 
 def _dms(deg: float) -> tuple[tuple[int, int], ...]:
@@ -210,10 +216,13 @@ async def main(config_path: Path, do_reset: bool) -> int:
                 mem[owner], name, make_jpeg(name, taken, lat, lon, desc), taken
             )
 
+        taken = BASE - timedelta(days=CLIP_DAYS, hours=2)
+        ids[CLIP_NAME] = await upload(mem[CLIP_OWNER], CLIP_NAME, CLIP.read_bytes(), taken)
+
         editors = {m.user_id: AlbumUserRole.EDITOR for m in mem.values()}
         await ensure_album(fam, dropbox_album, share=editors)
         trip = await ensure_album(fam, "Family Trip", share=editors)
-        await add_to_album(mem["alice"], trip, [ids["alice-trip-1.jpg"]])
+        await add_to_album(mem["alice"], trip, [ids["alice-trip-1.jpg"], ids[CLIP_NAME]])
 
         beach = await ensure_album(
             mem["alice"], "Beach 2025", share={fam.user_id: AlbumUserRole.EDITOR}

@@ -93,9 +93,12 @@ creating a key is a thing a member does in the UI, and the service keys
 deliberately cannot do it.
 
 `scripts/seed_dev.py` uploads eight deterministic JPEGs with EXIF as the
-members. It also creates the albums the observer expects. Those are the family
-dropbox and "Family Trip", alice's "Beach 2025" shared with the family, and
-alice's "Alice & Bob" shared only with bob. Run it as:
+members, plus one two-second video clip as alice. The clip is the checked-in
+file `scripts/fixtures/seed-clip.mp4`, so that its bytes never change. The
+script also creates the albums the observer expects. Those are the family
+dropbox and "Family Trip" (which holds alice's trip photo and her clip),
+alice's "Beach 2025" shared with the family, and alice's "Alice & Bob" shared
+only with bob. Run it as:
 
 ```
 IFL_DEV_PASSWORD=... uv run --group seed python scripts/seed_dev.py
