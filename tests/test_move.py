@@ -13,11 +13,13 @@ from fakes import (
     FAMILY,
     STRANGER,
     VIEWER,
+    BulkResult,
     FakeAsset,
     make_accounts,
     patch_world,
 )
 from immichpy.client.generated.models.asset_visibility import AssetVisibility
+from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 
 from ifl.ledger import Ledger
 from ifl.move import MoveBlocked, MoveError, MoveOptions, move_asset, pass_backlog
@@ -405,3 +407,41 @@ async def test_a_duplicate_skips_the_extraction_and_settle_checks(world, ledger)
     world.album("Trip2", FAMILY, roles={ALICE: EDITOR}, assets=[fresh])
     with pytest.raises(MoveBlocked, match="extraction"):
         await move_asset(accounts, ledger, OPTS, fresh.id, accounts.members["alice"], now=NOW)
+
+
+async def test_an_unexpected_error_on_one_asset_does_not_stop_the_others(
+    world, ledger, monkeypatch
+):
+    from ifl.move import move_assets
+    from ifl.observer import MoveAsset
+
+    accounts = make_accounts()
+    alice = accounts.members["alice"]
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR})
+    assets = []
+    for i in range(2):
+        a = world.add_asset(
+            FakeAsset(uuid4(), ALICE, checksum=f"sha-{i}", original_file_name=f"{i}.jpg")
+        )
+        world.assets[trip.id].append(a)
+        assets.append(a)
+    # The family copy of 0.jpg can't go into Trip, for a reason that isn't "duplicate".
+    # That path raises RuntimeError, not MoveError.
+    real_add = world.add_album_assets
+
+    async def add(client, album_id, ids):
+        ids = list(ids)
+        if client.user_id == FAMILY and any(world.library[i].checksum == "sha-0" for i in ids):
+            return [BulkResult(i, False, BulkIdErrorReason.UNKNOWN, "boom") for i in ids]
+        return await real_add(client, album_id, ids)
+
+    monkeypatch.setattr("ifl.move.add_album_assets", add)
+    moves = [MoveAsset(a.id, a.checksum, alice, trip, a.original_file_name) for a in assets]
+    in_flight: set = set()
+
+    result = await move_assets(accounts, ledger, OPTS, moves, limit=0, in_flight=in_flight)
+
+    assert [f[0] for f in result.failed] == ["0.jpg"] and "boom" in result.failed[0][1]
+    assert [r.file_name for r in result.done] == ["1.jpg"]
+    assert not assets[0].is_trashed and assets[1].is_trashed
+    assert result.unfinished == {assets[0].id} and not in_flight

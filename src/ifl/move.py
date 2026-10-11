@@ -230,7 +230,7 @@ async def move_assets(
 ) -> MoveManyResult:
     """Move assets in scan order, at most `limit` of them (0 for no limit). Each
     item is a MoveAsset from the scan. One asset blocking or failing doesn't stop
-    the others. Per-owner lookups happen once.
+    the others, whatever the exception. Per-owner lookups happen once.
 
     `in_flight` is shared between the daemon's pass and its webhook receiver:
     an asset the other path is already on is skipped here, and ours are held in
@@ -271,6 +271,11 @@ async def move_assets(
         except MoveError as e:
             log.error("%s not moved: %s", m.file_name, e)
             out.failed.append((m.file_name, str(e)))
+            out.unfinished.add(m.asset_id)
+            continue
+        except Exception as e:  # noqa: BLE001 - the move stops before the trash; the rest go on
+            log.exception("%s not moved", m.file_name)
+            out.failed.append((m.file_name, f"{type(e).__name__}: {e}"))
             out.unfinished.add(m.asset_id)
             continue
         finally:

@@ -55,7 +55,11 @@ class PassResult:
 
     @property
     def failed(self) -> bool:
-        return bool(self.converted.failed or (self.moved and self.moved.failed))
+        return bool(
+            self.converted.failed
+            or (self.reconciled and self.reconciled.failed)
+            or (self.moved and self.moved.failed)
+        )
 
     def __str__(self) -> str:
         c = self.converted
