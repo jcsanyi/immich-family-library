@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # Updates pyproject.toml and uv.lock together. immichpy is not excluded on
+  # purpose: a major bump means a new Immich version, and the failing pull
+  # request is the prompt to do the upgrade. docs/development.md has the steps.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly

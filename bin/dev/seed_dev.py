@@ -22,7 +22,7 @@ name. `--reset` first trashes
 every asset and deletes every album for all configured accounts, then empties
 the trash. Dev instance only.
 
-    IFL_DEV_PASSWORD=... uv run --group seed python scripts/seed_dev.py [--reset] [-c config.toml]
+    IFL_DEV_PASSWORD=... uv run --group seed python bin/dev/seed_dev.py [--reset] [-c config.toml]
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ from immichpy.client.generated.models.metadata_search_dto import MetadataSearchD
 from immichpy.client.main import AsyncClient
 from PIL import Image, ImageDraw
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from ifl.accounts import Account, Accounts  # noqa: E402
 from ifl.config import AccountConfig, load_config  # noqa: E402
 from ifl.immich import list_albums  # noqa: E402

@@ -20,9 +20,10 @@ ifl = "ifl.cli:main"
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=7.1.0",
     "ruff>=0.8",
 ]
-# Only for scripts/seed_dev.py
+# Only for bin/dev/seed_dev.py
 seed = [
     "pillow>=10",
     "piexif>=1.1",
@@ -48,3 +49,11 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--cov"  # every run reports coverage; --no-cov for a quick single test
+
+[tool.coverage.run]
+source = ["ifl"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

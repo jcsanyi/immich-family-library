@@ -3,12 +3,50 @@
 The language is Python 3.12, managed with `uv`. Tests use `pytest`. Lint and
 format use `ruff`.
 
+## Local setup
+
+You need `uv` (https://docs.astral.sh/uv/). It installs the Python version in
+`.python-version` by itself.
+
+1. Clone the repository and run `uv sync`. This creates `.venv` with the
+   locked dependencies and the `ifl` command.
+2. Copy `config.example.toml` to `config.toml` and fill in the URL and the
+   keys of the dev instance. `config.toml` is gitignored. `AGENTS.local.md`
+   says where the keys live.
+3. Run `uv run ifl show-config` to check the config. Then run
+   `uv run ifl observe` for a read-only pass. Both read `config.toml` in the
+   current directory. [cli.md](cli.md) describes each command.
+
+The local checkout talks to the dev instance over the network. Never point it
+at production. The daemon runs on the dev host, not on your machine. See "The
+dev instance" below.
+
+With [direnv](https://direnv.net/) installed, the committed `.envrc` does the
+sync for you when you enter the directory, and puts `.venv/bin` and `bin/` on
+`PATH`. Then `ifl`, `pytest`, `ruff`, `lint`, `format` and `tests` run without
+a path or the `uv run` prefix. Run `direnv allow`
+once to approve the file. Personal settings go in `.envrc.local`, which is
+git-ignored and which `.envrc` loads when it exists.
+
+Before you commit, run the checks. The three scripts in `bin/` work from any
+directory, with or without direnv. Each runs the tool version that `uv.lock`
+pins, through `uv run`, so the result matches CI.
+
 ```
-uv sync
-uv run pytest -q
-uv run ruff check . && uv run ruff format .
-uv run ifl observe -c config.toml
+bin/lint      # ruff check and ruff format --check; changes nothing
+bin/format    # ruff's safe fixes, then ruff format
+bin/tests     # the unit tests, with a coverage table of the files that have gaps
 ```
+
+`bin/tests` passes its arguments to `pytest`. Every pytest run reports
+coverage, which is set in `pyproject.toml`. For one test, the table is
+noise, so use `bin/tests --no-cov -k name`. For the HTML report, use
+`bin/tests --cov-report=html` and open `htmlcov/index.html`. CI runs
+`bin/lint` and `bin/tests`.
+
+Do not use `uv format` for this project. It fetches its own `ruff`, which can
+be a different version from the pinned one, and the two can format a file
+differently.
 
 ## The API client
 
@@ -18,6 +56,20 @@ the Immich version in use: `immichpy` 9.0.1 for Immich 3.3.1. The client
 repo's `COMPATIBILITY.csv` maps package versions to Immich versions. This is
 the one place in the docs that records the pin. When it changes, update it
 here.
+
+A new `immichpy` major is generated from a new Immich minor and drops support
+for older servers. Dependabot opens a pull request for each one, and the tests
+on it usually fail, because the fake Immich builds the real response models.
+That pull request is the prompt to upgrade. Do these steps together:
+
+1. Upgrade the dev instance to the matching Immich version.
+2. Take the new pin, and raise `MIN_SERVER` in `src/ifl/accounts.py` to that
+   Immich version. Update the version in `README.md` and in this section.
+3. Re-check every point in `immich-notes.md` on the dev instance, and fix the
+   code and the docs where Immich changed.
+
+Patch and minor releases of `immichpy` keep the same minimum server. Merge
+those when the tests pass.
 
 For moves, use the generated `upload_asset`. Do not use the path-based
 `assets.upload()` helper, which is a bulk uploader. If the immichpy project
@@ -69,6 +121,17 @@ fake replaces, against stub clients that return real models: `test_immich`
 covers each adapter helper that has logic in it, and `test_accounts` covers
 the startup checks on each key.
 
+## Continuous integration
+
+The `Tests` workflow in `.github/workflows/tests.yml` runs on every pull
+request to `main` and on every push to `main`. It installs the locked
+dependencies with `uv sync --frozen`, then runs `bin/lint` and `bin/tests`.
+The job summary shows the coverage table. The HTML coverage report is an artifact of the run, kept for
+14 days.
+
+Dependabot (`.github/dependabot.yml`) opens a pull request each week for
+updates to the GitHub Actions and to the Python dependencies in `uv.lock`.
+
 ## The dev instance
 
 Testing happens on a separate Immich instance, never on production.
@@ -102,16 +165,16 @@ Two scripts act as the users do, through password login. Sharing an album or
 creating a key is a thing a member does in the UI, and the service keys
 deliberately cannot do it.
 
-`scripts/seed_dev.py` uploads eight deterministic JPEGs with EXIF as the
+`bin/dev/seed_dev.py` uploads eight deterministic JPEGs with EXIF as the
 members, plus one two-second video clip as alice. The clip is the checked-in
-file `scripts/fixtures/seed-clip.mp4`, so that its bytes never change. The
+file `bin/dev/fixtures/seed-clip.mp4`, so that its bytes never change. The
 script also creates the albums the observer expects. Those are the family
 dropbox and "Family Trip" (which holds alice's trip photo and her clip),
 alice's "Beach 2025" shared with the family, and alice's "Alice & Bob" shared
 only with bob. Run it as:
 
 ```
-IFL_DEV_PASSWORD=... uv run --group seed python scripts/seed_dev.py
+IFL_DEV_PASSWORD=... uv run --group seed python bin/dev/seed_dev.py
 ```
 
 `--reset` wipes all five accounts' assets and albums first. Workflows and
@@ -120,7 +183,7 @@ Without `--reset`, a second run is a no-op, because Immich dedupes uploads.
 Dedupe also counts trashed assets, so a moved photo is not re-uploaded until
 the member empties the trash. `dev_scenarios.py reupload` does that.
 
-`scripts/dev_scenarios.py` sets up, as a user does, each situation that the
+`bin/dev/dev_scenarios.py` sets up, as a user does, each situation that the
 service was verified against, one subcommand each. Its docstring lists them:
 
 - albums to convert, with a description and an outside viewer, a merge into
@@ -140,7 +203,7 @@ back to the start.
 A key cannot change its own permissions. When a change adds permissions, run:
 
 ```
-IFL_DEV_PASSWORD=... IFL_ADMIN_EMAIL=... uv run --group seed python scripts/dev_scenarios.py keys
+IFL_DEV_PASSWORD=... IFL_ADMIN_EMAIL=... uv run --group seed python bin/dev/dev_scenarios.py keys
 ```
 
 It logs in with the password and brings every key up to the sets in

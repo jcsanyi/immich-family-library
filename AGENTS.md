@@ -93,8 +93,11 @@ Keep instance-specific values (hostnames, emails, network names) out of
 tracked files. This is a public project. Examples use example.com.
 
 Never merge, rebase, or push to `main` without an explicit instruction in the
-current message. Merging a feature branch is the user's call, after they have
-reviewed it and the dev instance has run it. When told to merge, squash the
-branch into one commit on `main`. If the user wants the branch history kept,
-first rebase the branch so that its commits tell a clear story. Then merge it
-without a squash.
+current message. `main` accepts changes only through a pull request. Merging
+a feature branch is the user's call, after they have reviewed it and the dev
+instance has run it. When told to merge, squash the branch into one commit on
+`main`. The squash commit takes the pull request title as its whole message,
+which is the repository's default, so keep the title short and plain. Put the
+detail in the pull request description, which the commit links to by number.
+If the user wants the branch history kept, first rebase the branch so that
+its commits tell a clear story. Then merge it without a squash.
