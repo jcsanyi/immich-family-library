@@ -184,6 +184,10 @@ What the service does about it:
   member's. But if a member shares that photo into a family album again, the
   service restores the family's copy from the trash rather than uploading it
   anew.
+- A match whose family copy is gone for good by the time the move runs is
+  left alone too. With no copy it's the member's own photo again, and only a
+  family album makes a photo the family's. The scan stops matching it at the
+  next pass.
 - The service tallies trashed re-uploads per member, from the pass and from
   the webhook alike. A re-upload here means what the re-upload scan or the
   webhook found: an upload a phone made on its own. A photo a member puts

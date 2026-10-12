@@ -428,6 +428,17 @@ async def test_a_trashed_family_copy_is_restored_when_shared_again(world):
     assert copy.is_trashed and not re2.is_trashed
 
 
+async def test_a_reupload_whose_family_copy_is_gone_is_left_alone(world):
+    accounts = make_accounts()
+    # The scan saw a family copy; it was deleted for good before the move ran.
+    re = alice_asset(world)
+
+    with pytest.raises(MoveBlocked, match="no longer has a copy"):
+        await move_asset(accounts, OPTS, re.id, accounts.members["alice"], now=NOW, reupload=True)
+
+    assert not re.is_trashed and not world.uploads and not world.writes
+
+
 async def test_a_duplicate_skips_the_extraction_and_settle_checks(world):
     accounts = make_accounts()
     copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
@@ -558,7 +569,7 @@ def test_reuploads_trashed_counts_per_member_and_shows_in_the_summary():
         done=[done(ALICE, True), done(ALICE, True), done(BOB, True), done(BOB, False)]
     )
     assert many.reuploads_trashed() == {ALICE: 2, BOB: 1}
-    # A scan item that ended as a real move, the family's copy gone by then, is not counted.
+    # A scan item that finished an interrupted move is not counted.
     real = done(ALICE, True)
     real.duplicate = False
     assert MoveManyResult(done=[real]).reuploads_trashed() == {}

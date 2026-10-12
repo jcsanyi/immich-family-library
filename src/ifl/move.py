@@ -128,8 +128,7 @@ class MoveResult:
     @property
     def counts_as_reupload(self) -> bool:
         """A phone's re-upload of a photo the family already had, now trashed. A
-        scan item that ended as a real move, because the family's copy was gone
-        by then, is not one."""
+        scan item that finished an interrupted move is not one."""
         return self.reupload and self.duplicate and self.trashed
 
     def __str__(self) -> str:
@@ -361,7 +360,8 @@ async def move_asset(
     reupload: bool = False,
 ) -> MoveResult:
     """`reupload` says the asset came from the re-upload scan rather than a family
-    album: a trashed family copy then blocks instead of being restored, and a
+    album. It then needs a live family copy: a trashed one blocks instead of
+    being restored, a missing one blocks instead of being uploaded, and a
     duplicate counts as a re-upload."""
     family = accounts.family
     now = now or datetime.now(UTC)
@@ -388,6 +388,12 @@ async def move_asset(
         return foreign or not have_tag
 
     owned = await existing_asset_by_checksum(family.client, asset.checksum)
+    if reupload and (owned is None or owned.is_trashed):
+        # Only a family album makes a photo the family's. Without a live copy
+        # this is the member's own photo, whatever the scan saw a moment ago.
+        raise MoveBlocked(
+            "the family's copy is in the trash" if owned else "the family no longer has a copy"
+        )
     family_id = owned.asset_id if owned else None
     duplicate = False
     if owned and not owned.is_trashed:
@@ -423,8 +429,6 @@ async def move_asset(
     # is a move that died late.
     uploaded = restored = False
     if owned and owned.is_trashed:
-        if reupload:
-            raise MoveBlocked("the family's copy is in the trash")
         # Shared again after the family deleted it: bring the copy back.
         await restore_assets(family.client, [owned.asset_id])
         restored = True
