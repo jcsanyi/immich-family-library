@@ -62,7 +62,9 @@ def with_only_tag(xmp: bytes | None, tag: str) -> bytes:
         for name in TAG_ELEMENTS:
             for el in desc.findall(_q(name)):
                 desc.remove(el)
-        if len(desc) == 0:
+        # XMP also allows a property as an attribute of the block, so a block
+        # with no child elements can still hold a rating or a date.
+        if len(desc) == 0 and set(desc.attrib) <= {_q("rdf:about")}:
             rdf.remove(desc)
 
     desc = ET.SubElement(rdf, _q("rdf:Description"), {_q("rdf:about"): ""})
