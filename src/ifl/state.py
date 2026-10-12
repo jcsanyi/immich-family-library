@@ -1,0 +1,150 @@
+"""The state file: what the service remembers between runs.
+
+One JSON file. Per member, the re-upload scan's mark and a tally of the
+re-uploads trashed since the last daily report, plus when that report last
+ran. Nothing in it is needed for correctness: the move derives its state from
+Immich, and the `ifl` entry on each family copy records where it came from.
+Losing the file restarts the marks at the next pass and drops one report.
+
+One process writes the file at a time. The lock beside it decides who: the
+daemon takes it for as long as it runs, and a one-off command that writes to
+Immich takes it for the length of the command. `observe` only reads.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import logging
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime, time, timedelta
+from pathlib import Path
+from uuid import UUID
+
+log = logging.getLogger(__name__)
+
+
+class Locked(Exception):
+    pass
+
+
+@dataclass
+class MemberState:
+    scanned_until: datetime | None = None  # the re-upload scan's mark; None means never scanned
+    reuploads: int = 0  # trashed re-uploads since the last report
+
+
+@dataclass
+class State:
+    path: Path
+    members: dict[UUID, MemberState] = field(default_factory=dict)
+    last_report: datetime | None = None
+
+    @classmethod
+    def load(cls, path: Path) -> State:
+        """The file's contents, or an empty state when there is no file. A file
+        that cannot be read is moved aside, so nothing is lost silently, and the
+        state starts over."""
+        state = cls(path)
+        state.reload()
+        return state
+
+    def reload(self) -> None:
+        try:
+            raw = json.loads(self.path.read_text())
+            members = {
+                UUID(uid): MemberState(
+                    scanned_until=_when(m.get("scanned_until")),
+                    reuploads=int(m.get("reuploads", 0)),
+                )
+                for uid, m in raw.get("members", {}).items()
+            }
+            last_report = _when(raw.get("last_report"))
+        except FileNotFoundError:
+            members, last_report = {}, None
+        except (ValueError, TypeError, AttributeError, OSError) as e:
+            aside = self.path.with_name(self.path.name + ".bad")
+            self.path.replace(aside)
+            log.warning("%s is unreadable (%s); moved to %s and starting over", self.path, e, aside)
+            members, last_report = {}, None
+        self.members, self.last_report = members, last_report
+
+    def save(self) -> None:
+        raw = {
+            "last_report": _iso(self.last_report),
+            "members": {
+                str(uid): {"scanned_until": _iso(m.scanned_until), "reuploads": m.reuploads}
+                for uid, m in sorted(self.members.items(), key=lambda kv: str(kv[0]))
+            },
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text(json.dumps(raw, indent=2) + "\n")
+        tmp.replace(self.path)
+
+    def _member(self, user_id: UUID) -> MemberState:
+        return self.members.setdefault(user_id, MemberState())
+
+    def get_mark(self, user_id: UUID) -> datetime | None:
+        m = self.members.get(user_id)
+        return m.scanned_until if m else None
+
+    def set_mark(self, user_id: UUID, until: datetime) -> None:
+        self._member(user_id).scanned_until = until
+
+    def add_reuploads(self, user_id: UUID, n: int) -> None:
+        self._member(user_id).reuploads += n
+
+    def report_due(self, now: datetime, at: time) -> bool:
+        """Whether the daily report time has passed since the last report. A
+        state that has never reported is due, so the first pass starts the clock."""
+        if self.last_report is None:
+            return True
+        scheduled = now.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
+        if scheduled > now:
+            scheduled -= timedelta(days=1)
+        return self.last_report < scheduled
+
+    def take_report(self, now: datetime) -> dict[UUID, int]:
+        """The non-zero tallies, which are reset, and the report time moves to now."""
+        out = {uid: m.reuploads for uid, m in self.members.items() if m.reuploads}
+        for m in self.members.values():
+            m.reuploads = 0
+        self.last_report = now
+        return out
+
+
+def _when(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def lock_path(state_path: Path) -> Path:
+    return state_path.with_name(state_path.name + ".lock")
+
+
+@contextmanager
+def hold_lock(state_path: Path) -> Iterator[None]:
+    """Hold the lock beside the state file for the length of the block. Refuses
+    at once if another process holds it. The kernel releases a flock when its
+    holder dies, so a crash leaves nothing to clean up."""
+    path = lock_path(state_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Locked(
+                f"another ifl command holds {path}; is the daemon running? "
+                "Only one command that writes to Immich can run at a time"
+            ) from None
+        yield
+    finally:
+        os.close(fd)
