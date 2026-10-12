@@ -1,7 +1,7 @@
 # Deployment
 
 The service is one container, on the same docker network as Immich, with a
-volume for the ledger. It is not an Immich plugin: the plugin sandbox cannot
+volume for its state file. It is not an Immich plugin: the plugin sandbox cannot
 hold other users' keys, keep state, or poll. The only pieces on the Immich
 side are things the service creates itself through the API: albums, partner
 shares, and one workflow per member.
@@ -22,7 +22,7 @@ shares, and one workflow per member.
    Settings, API Keys. Tell them which boxes to tick.
 4. **Config.** Copy `config.example.toml` to `config/config.toml`. Fill in the
    URL and the keys. Leave `readonly = true`. Set
-   `ledger_path = "/data/ledger.sqlite"`. For the webhook, make up a token and
+   `state_path = "/data/state.json"`. For the webhook, make up a token and
    set `url` to the container's name on the network.
 
 ## Compose
@@ -33,14 +33,16 @@ shares, and one workflow per member.
   Immich `docker-compose.yml` that network is `immich_default`. If your
   project is named differently, set `IMMICH_NETWORK` (`docker network ls`
   shows the name).
-- It mounts `./config` read-only at `/config` and `./data` at `/data`.
+- It mounts `./config` read-only at `/config`. It mounts a named volume,
+  `ifl-data`, at `/data` for the state file.
 - It names the container `ifl`, which is what the webhook URL uses. No port
   is published. Immich reaches the receiver inside the network.
 - It runs `ifl daemon` by default, and restarts it unless stopped.
 
 Under rootless docker, root in the container is the unprivileged host user,
 and it can read a 0600 config. Under rootful docker, set `user:` in the
-compose file to match the owner of `./config` and `./data`.
+compose file to match the owner of `./config`. The state volume is writable
+by any user, so it needs no step.
 
 ```
 docker compose build          # or pull, once the image is published
@@ -62,10 +64,12 @@ Then it converts and moves whatever is waiting, under the limits.
 ## Running one-off commands beside the daemon
 
 `docker compose run --rm ifl <command>` runs a command in a second container
-with the same config and ledger. SQLite handles two processes on the ledger
-file. Do not run two `process`-style commands at once: the in-flight set that
-keeps the daemon's own pass and receiver apart lives inside one process.
-`observe` and `show-config` are always safe.
+with the same config and the same state volume. The daemon holds a lock on
+the state file for as long as it runs. A command that writes to Immich
+(`process`, `move`, `convert-album`, `reconcile-albums`) needs that lock. So
+beside a running daemon, the command refuses with exit code 3. Stop the
+daemon first, or let the daemon do the work. `observe` and `show-config` do
+not lock and are always safe.
 
 ## Webhook
 
@@ -82,14 +86,22 @@ core plugin allows any host. If a later Immich tightens that, the symptom is
 an error in Immich's log and a receiver that never hears anything. The pass
 still catches every re-upload, only later.
 
-## The ledger
+## The state file
 
-`/data/ledger.sqlite` is the audit trail. It is the only place that knows who
-a family photo came from once the original is purged. Back it up with the
-rest of your data. If it is lost, the re-upload marks start again at the next
-pass. Re-uploads from the gap are not found and stay in the member's library
-as duplicates of family photos. Reclaim, when it exists, cannot tell owners
-apart. Nothing else depends on it.
+`/data/state.json` is the state file. It holds each member's re-upload scan
+mark, each member's tally of trashed re-uploads since the last daily report,
+and the time of that report. Nothing in it needs a backup. If it is lost, the
+re-upload marks start again at the next pass, and one daily report is
+dropped. Re-uploads from the gap are not found and stay in the member's
+library as duplicates of family photos. The record of where a family photo
+came from is on the photo itself, in its `ifl` metadata entry and its
+`from/<member>` tag.
+
+The lock file beside it, `state.json.lock`, uses flock. On an NFS volume,
+flock is not reliable. Keep the state volume on a local disk.
+
+The daemon reads the file before each pass. To reset a member's re-upload
+mark or tally, edit the file. The next pass uses the new values.
 
 ## Upgrading
 

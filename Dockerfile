@@ -13,9 +13,11 @@ WORKDIR /app
 COPY --from=build /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 # No USER: under rootless docker, root in the container is the unprivileged
-# host user, which is what lets it read a 0600 config and write the ledger.
-# Under rootful docker, set `user:` in compose to match the owner of ./config
-# and ./data.
+# host user, which is what lets it read a 0600 config. Under rootful docker,
+# set `user:` in compose to match the owner of ./config.
+# A fresh volume copies this directory's mode, so any `user:` can write the
+# state file there.
+RUN mkdir -p /data && chmod 0777 /data
 VOLUME ["/data"]
 EXPOSE 8080
 ENTRYPOINT ["ifl", "--config", "/config/config.toml"]
