@@ -154,7 +154,7 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
             )
             advance_marks(state, scan, many, accounts)
             log.info("%s", many)
-            return 1 if many.failed else 0
+            return 1 if many.failed or state.unsaved else 0
         return await _move_one(accounts, state, opts, scan, asset_id)
 
 
@@ -182,15 +182,16 @@ async def _move_one(
     for w in result.warnings:
         log.warning("%s: %s", result.file_name, w)
     log.info("%s", result)
-    return 0
+    return 1 if state.unsaved else 0
 
 
 async def run_process(config_path: Path) -> int:
     """One complete pass: conversions, reconcile, moves, under the limits."""
     async with opened(config_path, writes=True) as (cfg, accounts):
-        result = await run_pass(accounts, cfg, own_state(cfg, accounts))
+        state = own_state(cfg, accounts)
+        result = await run_pass(accounts, cfg, state)
         log.info("pass done: %s", result)
-        return 1 if result.failed else 0
+        return 1 if result.failed or state.unsaved else 0
 
 
 async def run_daemon(config_path: Path) -> int:

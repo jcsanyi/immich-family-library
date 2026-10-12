@@ -61,6 +61,7 @@ class State:
     path: Path
     members: dict[UUID, MemberState] = field(default_factory=dict)
     last_report: datetime | None = None
+    unsaved: bool = False  # the last save failed, so the file is behind memory
 
     @classmethod
     def load(cls, path: Path, *, owner: bool = False) -> State:
@@ -103,7 +104,8 @@ class State:
 
         A write that fails is logged and the run goes on: memory is still right,
         the next change tries again, and a pass that has already trashed
-        re-uploads must still advance the other marks."""
+        re-uploads must still advance the other marks. `unsaved` records it, so
+        that a one-off command, whose memory ends with it, can fail."""
         raw = {
             "last_report": _iso(self.last_report),
             "members": {
@@ -118,7 +120,9 @@ class State:
             tmp.unlink(missing_ok=True)
             tmp.write_text(json.dumps(raw, indent=2) + "\n")
             tmp.replace(self.path)
+            self.unsaved = False
         except OSError as e:
+            self.unsaved = True
             log.error("cannot write the state file %s: %s", self.path, e)
 
     def _member(self, user_id: UUID) -> MemberState:

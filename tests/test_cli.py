@@ -161,6 +161,15 @@ def test_observe_reads_the_state_without_creating_it_and_process_writes_it(world
     assert run(path, "observe") == 0
 
 
+def test_a_one_off_command_fails_when_the_state_cannot_be_saved(world, config, tmp_path):
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    (tmp_path / "state.json.tmp").mkdir()  # every save fails; the lock still opens
+
+    assert run(path, "process") == 1 and not (tmp_path / "state.json").exists()
+    assert run(path, "move", "--all") == 1
+
+
 def test_move_one_tallies_a_reupload(world, config, tmp_path):
     from datetime import UTC, datetime
 

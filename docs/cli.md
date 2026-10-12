@@ -75,7 +75,7 @@ reports the reason and exits 1.
 The asset id is in the address bar when the photo is open. `--all` reports
 moved, blocked, failed and remaining. It advances the re-upload marks for what
 finished. Both forms add each trashed re-upload to its member's daily tally.
-If anything failed, it exits 1.
+If anything failed, or the state file could not be written, it exits 1.
 
 With `admin_api_key` set, both forms refuse to start while Immich's sidecar or
 metadata queues have jobs waiting.
@@ -92,7 +92,7 @@ album's photos move in the same pass. A queue backlog skips the moves for this
 pass, not the album work. It ends with one summary line. Once a day, when
 `report_at` has passed since the last report, it also logs one warning per
 member whose re-uploads were trashed in the last day. If any conversion
-or move failed, it exits 1.
+or move failed, or the state file could not be written, it exits 1.
 
 Run it by hand, or from cron, as an alternative to the daemon.
 
@@ -120,7 +120,8 @@ do.
 
 - `0`: everything asked for was done.
 - `1`: something was blocked or failed. The log says what. For `--all` and
-  `process`, only failures count, not blocks.
+  `process`, only failures count, not blocks. A state file that `move` or
+  `process` could not write is a failure.
 - `2`: the config or a key is wrong, or `readonly` refused the command, or
   the state file or the run lock cannot be opened.
 - `3`: the daemon or another writing command holds the run lock. Wait for

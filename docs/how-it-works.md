@@ -105,10 +105,10 @@ description, date and zone, location and rating, in an XMP sidecar that it
 writes itself whenever those change. The service never writes that file. It
 gets Immich to, by adding the moved tag (`family` by default) to the original,
 which fires the sidecar job. The service waits until the tag shows up in the
-sidecar, which means the sidecar is current. Then it changes one thing: the tag list becomes the single
-entry `from/<member>`. Extraction prefers that list over any keywords in the
-file, so the family copy ends up with exactly that tag and none of the
-member's. Both tag names are set in `[tags]`.
+sidecar, which means the sidecar is current. Then it changes one thing: the
+tag list becomes the single entry `from/<member>`. Extraction prefers that
+list over any keywords in the file, so the family copy ends up with exactly
+that tag and none of the member's. Both tag names are set in `[tags]`.
 
 **The upload.** The family's bulk upload check says whether the family already
 has the checksum. If not, the original bytes go up with the rewritten sidecar,
@@ -156,8 +156,8 @@ What the service does about it:
   on the app's "Sync remote deletions" setting, which makes the phone drop
   its local copy while the original is still in the server trash. That ends
   the loop for that photo. The setting exists only on Android 12 or later, so
-  an iPhone keeps looping and the service keeps trashing. The service never force-empties trash, for exactly this
-  reason.
+  an iPhone keeps looping and the service keeps trashing. The service never
+  force-empties trash, for exactly this reason.
 - The asset scan has a second source: per member, the photos uploaded since
   the last look, with their checksums batched through the family's bulk
   check. The last look is a per-member mark in the state file. A match goes
@@ -190,8 +190,9 @@ What the service does about it:
   into a family album by hand is a move or a re-share, never a loop, so it
   isn't counted even when the family already has it. A member with the
   setting on produces none. Once a day, at `report_at`, one warning per member
-  says how many of their photos were re-uploaded and trashed in the last day. A member with none gets no line. The tally is what a nudge to the
-  member will one day be built on; a loop needs a nudge, not a pager.
+  says how many of their photos were re-uploaded and trashed in the last day.
+  A member with none gets no line. The tally is what a nudge to the member
+  will one day be built on; a loop needs a nudge, not a pager.
 
 Trashing a re-upload quickly saves Immich no work, since every job already
 queued for it runs regardless. What it does is restart the 30-day clock and
@@ -213,9 +214,8 @@ Each family copy carries two marks. The `from/<member>` tag is for people,
 since tags are per account and so it's visible to whoever browses as the
 family. The `ifl` metadata entry, with the origin user id, origin asset id
 and move time, is for the service, and it's the one record of where a copy
-came from. The
-description is the one field members can see on a partner's photo, and the
-service never writes into it.
+came from. The description is the one field members can see on a partner's
+photo, and the service never writes into it.
 
 ## State
 
@@ -230,9 +230,9 @@ in one place only, the `from/<member>` tag. Apart from that tag, renaming a
 member in the config changes only how messages read.
 
 A member taken out of the config is dropped from the state file the next time
-the file is used. Added back later, they start as a new member does:
-their mark begins at that pass, and nothing from the gap is trashed. The file
-isn't meant to be edited by hand.
+the daemon, `process` or `move` starts. Added back later, they start as a new
+member does: their mark begins at that pass, and nothing from the gap is
+trashed. The file isn't meant to be edited by hand.
 
 Only one command that writes to Immich runs at a time. Two at once could each
 look for a family album, find none, and both create it, and the same goes for
