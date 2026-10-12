@@ -45,7 +45,6 @@ from uuid import UUID
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
 from immichpy.client.generated.models.asset_visibility import AssetVisibility
-from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 
 from ifl.accounts import Account, Accounts
 from ifl.config import Config
@@ -53,6 +52,7 @@ from ifl.immich import (
     AlbumSummary,
     add_album_assets,
     albums_containing,
+    bulk_failure,
     download_asset_file,
     download_original,
     existing_asset_by_checksum,
@@ -177,8 +177,8 @@ async def _fresh_sidecar(owner: Account, asset_id: UUID, tag: str, timeout: floa
 
 async def _add_to_album(client, album: AlbumSummary, asset_id: UUID) -> None:
     for r in await add_album_assets(client, album.id, [asset_id]):
-        if not r.success and r.error != BulkIdErrorReason.DUPLICATE:
-            raise RuntimeError(f"{r.error.value}: {r.error_message or 'no detail'}")
+        if why := bulk_failure(r):
+            raise RuntimeError(why)
 
 
 async def _relink_member_album(

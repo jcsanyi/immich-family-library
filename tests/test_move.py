@@ -207,6 +207,12 @@ async def test_relink_failure_keeps_the_original(world):
 
     assert not a.is_trashed
     assert len(world.uploads) == 1  # the copy exists; a rerun after fixing the share finishes
+    # A refused add that Immich gives no reason for still reads as a refusal.
+    world.fail_adds[world.uploads[0]["id"]] = None
+    with pytest.raises(RuntimeError, match="unknown: nope"):
+        await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+    assert not a.is_trashed
+    world.fail_adds.clear()
     world.partners[FAMILY] = {ALICE, BOB}
     result = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
     assert not result.uploaded and a.is_trashed and result.relinked_member == ["Bobs"]

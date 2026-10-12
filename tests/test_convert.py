@@ -84,7 +84,11 @@ async def test_failed_add_leaves_original_in_place(world):
     orig = world.album("Beach", ALICE, roles={FAMILY: EDITOR}, assets=[a1, b1])
     world.fail_adds[b1.id] = BulkIdErrorReason.NO_PERMISSION
 
-    with pytest.raises(ConvertError, match="bob could not add 1 of 1"):
+    with pytest.raises(ConvertError, match=r"bob could not add 1 of 1 .*\(no_permission: nope\)"):
+        await convert_album(accounts, conversion(accounts, orig))
+    # A failure that Immich gives no reason for reads the same way.
+    world.fail_adds[b1.id] = None
+    with pytest.raises(ConvertError, match=r"bob could not add 1 of 1 .*\(unknown: nope\)"):
         await convert_album(accounts, conversion(accounts, orig))
 
     assert orig.id in world.albums

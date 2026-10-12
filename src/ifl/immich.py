@@ -162,11 +162,19 @@ async def add_album_assets(
     client: AsyncClient, album_id: UUID, asset_ids: Iterable[UUID]
 ) -> list[BulkIdResponseDto]:
     """One result per id. An asset already in the album comes back as a
-    'duplicate' failure, which callers treat as success."""
+    'duplicate' failure, which callers treat as success: see `bulk_failure`."""
     ids = list(asset_ids)
     if not ids:
         return []
     return await client.albums.add_assets_to_album(id=album_id, bulk_ids_dto=BulkIdsDto(ids=ids))
+
+
+def bulk_failure(r: BulkIdResponseDto) -> str | None:
+    """Why one entry of a bulk response failed, or None when it did not. An id
+    that was already there comes back as a 'duplicate' failure, and is not one."""
+    if r.success or r.error == BulkIdErrorReason.DUPLICATE:
+        return None
+    return f"{r.error.value if r.error else 'unknown'}: {r.error_message or 'no detail'}"
 
 
 async def delete_album(client: AsyncClient, album_id: UUID) -> None:
@@ -256,9 +264,8 @@ async def upsert_tag(client: AsyncClient, name: str) -> UUID:
 async def tag_asset(client: AsyncClient, tag_id: UUID, asset_id: UUID) -> None:
     results = await client.tags.tag_assets(id=tag_id, bulk_ids_dto=BulkIdsDto(ids=[asset_id]))
     for r in results:
-        if not r.success and r.error != BulkIdErrorReason.DUPLICATE:
-            why = r.error.value if r.error else "unknown"
-            raise RuntimeError(f"tagging failed: {why} {r.error_message or ''}".strip())
+        if why := bulk_failure(r):
+            raise RuntimeError(f"tagging failed: {why}")
 
 
 async def upload_asset(

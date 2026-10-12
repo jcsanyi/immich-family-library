@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
-from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 from immichpy.client.main import AsyncClient
 
 from ifl.accounts import Account, Accounts
@@ -29,6 +28,7 @@ from ifl.immich import (
     AlbumSummary,
     add_album_assets,
     add_album_users,
+    bulk_failure,
     create_album,
     delete_album,
     iter_album_assets,
@@ -105,12 +105,11 @@ async def _add_assets(
         if owner is None:
             raise ConvertError(f"asset owner {owner_id} is not a participant")
         results = await add_album_assets(owner.client, album.id, ids)
-        failed = [r for r in results if not r.success and r.error != BulkIdErrorReason.DUPLICATE]
+        failed = [why for r in results if (why := bulk_failure(r))]
         if failed:
-            why = f"{failed[0].error.value}: {failed[0].error_message or 'no detail'}"
             raise ConvertError(
                 f"{owner.name} could not add {len(failed)} of {len(ids)} assets to "
-                f"{album.name!r} ({why})"
+                f"{album.name!r} ({failed[0]})"
             )
         added += sum(1 for r in results if r.success)
         dupes += sum(1 for r in results if not r.success)
