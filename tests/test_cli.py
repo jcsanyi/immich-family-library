@@ -100,6 +100,7 @@ def test_process_exits_0_when_clean_and_1_when_a_move_fails(world, config, monke
 
     monkeypatch.setattr("ifl.move.add_album_assets", refuse_bobs)
     assert run(path, "process") == 1 and not b.is_trashed
+    assert run(path, "move", str(b.id)) == 1 and not b.is_trashed
 
 
 def test_move_one_exits_1_when_blocked_or_not_movable_and_0_when_done(world, config):
@@ -132,6 +133,18 @@ def test_convert_album_exits_1_for_an_album_the_scan_would_not_convert(world, co
     assert run(path, "convert-album", str(private.id)) == 1 and private.id in world.albums
     assert run(path, "convert-album", str(shared.id)) == 0 and shared.id not in world.albums
     assert run(path, "convert-album", "--all") == 0
+
+
+def test_convert_album_by_id_exits_1_when_the_conversion_fails(world, config, monkeypatch):
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    shared = world.album("Beach", ALICE, roles={FAMILY: EDITOR}, assets=[FakeAsset(uuid4(), ALICE)])
+
+    async def fail(accounts, conv):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr("ifl.convert.convert_album", fail)
+    assert run(path, "convert-album", str(shared.id)) == 1 and shared.id in world.albums
 
 
 def test_reconcile_albums_exits_0_and_fixes_what_it_finds(world, config):

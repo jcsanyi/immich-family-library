@@ -16,21 +16,16 @@ import tomli_w
 
 from ifl.accounts import AccountError, Accounts, open_accounts
 from ifl.config import Config, ConfigError, load_config, to_raw
-from ifl.convert import ConvertError, convert_album, convert_albums
+from ifl.convert import ConvertError, convert_albums
 from ifl.daemon import Daemon
 from ifl.move import (
-    MoveBlocked,
     MoveError,
     MoveOptions,
     advance_marks,
-    move_asset,
     move_assets,
-    outside_partners,
     pass_backlog,
-    tally_reupload,
 )
 from ifl.observer import (
-    AssetScan,
     describe_albums,
     describe_assets,
     describe_reconcile,
@@ -96,31 +91,31 @@ async def run_convert_album(config_path: Path, album_id: UUID | None) -> int:
         if album_id is None:
             for b in scan.blocked:
                 log.warning("skipping %s: %s", b.what, b.reason)
-            many = await convert_albums(accounts, scan.conversions, limit=cfg.albums_per_pass)
-            for r in many.done:
-                log.info("%s", r)
+            todo, limit = scan.conversions, cfg.albums_per_pass
+        else:
+            todo, limit = [c for c in scan.conversions if c.album.id == album_id], 0
+            if not todo:
+                blocked = next((b for b in scan.blocked if b.album_id == album_id), None)
+                if blocked:
+                    log.error("not converting %s: %s", blocked.what, blocked.reason)
+                else:
+                    log.error(
+                        "album %s is not a member-owned album shared with the family "
+                        "(or its owner has no key)",
+                        album_id,
+                    )
+                return 1
+        many = await convert_albums(accounts, todo, limit=limit)
+        for r in many.done:
+            log.info("%s", r)
+        if album_id is None:
             log.info(
                 "converted %d, failed %d, remaining %d",
                 len(many.done),
                 len(many.failed),
                 many.remaining,
             )
-            return 1 if many.failed else 0
-        conv = next((c for c in scan.conversions if c.album.id == album_id), None)
-        if conv is None:
-            blocked = next((b for b in scan.blocked if b.album_id == album_id), None)
-            if blocked:
-                log.error("not converting %s: %s", blocked.what, blocked.reason)
-            else:
-                log.error(
-                    "album %s is not a member-owned album shared with the family "
-                    "(or its owner has no key)",
-                    album_id,
-                )
-            return 1
-        result = await convert_album(accounts, conv)
-        log.info("%s", result)
-        return 0
+        return 1 if many.failed else 0
 
 
 async def run_reconcile_albums(config_path: Path) -> int:
@@ -157,34 +152,17 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
             advance_marks(state, scan, many, accounts)
             log.info("%s", many)
             return 1 if many.failed or state.unsaved else 0
-        return await _move_one(accounts, state, opts, scan, asset_id)
-
-
-async def _move_one(
-    accounts: Accounts, state: State, opts: MoveOptions, scan: AssetScan, asset_id: UUID
-) -> int:
-    target = next((m for m in scan.moves if m.asset_id == asset_id), None)
-    if target is None:
-        blocked = next((b for b in scan.blocked if b.asset_id == asset_id), None)
-        if blocked:
-            log.error("not moving %s: %s", blocked.what, blocked.reason)
-        else:
-            log.error("asset %s is not a member-owned asset in a family-owned album", asset_id)
-        return 1
-    for uid in await outside_partners(accounts, target.owner):
-        log.warning(
-            "%s partner-shares their library with non-participant %s", target.owner.name, uid
-        )
-    try:
-        result = await move_asset(accounts, opts, asset_id, target.owner, reupload=target.reupload)
-    except MoveBlocked as e:
-        log.warning("blocked %s: %s", target.file_name, e)
-        return 1
-    tally_reupload(state, result)
-    for w in result.warnings:
-        log.warning("%s: %s", result.file_name, w)
-    log.info("%s", result)
-    return 1 if state.unsaved else 0
+        target = [m for m in scan.moves if m.asset_id == asset_id]
+        if not target:
+            blocked = next((b for b in scan.blocked if b.asset_id == asset_id), None)
+            if blocked:
+                log.error("not moving %s: %s", blocked.what, blocked.reason)
+            else:
+                log.error("asset %s is not a member-owned asset in a family-owned album", asset_id)
+            return 1
+        # No advance_marks: the marks cover a whole scan, and this moved one asset of it.
+        many = await move_assets(accounts, opts, target, state=state, limit=0)
+        return 1 if not many.done or state.unsaved else 0
 
 
 async def run_process(config_path: Path) -> int:
