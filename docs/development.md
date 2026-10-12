@@ -137,8 +137,10 @@ dependencies with `uv sync --frozen`, then runs `bin/lint` and `bin/tests`.
 The job summary shows the coverage table. The HTML coverage report is an artifact of the run, kept for
 14 days.
 
-Dependabot (`.github/dependabot.yml`) opens a pull request each week for
-updates to the GitHub Actions and to the Python dependencies in `uv.lock`.
+Dependabot (`.github/dependabot.yml`) opens pull requests each week for
+updates to the GitHub Actions and to the Python dependencies in `uv.lock`,
+transitive dependencies included. Minor and patch updates to Python packages
+come as one grouped pull request. A major release gets its own pull request.
 
 ## The dev instance
 
