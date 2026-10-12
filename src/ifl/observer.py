@@ -37,7 +37,7 @@ from ifl.immich import (
     owned_checksums,
     step_matches,
 )
-from ifl.ledger import Ledger
+from ifl.state import State
 
 WORKFLOW_NAME = "immich-family-library"
 
@@ -210,10 +210,10 @@ async def scan_assets(
     accounts: Accounts,
     dropbox_album: str,
     *,
-    ledger: Ledger | None = None,
+    state: State | None = None,
     now: datetime | None = None,
 ) -> AssetScan:
-    """Member-owned assets in family-owned albums, plus, when a ledger is given,
+    """Member-owned assets in family-owned albums, plus, when the state is given,
     re-uploads: members' recent assets whose checksum the family already owns."""
     scan = AssetScan()
     by_id = accounts.by_user_id()
@@ -249,13 +249,13 @@ async def scan_assets(
                     file_name=asset.original_file_name,
                 )
             )
-    if ledger is not None:
-        await _scan_reuploads(accounts, ledger, scan, seen, now or datetime.now(UTC))
+    if state is not None:
+        await _scan_reuploads(accounts, state, scan, seen, now or datetime.now(UTC))
     return scan
 
 
 async def _scan_reuploads(
-    accounts: Accounts, ledger: Ledger, scan: AssetScan, seen: set[UUID], now: datetime
+    accounts: Accounts, state: State, scan: AssetScan, seen: set[UUID], now: datetime
 ) -> None:
     """Members' assets uploaded since the last look that the family already owns.
 
@@ -266,7 +266,7 @@ async def _scan_reuploads(
     scan.scanned_at = now
     candidates: list[tuple[Account, list[AssetResponseDto]]] = []
     for member in accounts.members.values():
-        mark = ledger.get_mark(member.user_id)
+        mark = state.get_mark(member.user_id)
         if mark is None:
             log.info(
                 "%s: first re-upload scan; the mark starts now, nothing earlier can be a re-upload",
