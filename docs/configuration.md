@@ -24,7 +24,7 @@ default without a message.
 | Setting | Default | What it is |
 |---|---|---|
 | `readonly` | `true` | While true, every command that writes to Immich refuses to run. Set it to false once `observe` reports what you expect. |
-| `ledger_path` | `data/ledger.sqlite` | The SQLite ledger. In the container the config mount is read-only, so use the data volume: `/data/ledger.sqlite`. |
+| `state_path` | `data/state.json` | The state file: the re-upload marks and the daily tally. Nothing in it needs a backup. In the container the config mount is read-only, so use the data volume: `/data/state.json`. |
 | `settle_seconds` | `60` | A photo changed more recently than this is not moved yet, because its jobs can still be running. Re-uploads do not wait for it. |
 | `interval_seconds` | `600` | The daemon's pause between passes. |
 
@@ -56,7 +56,7 @@ and that does not occur as a keyword in their files.
 
 | Setting | Default | What it is |
 |---|---|---|
-| `reuploads_per_pass` | `10` | If one member has more re-uploads than this in one pass, a warning names the member. |
+| `report_at` | `"22:00"` | The local time of day for the daily re-upload report. One warning per member whose re-uploads were trashed in the last 24 hours. The container's `TZ` sets the local time. |
 
 ## `[family]`
 

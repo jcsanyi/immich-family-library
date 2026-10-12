@@ -12,9 +12,11 @@ url = "https://photos.example.com"
 admin_api_key = ""
 
 [service]
-# Relative paths are resolved against this file's directory. In the container
-# the config mount is read-only, so use the data volume: "/data/ledger.sqlite".
-ledger_path = "data/ledger.sqlite"
+# The state file: the re-upload marks and the daily tally. Nothing in it needs
+# a backup. Relative paths are resolved against this file's directory. In the
+# container the config mount is read-only, so use the data volume:
+# "/data/state.json".
+state_path = "data/state.json"
 # While true, every command that would write to Immich refuses to run; only
 # `observe` and `show-config` work. Defaults to true when absent. Flip it once
 # `observe` reports what you expect.
@@ -42,10 +44,11 @@ moved = "family"
 from_prefix = "from"
 
 # A phone that hasn't synced a deletion re-uploads moved photos once the trash
-# purges. They're trashed again automatically; above this many in one pass for
-# one member, that member is named in a warning.
+# purges. They're trashed again automatically. Once a day, at this local time,
+# a warning names each member whose re-uploads were trashed in the last 24
+# hours. The container's TZ sets the local time.
 [warnings]
-reuploads_per_pass = 10
+report_at = "22:00"
 
 # The daemon's webhook receiver. With this section present, `reconcile-albums`
 # also gives every member an Immich workflow that posts each new upload here,

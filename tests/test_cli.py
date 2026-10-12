@@ -17,7 +17,7 @@ CONFIG = """
 url = "https://x.example"
 [service]
 readonly = {readonly}
-ledger_path = "ledger.sqlite"
+state_path = "state.json"
 settle_seconds = 0
 [family]
 email = "f@x"
