@@ -384,6 +384,26 @@ async def test_a_reupload_is_trashed_and_counted_without_touching_the_copy(world
     assert "re-upload, family already has it" in str(result)
 
 
+async def test_a_reupload_the_webhook_already_trashed_is_not_trashed_or_counted_again(world, state):
+    from ifl.move import move_assets
+    from ifl.observer import MoveAsset
+
+    accounts = make_accounts()
+    copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
+    re = alice_asset(world)
+    # The pass scanned this item while the original was live. The webhook
+    # finished with it before the pass reached it.
+    item = MoveAsset(re.id, re.checksum, accounts.members["alice"], None, "a.jpg", reupload=True)
+
+    by_webhook = await move_assets(accounts, OPTS, [item], state=state, limit=0, in_flight=set())
+    by_pass = await move_assets(accounts, OPTS, [item], state=state, limit=0, in_flight=set())
+
+    assert by_webhook.done[0].trashed and not by_pass.done[0].trashed
+    assert [w for w in world.writes if w[0] == "trash"] == [("trash", ALICE, re.id)]
+    assert state.members[ALICE].reuploads == 1 and by_pass.reuploads_trashed() == {}
+    assert by_pass.done[0].family_asset_id == copy.id and not by_pass.unfinished
+
+
 async def test_a_copy_the_family_got_some_other_way_is_authoritative(world):
     accounts = make_accounts()
     # No ifl entry: the family uploaded this itself, with its own crop. Alice's
