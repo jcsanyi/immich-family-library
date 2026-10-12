@@ -190,26 +190,6 @@ async def test_run_does_a_pass_serves_and_stops_when_told(world, state, monkeypa
     assert left == []
 
 
-async def test_each_pass_rereads_the_state_file(world, state, monkeypatch):
-    from datetime import UTC, datetime
-
-    daemon = local_daemon(state)
-    mark = datetime(2026, 10, 1, tzinfo=UTC)
-    # Edited on disk while the daemon runs: the next pass sees it, no restart needed.
-    edited = State(state.path)
-    edited.set_mark(ALICE, mark)
-    seen = []
-
-    async def one_pass(accounts, cfg, st, *, in_flight):
-        seen.append(st.get_mark(ALICE))
-        daemon.stopping.set()
-        return SimpleNamespace()
-
-    monkeypatch.setattr("ifl.daemon.run_pass", one_pass)
-    await asyncio.wait_for(daemon.passes(), 5)
-    assert seen == [mark]
-
-
 async def test_a_failing_pass_is_logged_and_the_next_one_still_runs(
     world, state, monkeypatch, caplog
 ):

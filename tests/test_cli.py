@@ -176,3 +176,9 @@ def test_move_one_tallies_a_reupload(world, config, tmp_path):
 
     assert run(path, "move", str(re.id)) == 0 and re.is_trashed
     assert State.load(state.path).members[ALICE].reuploads == 1
+
+
+def test_a_lock_that_cannot_be_opened_exits_2_without_a_traceback(world, config, tmp_path):
+    (tmp_path / "state.json.lock").mkdir()
+    assert run(config(), "reconcile-albums") == 2
+    assert run(config(), "observe") == 0

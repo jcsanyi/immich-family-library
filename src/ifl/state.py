@@ -9,12 +9,17 @@ Losing the file restarts the marks at the next pass and drops one report.
 Every method that changes the state saves before it returns, so the file
 always equals memory. The daemon's pass and webhook batch share one state on
 one event loop, and a change and its save happen in one synchronous step, so
-neither half can interleave with the other's write, and a reload never drops
-a change.
+neither half can interleave with the other's write. A crash or a kill loses
+nothing either. The price is deliberate: a pass rewrites the file a few times
+per member where one batched save would do. The file is a few hundred bytes,
+and a batched save would bring back a window, between a change and its save,
+that every caller would have to keep free of `await`.
 
 One process writes the file at a time. The lock beside it decides who: the
 daemon takes it for as long as it runs, and a one-off command that writes to
-Immich takes it for the length of the command. `observe` only reads.
+Immich takes it for the length of the command. The lock holder loads the file
+once, when it starts. `observe` only reads. Editing the file by hand is not
+supported.
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -35,6 +40,10 @@ log = logging.getLogger(__name__)
 
 class Locked(Exception):
     pass
+
+
+class StateError(Exception):
+    """The state file or its lock cannot be read or written at all."""
 
 
 @dataclass
@@ -50,17 +59,21 @@ class State:
     last_report: datetime | None = None
 
     @classmethod
-    def load(cls, path: Path) -> State:
-        """The file's contents, or an empty state when there is no file. A file
-        that cannot be read is moved aside, so nothing is lost silently, and the
-        state starts over."""
-        state = cls(path)
-        state.reload()
-        return state
+    def load(cls, path: Path, *, owner: bool = False) -> State:
+        """The file's contents, or an empty state when there is no file.
 
-    def reload(self) -> None:
+        A file that does not parse starts the state over. The lock holder, with
+        `owner`, first moves it aside; a reader leaves it where it is. A file
+        that cannot be read at all is an error, never a reason to start over:
+        a passing fault would otherwise throw the marks away."""
         try:
-            raw = json.loads(self.path.read_text())
+            text = path.read_text()
+        except FileNotFoundError:
+            return cls(path)
+        except OSError as e:
+            raise StateError(f"cannot read the state file {path}: {e}") from None
+        try:
+            raw = json.loads(text)
             members = {
                 UUID(uid): MemberState(
                     scanned_until=_when(m.get("scanned_until")),
@@ -68,15 +81,18 @@ class State:
                 )
                 for uid, m in raw.get("members", {}).items()
             }
-            last_report = _when(raw.get("last_report"))
-        except FileNotFoundError:
-            members, last_report = {}, None
-        except (ValueError, TypeError, AttributeError, OSError) as e:
-            aside = self.path.with_name(self.path.name + ".bad")
-            self.path.replace(aside)
-            log.warning("%s is unreadable (%s); moved to %s and starting over", self.path, e, aside)
-            members, last_report = {}, None
-        self.members, self.last_report = members, last_report
+            return cls(path, members, _when(raw.get("last_report")))
+        except (ValueError, TypeError, AttributeError) as e:
+            if not owner:
+                log.warning("%s does not parse (%s); reading it as empty", path, e)
+                return cls(path)
+            aside = path.with_name(path.name + ".bad")
+            try:
+                path.replace(aside)
+            except OSError as err:
+                raise StateError(f"cannot move the bad state file {path} aside: {err}") from None
+            log.warning("%s does not parse (%s); moved to %s and starting over", path, e, aside)
+            return cls(path)
 
     def save(self) -> None:
         """Write the file. Every mutating method calls this; calling it again is harmless."""
@@ -133,7 +149,12 @@ class State:
 
 
 def _when(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+    if not value:
+        return None
+    when = datetime.fromisoformat(value)
+    # The service only writes times with an offset; one without is read as UTC
+    # so that it still compares.
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -150,8 +171,11 @@ def hold_lock(state_path: Path) -> Iterator[None]:
     at once if another process holds it. The kernel releases a flock when its
     holder dies, so a crash leaves nothing to clean up."""
     path = lock_path(state_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as e:
+        raise StateError(f"cannot open the lock file {path}: {e}") from None
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

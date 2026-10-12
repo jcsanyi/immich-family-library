@@ -39,7 +39,7 @@ from ifl.observer import (
 )
 from ifl.process import run_pass, tally_reuploads
 from ifl.reconcile import reconcile
-from ifl.state import Locked, State, hold_lock
+from ifl.state import Locked, State, StateError, hold_lock
 
 log = logging.getLogger("ifl")
 
@@ -132,7 +132,7 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
         if backlog:
             log.error("not moving anything: Immich has jobs waiting: %s", backlog)
             return 1
-        state = State.load(cfg.state_path)
+        state = State.load(cfg.state_path, owner=True)
         scan = await scan_assets(accounts, cfg.dropbox_album, state=state)
         opts = MoveOptions.from_config(cfg)
         if asset_id is None:
@@ -171,7 +171,7 @@ async def _move_one(
     for w in result.warnings:
         log.warning("%s: %s", result.file_name, w)
     log.info("%s", result)
-    if result.reupload and result.trashed:
+    if result.counts_as_reupload:
         state.add_reuploads(result.owner_id, 1)
     return 0
 
@@ -179,7 +179,7 @@ async def _move_one(
 async def run_process(config_path: Path) -> int:
     """One complete pass: conversions, reconcile, moves, under the limits."""
     async with opened(config_path, writes=True) as (cfg, accounts):
-        result = await run_pass(accounts, cfg, State.load(cfg.state_path))
+        result = await run_pass(accounts, cfg, State.load(cfg.state_path, owner=True))
         log.info("pass done: %s", result)
         return 1 if result.failed else 0
 
@@ -192,7 +192,7 @@ async def run_daemon(config_path: Path) -> int:
             cfg.interval_seconds,
             "" if cfg.webhook else "; no webhook configured",
         )
-        await Daemon(accounts, cfg, State.load(cfg.state_path)).run()
+        await Daemon(accounts, cfg, State.load(cfg.state_path, owner=True)).run()
         return 0
 
 
@@ -256,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show-config":
             return run_show_config(args.config, args.minimal)
         return asyncio.run(commands[args.command]())
-    except (ConfigError, AccountError) as e:
+    except (ConfigError, AccountError, StateError) as e:
         log.error("%s", e)
         return 2
     except (ConvertError, MoveError) as e:

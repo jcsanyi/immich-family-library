@@ -174,6 +174,9 @@ def test_stage4_settings_and_admin_key():
         (lambda r: r.update({"warnings": {"report_at": "10pm"}}), "report_at"),
         (lambda r: r.update({"warnings": {"report_at": "22:00:00"}}), "report_at"),
         (lambda r: r.update({"warnings": {"report_at": 22}}), "report_at"),
+        (lambda r: r.update({"warnings": {"report_at": "10+01"}}), "report_at"),
+        (lambda r: r.update({"warnings": {"report_at": "T1200"}}), "report_at"),
+        (lambda r: r.update({"warnings": {"report_at": "24:00"}}), "report_at"),
     ],
 )
 def test_stage4_setting_errors(mutate, msg):

@@ -125,6 +125,13 @@ class MoveResult:
     trashed: bool = False
     warnings: list[str] = field(default_factory=list)
 
+    @property
+    def counts_as_reupload(self) -> bool:
+        """A phone's re-upload of a photo the family already had, now trashed. A
+        scan item that ended as a real move, because the family's copy was gone
+        by then, is not one."""
+        return self.reupload and self.duplicate and self.trashed
+
     def __str__(self) -> str:
         if self.restored:
             how = "family copy restored from the trash"
@@ -228,7 +235,7 @@ class MoveManyResult:
         """Trashed re-uploads per member, for the daily tally."""
         out: dict[UUID, int] = {}
         for r in self.done:
-            if r.reupload and r.trashed:
+            if r.counts_as_reupload:
                 out[r.owner_id] = out.get(r.owner_id, 0) + 1
         return out
 

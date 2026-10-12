@@ -103,7 +103,7 @@ limits remain the only pacing for real moves. It stops cleanly on SIGINT or
 SIGTERM. If a pass fails, the failure is logged and the next pass runs on
 schedule. If a webhook batch fails, the failure is logged and the next pass
 picks up what it missed. It holds the state lock for as long as it runs, and
-it reads the state file before each pass. This is the container's default
+it loads the state file one time, when it starts. This is the container's default
 command.
 
 ## `ifl show-config [--minimal]`
@@ -118,7 +118,8 @@ do.
 - `0`: everything asked for was done.
 - `1`: something was blocked or failed. The log says what. For `--all` and
   `process`, only failures count, not blocks.
-- `2`: the config or a key is wrong, or `readonly` refused the command.
+- `2`: the config or a key is wrong, or `readonly` refused the command, or
+  the state file or its lock cannot be opened.
 - `3`: the daemon or another writing command holds the state lock. Wait for
   it, or stop the daemon.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from datetime import time
@@ -210,7 +211,7 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
 
 
 def _time_of_day(value: object) -> time:
-    if isinstance(value, str) and len(value) == 5:
+    if isinstance(value, str) and re.fullmatch(r"\d\d:\d\d", value):
         try:
             return time.fromisoformat(value)
         except ValueError:

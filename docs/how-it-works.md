@@ -234,8 +234,7 @@ One process writes the state file at a time, and a lock beside it decides
 which. The daemon holds the lock for as long as it runs. A one-off command
 that writes to Immich holds it for the length of the command, and a second
 writer is refused before it touches anything. `observe` reads the file and
-never locks. The daemon re-reads the file before each pass, so a mark or tally
-edited by hand takes effect without a restart.
+never locks. The file isn't meant to be edited by hand.
 
 The daemon's pass and its webhook receiver share a set of in-flight asset ids,
 so they never work on the same photo at once. Whoever is second skips, and a

@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from ifl.state import Locked, State, hold_lock, lock_path
+from ifl.state import Locked, State, StateError, hold_lock, lock_path
 
 ALICE, BOB = uuid4(), uuid4()
 NOW = datetime(2026, 10, 11, 22, 5, tzinfo=UTC)
@@ -35,26 +35,52 @@ def test_missing_file_is_empty_and_save_round_trips(tmp_path):
     assert set(raw) == {"last_report", "members"} and set(raw["members"]) == {str(ALICE), str(BOB)}
 
 
-def test_an_unreadable_file_is_moved_aside_and_the_state_starts_over(tmp_path, caplog):
+def test_the_owner_moves_a_file_that_does_not_parse_aside_and_a_reader_leaves_it(tmp_path, caplog):
     path = tmp_path / "state.json"
     path.write_text("{not json")
 
     with caplog.at_level(logging.WARNING, logger="ifl.state"):
-        state = State.load(path)
+        reader = State.load(path)
+    assert reader.members == {} and path.read_text() == "{not json"
+    assert "reading it as empty" in caplog.text
 
+    with caplog.at_level(logging.WARNING, logger="ifl.state"):
+        state = State.load(path, owner=True)
     assert state.members == {} and not path.exists()
     assert (tmp_path / "state.json.bad").read_text() == "{not json"
-    assert "is unreadable" in caplog.text and "starting over" in caplog.text
+    assert "starting over" in caplog.text
 
 
-def test_reload_picks_up_what_another_writer_saved(tmp_path):
+def test_a_file_that_cannot_be_read_is_an_error_and_is_left_alone(tmp_path):
     path = tmp_path / "state.json"
-    mine = State.load(path)
-    theirs = State.load(path)
-    theirs.set_mark(ALICE, NOW)
-    assert mine.get_mark(ALICE) is None
-    mine.reload()
-    assert mine.get_mark(ALICE) == NOW
+    path.mkdir()  # reading a directory fails with an OSError that is not "missing"
+    with pytest.raises(StateError, match="cannot read the state file"):
+        State.load(path, owner=True)
+    assert path.is_dir() and not (tmp_path / "state.json.bad").exists()
+
+
+def test_a_lock_file_that_cannot_be_opened_is_an_error(tmp_path):
+    (tmp_path / "state.json.lock").mkdir()
+    with (
+        pytest.raises(StateError, match="cannot open the lock file"),
+        hold_lock(tmp_path / "state.json"),
+    ):
+        pass
+
+
+def test_a_time_without_an_offset_is_read_as_utc(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(
+        json.dumps(
+            {
+                "last_report": "2026-10-11T21:05:00",
+                "members": {str(ALICE): {"scanned_until": "2026-10-01T00:00:00"}},
+            }
+        )
+    )
+    state = State.load(path)
+    assert state.get_mark(ALICE) == datetime(2026, 10, 1, tzinfo=UTC)
+    assert state.report_due(NOW, TEN_PM) is True  # compares, where a naive time would raise
 
 
 @pytest.mark.parametrize(

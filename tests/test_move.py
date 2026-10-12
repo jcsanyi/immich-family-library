@@ -549,6 +549,10 @@ def test_reuploads_trashed_counts_per_member_and_shows_in_the_summary():
         done=[done(ALICE, True), done(ALICE, True), done(BOB, True), done(BOB, False)]
     )
     assert many.reuploads_trashed() == {ALICE: 2, BOB: 1}
+    # A scan item that ended as a real move, the family's copy gone by then, is not counted.
+    real = done(ALICE, True)
+    real.duplicate = False
+    assert MoveManyResult(done=[real]).reuploads_trashed() == {}
     assert str(many) == "moved 4 (3 re-uploads), blocked 0, failed 0, remaining 0"
     assert (
         str(MoveManyResult(done=[done(BOB, False)])) == "moved 1, blocked 0, failed 0, remaining 0"

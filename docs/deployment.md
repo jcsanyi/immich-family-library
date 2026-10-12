@@ -100,8 +100,9 @@ came from is on the photo itself, in its `ifl` metadata entry and its
 The lock file beside it, `state.json.lock`, uses flock. On an NFS volume,
 flock is not reliable. Keep the state volume on a local disk.
 
-The daemon reads the file before each pass. To reset a member's re-upload
-mark or tally, edit the file. The next pass uses the new values.
+Do not edit the file. The daemon loads it one time, when it starts, and
+writes it from memory after that. If the file does not parse at start, the
+service moves it to `state.json.bad` and starts with an empty state.
 
 ## Upgrading
 

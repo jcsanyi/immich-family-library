@@ -139,7 +139,7 @@ def report_reuploads(
         return
     since = state.last_report
     window = "in the last 24 hours"
-    if since is not None and now - since > STALE_REPORT:
+    if now - since > STALE_REPORT:
         window = f"since {since.astimezone(now.tzinfo).isoformat(timespec='minutes')}"
     names = {uid: a.name for uid, a in accounts.by_user_id().items()}
     for uid, n in state.take_report(now).items():

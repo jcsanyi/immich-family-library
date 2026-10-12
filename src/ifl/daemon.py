@@ -17,9 +17,8 @@ The receiver never wakes the pass: the interval and the limits are the pacing
 for real moves, and nothing the receiver handles is metered by them.
 
 The daemon holds the lock beside the state file for as long as it runs, so it
-is the file's only writer. It still re-reads the file before each pass, so a
-mark or tally edited by hand takes effect without a restart. Both halves share
-one in-memory state, which saves itself on every change.
+is the file's only writer: the file is loaded once, at start. Both halves
+share one in-memory state, which saves itself on every change.
 """
 
 from __future__ import annotations
@@ -79,7 +78,6 @@ class Daemon:
     async def passes(self) -> None:
         while not self.stopping.is_set():
             try:
-                self.state.reload()
                 result = await run_pass(
                     self.accounts, self.cfg, self.state, in_flight=self.in_flight
                 )
