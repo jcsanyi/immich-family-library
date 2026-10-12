@@ -12,6 +12,10 @@ section or setting with any other name is an error, and the service does not
 start. This catches a typo or an old name, which would otherwise take the
 default without a message.
 
+A setting with a value of the wrong type is also an error. For example,
+`readonly = "false"` is a string, not a boolean, and the service does not
+start.
+
 ## `[immich]`
 
 | Setting | Default | What it is |
@@ -91,10 +95,9 @@ uploads to it.
 
 | Setting | Default | What it is |
 |---|---|---|
-| `url` | required | What Immich calls. On the shared docker network, the container name works: `http://ifl:8080/webhook/asset-created`. |
+| `url` | required | What Immich calls, as an `http` or `https` URL. On the shared docker network, the container name works: `http://ifl:8080/webhook/asset-created`. The receiver serves the path of this URL. |
 | `token` | required | A secret you make up. Immich sends it in the `X-IFL-Token` header. The receiver rejects anything else. |
-| `listen` | `"0.0.0.0:8080"` | The receiver's bind address. |
-| `path` | `"/webhook/asset-created"` | The receiver's path. It must match the path in `url`. |
+| `listen` | `"0.0.0.0:8080"` | The receiver's bind address, as `host:port`. The port is a number from 1 to 65535. Put an IPv6 address in brackets: `"[::]:8080"`. |
 
 ## API key permissions
 

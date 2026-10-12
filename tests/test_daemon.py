@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -25,7 +26,7 @@ RAW = {
         "alice": {"email": "alice@x", "api_key": "k"},
         "bob": {"email": "bob@x", "api_key": "k"},
     },
-    "webhook": {"url": "http://ifl:8080/hook", "token": "t0k", "path": "/hook"},
+    "webhook": {"url": "http://ifl:8080/hook", "token": "t0k"},
 }
 
 
@@ -162,12 +163,10 @@ async def test_a_server_that_fails_to_start_takes_the_pass_task_down_with_it(
 
 def local_daemon(state, **service) -> Daemon:
     """A daemon whose receiver binds an ephemeral port on loopback."""
-    raw = {
-        **RAW,
-        "service": {**RAW["service"], **service},
-        "webhook": {**RAW["webhook"], "listen": "127.0.0.1:0"},
-    }
-    return Daemon(make_accounts(), parse_config(raw), state)
+    cfg = parse_config({**RAW, "service": {**RAW["service"], **service}})
+    # Port 0 asks the OS for a free one. The config refuses it, so it goes in here.
+    cfg = replace(cfg, webhook=replace(cfg.webhook, listen="127.0.0.1:0"))
+    return Daemon(make_accounts(), cfg, state)
 
 
 async def test_run_does_a_pass_serves_and_stops_when_told(world, state, monkeypatch):

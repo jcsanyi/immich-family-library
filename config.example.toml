@@ -55,12 +55,12 @@ report_at = "22:00"
 # so a re-upload is trashed within seconds instead of on the next pass. `url`
 # is what Immich calls (the container name on the shared docker network);
 # `token` is a secret you make up, sent in the X-IFL-Token header and checked
-# by the receiver. Leave the section out to run without a webhook.
+# by the receiver. The receiver serves the path of `url`, and binds `listen`
+# ("host:port"). Leave the section out to run without a webhook.
 # [webhook]
 # url = "http://ifl:8080/webhook/asset-created"
 # token = ""
 # listen = "0.0.0.0:8080"
-# path = "/webhook/asset-created"
 
 # The family account owns everything that's been shared. The email is checked
 # against the account the key belongs to, so a config pointed at the wrong
