@@ -57,15 +57,18 @@ For a member album with the family user on it:
    their side.
 4. Each contributor adds their own photos to the family album, with their own
    key. Editors can add their own photos, and that's all it takes.
-5. The service re-reads the original once, in case anything was added in the
-   meantime, then asks the server whether every photo is now in the family
-   album.
-6. The original album is deleted. Only the album: the photos are still the
-   member's, now sitting in a family album, which is exactly what the one rule
-   acts on.
+5. The original album is deleted, once Immich has accepted every photo. Only
+   the album: the photos are still the member's, now sitting in a family
+   album, which is exactly what the one rule acts on.
 
 Every step is idempotent. A conversion that died partway finishes on the next
 run.
+
+The service reads the original once. A photo that someone adds to the original
+after that read, and before the delete, is not carried over. The window is
+short: the read, one add request per contributor, and the delete. Immich has
+no way to lock an album or to delete it only if it is unchanged. The photo is not lost: it stays in its
+owner's library, in no album, and the owner can add it to the family album.
 
 ## Family album consistency
 

@@ -9,8 +9,8 @@ which is exactly what the one rule acts on.
 
 Every step is derived from what Immich has, so a run that died halfway is
 finished by running it again: the family album is found by name, users and
-assets already on it are skipped, and the original is only deleted once the
-server confirms everything landed.
+assets already on it are skipped, and the original is only deleted once
+Immich has accepted every photo.
 """
 
 from __future__ import annotations
@@ -169,24 +169,13 @@ async def convert_album(accounts: Accounts, conv: ConvertAlbum) -> ConvertResult
     if missing:
         log.info("shared %r with %d more users", fam_album.name, len(missing))
 
-    # Each contributor adds their own photos with their own key, then one
-    # re-read of the original for anything that appeared meanwhile.
-    first = await _assets_by_owner(owner.client, original.id)
-    added, dupes = await _add_assets(accounts, fam_album, first)
-    seen = {i for ids in first.values() for i in ids}
-    again = await _assets_by_owner(owner.client, original.id)
-    late = {o: [i for i in ids if i not in seen] for o, ids in again.items()}
-    added2, dupes2 = await _add_assets(accounts, fam_album, {o: i for o, i in late.items() if i})
-    added, dupes = added + added2, dupes + dupes2
-
-    # Delete the original only once the server says everything is in the family album.
-    want = {i for ids in again.values() for i in ids}
-    have = {a.id async for a in iter_album_assets(family.client, fam_album.id)}
-    if want - have:
-        raise ConvertError(
-            f"{len(want - have)} of {len(want)} assets from {original.name!r} are not in the "
-            f"family album; original left in place"
-        )
+    # Each contributor adds their own photos with their own key. Immich answers
+    # for every id, and any refusal raises before the delete. A photo that
+    # joins the original after this read is not carried: see "Album conversion"
+    # in docs/how-it-works.md.
+    added, dupes = await _add_assets(
+        accounts, fam_album, await _assets_by_owner(owner.client, original.id)
+    )
     await delete_album(owner.client, original.id)
     log.info("deleted %s's album %r", owner.name, original.name)
 

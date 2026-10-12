@@ -155,7 +155,6 @@ class FakeWorld:
         self.sidecar_writes: bool = True  # False: tagging never produces a sidecar
         self.workflows: dict[UUID, list] = {}  # owner -> workflow response-like objects
         self.fail_adds: dict[UUID, BulkIdErrorReason] = {}
-        self.on_read: list = []  # callbacks run once each, in order, on asset reads
 
     def album(self, name, owner, roles=None, assets=(), description="", shared_link=False):
         """An album as Immich would return it, summarised the way the service does."""
@@ -184,8 +183,6 @@ class FakeWorld:
         return [a for a in self.albums.values() if client.user_id in a.user_ids]
 
     async def iter_album_assets(self, client, album_id):
-        if self.on_read:
-            self.on_read.pop(0)()
         for a in list(self.assets[album_id]):
             yield a
 
