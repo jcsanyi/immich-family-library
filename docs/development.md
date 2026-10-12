@@ -59,8 +59,10 @@ here.
 
 A new `immichpy` major is generated from a new Immich minor and drops support
 for older servers. Dependabot opens a pull request for each one, and the tests
-on it usually fail, because the fake Immich builds the real response models.
-That pull request is the prompt to upgrade. Do these steps together:
+on it usually fail, because the fake Immich builds the real response models
+and the `test_immich` stubs carry the real client signatures. Each failure
+names a call or a model that the new client no longer accepts. That pull
+request is the prompt to upgrade. Do these steps together:
 
 1. Upgrade the dev instance to the matching Immich version.
 2. Take the new pin, and raise `MIN_SERVER` in `src/ifl/accounts.py` to that
@@ -118,8 +120,14 @@ Test files follow the source: `test_observer`, `test_convert`,
 `test_sidecar`, `test_config`, `test_ledger`, and `test_cli` for the exit
 codes. Two files test the layers the
 fake replaces, against stub clients that return real models: `test_immich`
-covers each adapter helper that has logic in it, and `test_accounts` covers
-the startup checks on each key.
+covers every adapter helper, and `test_accounts` covers the startup checks on
+each key.
+
+Each stub method in `test_immich` carries the signature of the installed
+client's real method, and pydantic validates every call against it. The stub
+refuses a call that the real client would refuse. So when the `immichpy` pin
+changes and a method loses a parameter, changes a type, or disappears, the
+tests fail before the code reaches the dev instance.
 
 ## Continuous integration
 

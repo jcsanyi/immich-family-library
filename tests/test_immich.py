@@ -2,17 +2,35 @@
 
 The fake in fakes.py replaces these helpers wholesale, so nothing else checks
 that each one reads the right fields and sends the right arguments. These tests
-do, for every helper with logic in it. Pure one-line pass-throughs are left out.
+do, for every helper, pass-throughs included.
+
+Each stub method wears the signature of the installed client's real method, and
+pydantic checks every call against it. So a Dependabot bump of immichpy that
+renames a parameter, changes its type, or drops a method turns these tests red,
+instead of failing on the server.
 """
 
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from fakes import ALICE, BOB, EDITOR, FAMILY, OWNER, T0, VIEWER, FakeAsset, make_user, make_workflow
+from fakes import (
+    ALICE,
+    BOB,
+    EDITOR,
+    FAMILY,
+    OWNER,
+    T0,
+    VIEWER,
+    FakeAsset,
+    make_tag,
+    make_user,
+    make_workflow,
+)
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_response_dto import AlbumUserResponseDto
 from immichpy.client.generated.models.asset_bulk_upload_check_response_dto import (
@@ -22,6 +40,7 @@ from immichpy.client.generated.models.asset_bulk_upload_check_result import (
     AssetBulkUploadCheckResult,
 )
 from immichpy.client.generated.models.asset_edit_action import AssetEditAction
+from immichpy.client.generated.models.asset_edit_action_item_dto import AssetEditActionItemDto
 from immichpy.client.generated.models.asset_edits_response_dto import AssetEditsResponseDto
 from immichpy.client.generated.models.asset_file_response_dto import AssetFileResponseDto
 from immichpy.client.generated.models.asset_file_type import AssetFileType
@@ -44,21 +63,63 @@ from immichpy.client.generated.models.search_response_dto import SearchResponseD
 from immichpy.client.generated.models.shared_link_response_dto import SharedLinkResponseDto
 from immichpy.client.generated.models.shared_link_type import SharedLinkType
 from immichpy.client.generated.models.user_avatar_color import UserAvatarColor
+from immichpy.client.generated.models.workflow_trigger import WorkflowTrigger
+from immichpy.client.main import AsyncClient
+from pydantic import ValidationError, validate_call
 
 from ifl import immich
 from ifl.immich import Owned, step_matches, summarize_album, webhook_step
 
+# Never connects. Its API objects lend the stubs their method signatures.
+PROBE = AsyncClient(base_url="https://immich.example", api_key="unused")
 
-def canned(calls: list, name: str, *values):
-    """An async stand-in for one generated-client method. Records each call and
-    returns the canned values in turn, the last one repeatedly."""
+
+def bound(api: str, method: str, impl):
+    """`impl` behind the real signature of `client.<api>.<method>`.
+
+    Each call is first validated as the generated method would validate it, and
+    then handed to `impl` exactly as the adapter made it, so tests see what was
+    sent and not what pydantic filled in.
+    """
+    real = getattr(getattr(PROBE, api), method)
+
+    async def check(*args, **kwargs):
+        return None
+
+    check.__signature__ = inspect.signature(real)
+    check.__annotations__ = real.__annotations__
+    checked = validate_call(check)
+
+    async def stub(*args, **kwargs):
+        await checked(*args, **kwargs)
+        return await impl(*args, **kwargs)
+
+    return stub
+
+
+def canned(calls: list, api: str, method: str, *values):
+    """A bound stub that records each call as (method, args, kwargs) and returns
+    the canned values in turn, the last one repeatedly."""
     queue = list(values)
 
-    async def method(*args, **kwargs):
-        calls.append((name, args, kwargs))
+    async def impl(*args, **kwargs):
+        calls.append((method, args, kwargs))
         return queue.pop(0) if len(queue) > 1 else queue[0]
 
-    return method
+    return bound(api, method, impl)
+
+
+def stub_client(calls: list, **apis: dict[str, list]):
+    """`stub_client(calls, albums={"delete_album": [None]})`: a client with one
+    namespace per API, every method canned and bound."""
+    return SimpleNamespace(
+        **{
+            api: SimpleNamespace(
+                **{m: canned(calls, api, m, *values) for m, values in methods.items()}
+            )
+            for api, methods in apis.items()
+        }
+    )
 
 
 def search_page(items, next_page: str | None) -> SearchResponseDto:
@@ -75,17 +136,13 @@ def search_page(items, next_page: str | None) -> SearchResponseDto:
     )
 
 
-def test_summarize_album_takes_the_owner_from_the_roles():
-    dto = AlbumResponseDto(
+def album_dto(name: str, roles: dict, *, asset_count: int = 0) -> AlbumResponseDto:
+    return AlbumResponseDto(
         id=uuid4(),
-        album_name="Trip",
+        album_name=name,
         album_thumbnail_asset_id=None,
-        album_users=[
-            AlbumUserResponseDto(role=EDITOR, user=make_user(ALICE)),
-            AlbumUserResponseDto(role=OWNER, user=make_user(FAMILY)),
-            AlbumUserResponseDto(role=VIEWER, user=make_user(BOB)),
-        ],
-        asset_count=3,
+        album_users=[AlbumUserResponseDto(role=r, user=make_user(u)) for u, r in roles.items()],
+        asset_count=asset_count,
         created_at=T0,
         updated_at=T0,
         description="",
@@ -93,6 +150,10 @@ def test_summarize_album_takes_the_owner_from_the_roles():
         is_activity_enabled=False,
         shared=True,
     )
+
+
+def test_summarize_album_takes_the_owner_from_the_roles():
+    dto = album_dto("Trip", {ALICE: EDITOR, FAMILY: OWNER, BOB: VIEWER}, asset_count=3)
     s = summarize_album(dto)
     assert s.id == dto.id and s.name == "Trip" and s.owner_id == FAMILY
     assert s.user_ids == {FAMILY, ALICE, BOB} and s.asset_count == 3
@@ -104,10 +165,8 @@ async def test_album_assets_are_read_page_by_page():
     calls = []
     album_id = uuid4()
     a, b, c = (FakeAsset(uuid4(), ALICE) for _ in range(3))
-    client = SimpleNamespace(
-        search=SimpleNamespace(
-            search_assets=canned(calls, "search", search_page([a, b], "2"), search_page([c], None))
-        )
+    client = stub_client(
+        calls, search={"search_assets": [search_page([a, b], "2"), search_page([c], None)]}
     )
     got = [x async for x in immich.iter_album_assets(client, album_id, page_size=2)]
     assert [x.id for x in got] == [a.id, b.id, c.id]
@@ -122,9 +181,7 @@ async def test_album_assets_are_read_page_by_page():
 async def test_recent_assets_search_passes_the_mark():
     calls = []
     since = datetime(2026, 10, 1, tzinfo=UTC)
-    client = SimpleNamespace(
-        search=SimpleNamespace(search_assets=canned(calls, "search", search_page([], None)))
-    )
+    client = stub_client(calls, search={"search_assets": [search_page([], None)]})
     assert [x async for x in immich.iter_assets_created_after(client, since)] == []
     (dto,) = [args[0] for _, args, _ in calls]
     assert dto.created_after == since and dto.page == 1
@@ -175,7 +232,9 @@ async def test_owned_checksums_batches_and_keeps_only_duplicate_rejects():
         calls.append(len(dto.assets))
         return answer(dto)
 
-    client = SimpleNamespace(assets=SimpleNamespace(check_bulk_upload=check))
+    client = SimpleNamespace(
+        assets=SimpleNamespace(check_bulk_upload=bound("assets", "check_bulk_upload", check))
+    )
     checksums = ["c1", "c2", "bad", "c1"] + [f"new{i}" for i in range(300)]
 
     owned = await immich.owned_checksums(client, checksums, batch=250)
@@ -189,10 +248,8 @@ async def test_upload_names_each_part_itself_and_reports_whether_it_was_created(
     calls = []
     new_id = uuid4()
     status = AssetMediaStatus.CREATED if sidecar else AssetMediaStatus.DUPLICATE
-    client = SimpleNamespace(
-        assets=SimpleNamespace(
-            upload_asset=canned(calls, "upload", AssetMediaResponseDto(id=new_id, status=status))
-        )
+    client = stub_client(
+        calls, assets={"upload_asset": [AssetMediaResponseDto(id=new_id, status=status)]}
     )
     taken = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
 
@@ -229,7 +286,7 @@ async def test_tag_asset_accepts_a_duplicate_and_raises_on_anything_else():
         )
     ]
     calls = []
-    client = SimpleNamespace(tags=SimpleNamespace(tag_assets=canned(calls, "tag", dup, denied)))
+    client = stub_client(calls, tags={"tag_assets": [dup, denied]})
     await immich.tag_asset(client, tag_id, asset_id)  # duplicate: already tagged, fine
     with pytest.raises(RuntimeError, match="no_permission nope"):
         await immich.tag_asset(client, tag_id, asset_id)
@@ -240,9 +297,7 @@ async def test_find_workflow_wants_the_exact_name_and_step_matches_checks_every_
     url, token = "http://ifl:8080/hook", "t0k"
     other = make_workflow("immich-family-library-old", [webhook_step(url, token)])
     ours = make_workflow("immich-family-library", [webhook_step(url, token)])
-    client = SimpleNamespace(
-        workflows=SimpleNamespace(search_workflows=canned([], "search", [other, ours]))
-    )
+    client = stub_client([], workflows={"search_workflows": [[other, ours]]})
     assert await immich.find_workflow(client, "immich-family-library") is ours
     assert await immich.find_workflow(client, "nothing") is None
 
@@ -272,7 +327,7 @@ async def test_asset_edits_come_back_in_the_shape_the_edits_endpoint_takes():
             ],
         }
     )
-    client = SimpleNamespace(assets=SimpleNamespace(get_asset_edits=canned([], "edits", res)))
+    client = stub_client([], assets={"get_asset_edits": [res]})
     edits = await immich.get_asset_edits(client, asset_id)
     assert [e.action for e in edits] == [AssetEditAction.CROP, AssetEditAction.ROTATE]
     assert edits[0].parameters.actual_instance.width == 30
@@ -301,9 +356,7 @@ async def test_shared_link_assets_come_from_individual_links_only():
         )
 
     links = [link(SharedLinkType.INDIVIDUAL, [a]), link(SharedLinkType.ALBUM, [b])]
-    client = SimpleNamespace(
-        shared_links=SimpleNamespace(get_all_shared_links=canned([], "links", links))
-    )
+    client = stub_client([], shared_links={"get_all_shared_links": [links]})
     assert await immich.shared_link_asset_ids(client) == {a.id}
 
 
@@ -314,12 +367,11 @@ async def test_queue_backlog_maps_queue_names_to_waiting_counts():
         )
         return QueueResponseDto(is_paused=False, name=name, statistics=stats)
 
-    client = SimpleNamespace(
-        queues=SimpleNamespace(
-            get_queues=canned(
-                [], "queues", [queue(QueueName.SIDECAR, 3), queue(QueueName.METADATAEXTRACTION, 0)]
-            )
-        )
+    client = stub_client(
+        [],
+        queues={
+            "get_queues": [[queue(QueueName.SIDECAR, 3), queue(QueueName.METADATAEXTRACTION, 0)]]
+        },
     )
     assert await immich.queue_backlog(client) == {"sidecar": 3, "metadataExtraction": 0}
 
@@ -334,9 +386,7 @@ async def test_partner_ids_are_the_accounts_this_one_shares_with():
         profile_changed_at=T0,
         profile_image_path="",
     )
-    client = SimpleNamespace(
-        partners=SimpleNamespace(get_partners=canned(calls, "partners", [partner]))
-    )
+    client = stub_client(calls, partners={"get_partners": [[partner]]})
     assert await immich.list_partner_ids(client) == {BOB}
     assert calls[0][2] == {"direction": PartnerDirection.SHARED_MINUS_BY}
 
@@ -354,19 +404,14 @@ async def test_sidecar_lookup_and_metadata_value():
         updated_at=T0,
     )
     calls = []
-    client = SimpleNamespace(
-        asset_files=SimpleNamespace(search_asset_files=canned(calls, "files", [sidecar], [])),
-        assets=SimpleNamespace(
-            get_asset_metadata=canned(
-                [],
-                "meta",
-                [
-                    AssetMetadataResponseDto(
-                        key="ifl", updated_at=T0, value={"origin_asset_id": "x"}
-                    )
-                ],
-            )
-        ),
+    client = stub_client(
+        calls,
+        asset_files={"search_asset_files": [[sidecar], []]},
+        assets={
+            "get_asset_metadata": [
+                [AssetMetadataResponseDto(key="ifl", updated_at=T0, value={"origin_asset_id": "x"})]
+            ]
+        },
     )
     assert await immich.find_sidecar(client, asset_id) == file_id
     assert await immich.find_sidecar(client, asset_id) is None
@@ -380,8 +425,182 @@ async def test_sidecar_lookup_and_metadata_value():
 async def test_album_user_role_update_sends_the_user_id_as_a_string():
     calls = []
     album_id, user_id = uuid4(), uuid4()
-    client = SimpleNamespace(albums=SimpleNamespace(update_album_user=canned(calls, "role", None)))
+    client = stub_client(calls, albums={"update_album_user": [None]})
     await immich.set_album_user_role(client, album_id, user_id, EDITOR)
     (_, _, kw) = calls[0]
     assert kw["id"] == album_id and kw["user_id"] == str(user_id)
     assert kw["update_album_user_dto"].role == EDITOR
+
+
+async def test_the_stubs_refuse_what_the_installed_client_would():
+    """The guard behind every other test here: a stub turns down the calls the
+    real client would turn down, so a green run means the adapter still fits."""
+    delete = canned([], "albums", "delete_album", None)
+    await delete(id=uuid4())
+    with pytest.raises(ValidationError):
+        await delete(album_id=uuid4())
+    with pytest.raises(ValidationError):
+        await delete(id="not a uuid")
+    with pytest.raises(AttributeError):
+        canned([], "albums", "no_such_method", None)
+
+
+async def test_album_writes_send_what_the_client_takes():
+    calls = []
+    album_id, a1 = uuid4(), uuid4()
+    fam = album_dto("Trip", {FAMILY: OWNER})
+    client = stub_client(
+        calls,
+        albums={
+            "create_album": [fam],
+            "add_users_to_album": [None],
+            "add_assets_to_album": [[BulkIdResponseDto(id=a1, success=True)]],
+            "delete_album": [None],
+            "get_all_albums": [[fam]],
+        },
+    )
+
+    assert (await immich.create_album(client, "Trip")).id == fam.id
+    await immich.add_album_users(client, album_id, {})  # nothing to add, nothing sent
+    await immich.add_album_users(client, album_id, {ALICE: EDITOR, BOB: VIEWER})
+    assert await immich.add_album_assets(client, album_id, []) == []
+    (res,) = await immich.add_album_assets(client, album_id, [a1])
+    assert res.id == a1 and res.success
+    await immich.delete_album(client, album_id)
+    assert [s.id for s in await immich.list_albums(client)] == [fam.id]
+    assert [s.id for s in await immich.albums_containing(client, a1)] == [fam.id]
+
+    names = [name for name, _, _ in calls]
+    assert names == [
+        "create_album",
+        "add_users_to_album",
+        "add_assets_to_album",
+        "delete_album",
+        "get_all_albums",
+        "get_all_albums",
+    ]
+    (create,) = calls[0][1]
+    assert create.album_name == "Trip" and create.description is None
+    users = calls[1][2]
+    assert users["id"] == album_id
+    assert [(u.user_id, u.role) for u in users["add_users_dto"].album_users] == [
+        (ALICE, EDITOR),
+        (BOB, VIEWER),
+    ]
+    assert calls[2][2]["id"] == album_id and calls[2][2]["bulk_ids_dto"].ids == [a1]
+    assert calls[3][2] == {"id": album_id}
+    assert calls[4][2] == {} and calls[5][2] == {"asset_id": a1}
+
+
+async def test_asset_writes_send_what_the_client_takes():
+    calls = []
+    asset_id, file_id, other = uuid4(), uuid4(), uuid4()
+    asset, tag = FakeAsset(asset_id, ALICE), make_tag("family")
+    client = stub_client(
+        calls,
+        assets={
+            "get_asset_info": [asset],
+            "download_asset": [b"jpeg"],
+            "delete_assets": [None],
+            "edit_asset": [None],
+            "update_asset_metadata": [None],
+        },
+        asset_files={"download_asset_file": [b"<xmp/>"]},
+        trash={"restore_assets": [None]},
+        tags={"upsert_tags": [[tag]]},
+        partners={"create_partner": [None]},
+    )
+    edits = [AssetEditActionItemDto.from_dict({"action": "rotate", "parameters": {"angle": 90}})]
+
+    assert await immich.get_asset(client, asset_id) is asset
+    assert await immich.download_original(client, asset_id) == b"jpeg"
+    assert await immich.download_asset_file(client, file_id) == b"<xmp/>"
+    await immich.trash_assets(client, [asset_id, other])
+    await immich.set_asset_edits(client, asset_id, edits)
+    await immich.set_asset_metadata(client, asset_id, "ifl", {"origin_asset_id": str(other)})
+    await immich.restore_assets(client, [asset_id])
+    assert await immich.upsert_tag(client, "family") == tag.id
+    await immich.create_partner(client, BOB)
+
+    by_name = {name: (args, kw) for name, args, kw in calls}
+    assert by_name["get_asset_info"] == ((), {"id": asset_id})
+    assert by_name["download_asset"] == ((), {"id": asset_id})
+    assert by_name["download_asset_file"] == ((), {"id": file_id})
+    (delete,) = by_name["delete_assets"][0]
+    assert delete.ids == [asset_id, other] and delete.force is False  # trash, never delete
+    _, kw = by_name["edit_asset"]
+    assert kw["id"] == asset_id and kw["asset_edits_create_dto"].edits == edits
+    _, kw = by_name["update_asset_metadata"]
+    (item,) = kw["asset_metadata_upsert_dto"].items
+    assert kw["id"] == asset_id and (item.key, item.value) == (
+        "ifl",
+        {"origin_asset_id": str(other)},
+    )
+    (restore,) = by_name["restore_assets"][0]
+    assert restore.ids == [asset_id]
+    (upsert,) = by_name["upsert_tags"][0]
+    assert upsert.tags == ["family"]
+    (partner,) = by_name["create_partner"][0]
+    assert partner.shared_with_id == BOB
+
+
+async def test_existing_asset_by_checksum_is_one_bulk_check():
+    calls = []
+    hit = uuid4()
+
+    async def check(dto):
+        calls.append([a.checksum for a in dto.assets])
+        return AssetBulkUploadCheckResponseDto(
+            results=[
+                AssetBulkUploadCheckResult(
+                    action=AssetUploadAction.REJECT,
+                    id=a.id,
+                    asset_id=hit,
+                    is_trashed=False,
+                    reason=AssetRejectReason.DUPLICATE,
+                )
+                for a in dto.assets
+            ]
+        )
+
+    client = SimpleNamespace(
+        assets=SimpleNamespace(check_bulk_upload=bound("assets", "check_bulk_upload", check))
+    )
+    assert await immich.existing_asset_by_checksum(client, "c1") == Owned(hit, False)
+    assert calls == [["c1"]]
+
+
+async def test_workflow_writes_send_what_the_client_takes():
+    calls = []
+    url, token = "http://ifl:8080/hook", "t0k"
+    wf = make_workflow("immich-family-library", [webhook_step(url, token)])
+    client = stub_client(calls, workflows={"create_workflow": [wf], "update_workflow": [wf]})
+
+    assert await immich.create_workflow(client, "immich-family-library", url, token) == wf.id
+    await immich.update_workflow(client, wf.id, "http://new/hook", token)
+
+    (create,) = calls[0][1]
+    assert create.name == "immich-family-library" and create.enabled
+    assert create.trigger == WorkflowTrigger.ASSETCREATE
+    assert [step_matches(st, url, token) for st in create.steps] == [True]
+    kw = calls[1][2]
+    update = kw["workflow_update_dto"]
+    assert kw["id"] == wf.id and update.enabled and update.trigger == WorkflowTrigger.ASSETCREATE
+    assert [step_matches(st, "http://new/hook", token) for st in update.steps] == [True]
+
+
+async def test_user_names_fall_back_from_config_to_album_to_lookup_to_the_id():
+    calls = []
+    carol, dave = uuid4(), uuid4()
+    client = stub_client(calls, users={"get_user": [make_user(carol, "carol@x")]})
+    names = immich.UserNames(client, {ALICE: "alice"})
+    album = summarize_album(album_dto("Trip", {FAMILY: OWNER, BOB: EDITOR}))
+
+    assert await names.describe(ALICE, album) == "alice"
+    assert await names.describe(BOB, album) == "bob@x"
+    assert await names.describe(carol) == "carol@x"
+    assert await names.describe(carol) == "carol@x"  # cached, no second lookup
+    assert calls == [("get_user", (), {"id": carol})]
+
+    failing = stub_client([], users={"get_user": [None]})
+    assert await immich.UserNames(failing, {}).describe(dave) == str(dave)
