@@ -86,6 +86,17 @@ async def run_pass(
     in_flight: set[UUID] | None = None,
     now: datetime | None = None,
 ) -> PassResult:
+    # The report runs even when the pass raises: the webhook keeps tallying
+    # while passes fail, and the report is the one signal for a looping phone.
+    try:
+        return await _run_pass(accounts, cfg, state, in_flight)
+    finally:
+        report_reuploads(state, cfg, accounts, now)
+
+
+async def _run_pass(
+    accounts: Accounts, cfg: Config, state: State, in_flight: set[UUID] | None
+) -> PassResult:
     albums = await scan_albums(accounts)
     for b in albums.blocked:
         log.warning("not converting %s: %s", b.what, b.reason)
@@ -112,7 +123,6 @@ async def run_pass(
         )
         advance_marks(state, assets, moved, accounts)
         tally_reuploads(state, moved)
-    report_reuploads(state, cfg, accounts, now)
     return PassResult(converted, reconciled, backlog, moved)
 
 
@@ -121,7 +131,7 @@ def tally_reuploads(state: State, moved: MoveManyResult) -> None:
         state.add_reuploads(uid, n)
 
 
-STALE_REPORT = timedelta(hours=36)  # past this, the window is named rather than called a day
+STALE_REPORT = timedelta(hours=26)  # past this, the window is named rather than called a day
 
 
 def report_reuploads(
@@ -138,14 +148,14 @@ def report_reuploads(
     if not state.report_due(now, cfg.report_at):
         return
     since = state.last_report
-    window = "in the last 24 hours"
+    window = "in the last day"
     if now - since > STALE_REPORT:
         window = f"since {since.astimezone(now.tzinfo).isoformat(timespec='minutes')}"
     names = {uid: a.name for uid, a in accounts.by_user_id().items()}
     for uid, n in state.take_report(now).items():
         log.warning(
             "%s re-uploaded %d photo%s the family already has %s; trashed",
-            names.get(uid, str(uid)),
+            names[uid],
             n,
             "" if n == 1 else "s",
             window,

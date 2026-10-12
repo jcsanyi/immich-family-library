@@ -21,9 +21,12 @@ same way, which is why the emails are checked.
 While `readonly` is true in the config, every command that writes to Immich
 refuses to start. `observe` and `show-config` still work.
 
-Every command that writes to Immich takes the lock beside the state file
-before it starts. If the daemon or another such command holds the lock, the
-command exits with code 3 before it touches anything.
+Only one command that writes to Immich can run at a time. Two at the same
+time can create an album or a workflow twice. So each such command takes the
+run lock before it starts. If the daemon or another such command holds the
+run lock, the command exits with code 3 before it touches anything. The run
+lock is a file beside the state file. [deployment.md](deployment.md) says
+more.
 
 ## `ifl observe`
 
@@ -88,7 +91,7 @@ and moves under `assets_per_pass`, re-uploads included. A just-converted
 album's photos move in the same pass. A queue backlog skips the moves for this
 pass, not the album work. It ends with one summary line. Once a day, when
 `report_at` has passed since the last report, it also logs one warning per
-member whose re-uploads were trashed in the last 24 hours. If any conversion
+member whose re-uploads were trashed in the last day. If any conversion
 or move failed, it exits 1.
 
 Run it by hand, or from cron, as an alternative to the daemon.
@@ -102,9 +105,9 @@ seconds. Nothing else the receiver sees is acted on, so the interval and the
 limits remain the only pacing for real moves. It stops cleanly on SIGINT or
 SIGTERM. If a pass fails, the failure is logged and the next pass runs on
 schedule. If a webhook batch fails, the failure is logged and the next pass
-picks up what it missed. It holds the state lock for as long as it runs, and
-it loads the state file one time, when it starts. This is the container's default
-command.
+picks up what it missed. It holds the run lock for as long as it runs, and it
+loads the state file one time, when it starts. This is the container's
+default command.
 
 ## `ifl show-config [--minimal]`
 
@@ -119,8 +122,8 @@ do.
 - `1`: something was blocked or failed. The log says what. For `--all` and
   `process`, only failures count, not blocks.
 - `2`: the config or a key is wrong, or `readonly` refused the command, or
-  the state file or its lock cannot be opened.
-- `3`: the daemon or another writing command holds the state lock. Wait for
+  the state file or the run lock cannot be opened.
+- `3`: the daemon or another writing command holds the run lock. Wait for
   it, or stop the daemon.
 
 ## A first run

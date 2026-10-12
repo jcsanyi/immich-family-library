@@ -22,6 +22,8 @@ services:
     volumes:
       - ./config:/config:ro
       - ifl-data:/data
+      # The host's timezone, so that [warnings] report_at is the host's local time.
+      - /etc/localtime:/etc/localtime:ro
     networks:
       - immich
 

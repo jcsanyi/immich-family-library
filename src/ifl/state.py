@@ -15,11 +15,15 @@ per member where one batched save would do. The file is a few hundred bytes,
 and a batched save would bring back a window, between a change and its save,
 that every caller would have to keep free of `await`.
 
-One process writes the file at a time. The lock beside it decides who: the
-daemon takes it for as long as it runs, and a one-off command that writes to
-Immich takes it for the length of the command. The lock holder loads the file
-once, when it starts. `observe` only reads. Editing the file by hand is not
-supported.
+This module also holds the run lock, which is not a lock on the state file.
+Only one command that writes to Immich runs at a time, because two at once
+could create the same album or workflow twice, or work one photo. The daemon
+takes the run lock for as long as it runs, and a one-off writing command for
+its own length, whether or not it uses the state. The lock file sits beside
+the state file only because that directory is the one place the service can
+write. Its side effect is that the holder is the state file's only writer:
+it loads the file once, when it starts, and the file needs no lock of its
+own. `observe` only reads. Editing the file by hand is not supported.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ class Locked(Exception):
 
 
 class StateError(Exception):
-    """The state file or its lock cannot be read or written at all."""
+    """The state file cannot be read, or the run lock cannot be opened."""
 
 
 @dataclass
@@ -67,13 +71,13 @@ class State:
         that cannot be read at all is an error, never a reason to start over:
         a passing fault would otherwise throw the marks away."""
         try:
-            text = path.read_text()
+            data = path.read_bytes()
         except FileNotFoundError:
             return cls(path)
         except OSError as e:
             raise StateError(f"cannot read the state file {path}: {e}") from None
         try:
-            raw = json.loads(text)
+            raw = json.loads(data.decode())
             members = {
                 UUID(uid): MemberState(
                     scanned_until=_when(m.get("scanned_until")),
@@ -82,7 +86,7 @@ class State:
                 for uid, m in raw.get("members", {}).items()
             }
             return cls(path, members, _when(raw.get("last_report")))
-        except (ValueError, TypeError, AttributeError) as e:
+        except (ValueError, TypeError, AttributeError, OverflowError) as e:
             if not owner:
                 log.warning("%s does not parse (%s); reading it as empty", path, e)
                 return cls(path)
@@ -95,7 +99,11 @@ class State:
             return cls(path)
 
     def save(self) -> None:
-        """Write the file. Every mutating method calls this; calling it again is harmless."""
+        """Write the file. Every mutating method calls this; calling it again is harmless.
+
+        A write that fails is logged and the run goes on: memory is still right,
+        the next change tries again, and a pass that has already trashed
+        re-uploads must still advance the other marks."""
         raw = {
             "last_report": _iso(self.last_report),
             "members": {
@@ -103,10 +111,13 @@ class State:
                 for uid, m in sorted(self.members.items(), key=lambda kv: str(kv[0]))
             },
         }
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(raw, indent=2) + "\n")
-        tmp.replace(self.path)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_name(self.path.name + ".tmp")
+            tmp.write_text(json.dumps(raw, indent=2) + "\n")
+            tmp.replace(self.path)
+        except OSError as e:
+            log.error("cannot write the state file %s: %s", self.path, e)
 
     def _member(self, user_id: UUID) -> MemberState:
         return self.members.setdefault(user_id, MemberState())
@@ -121,6 +132,17 @@ class State:
 
     def add_reuploads(self, user_id: UUID, n: int) -> None:
         self._member(user_id).reuploads += n
+        self.save()
+
+    def keep_only(self, user_ids: set[UUID]) -> None:
+        """Drop every member not in `user_ids`. A member taken out of the config
+        and added back later starts as new, so nothing from the gap is trashed."""
+        gone = sorted(str(uid) for uid in self.members.keys() - user_ids)
+        if not gone:
+            return
+        for uid in gone:
+            del self.members[UUID(uid)]
+        log.info("dropped state for %d user(s) no longer in the config: %s", len(gone), gone)
         self.save()
 
     def start_clock(self, now: datetime) -> None:
@@ -167,22 +189,22 @@ def lock_path(state_path: Path) -> Path:
 
 @contextmanager
 def hold_lock(state_path: Path) -> Iterator[None]:
-    """Hold the lock beside the state file for the length of the block. Refuses
-    at once if another process holds it. The kernel releases a flock when its
-    holder dies, so a crash leaves nothing to clean up."""
+    """Hold the run lock for the length of the block. Refuses at once if
+    another process holds it. The kernel releases a flock when its holder dies,
+    so a crash leaves nothing to clean up."""
     path = lock_path(state_path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
     except OSError as e:
-        raise StateError(f"cannot open the lock file {path}: {e}") from None
+        raise StateError(f"cannot open the run lock {path}: {e}") from None
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Locked(
-                f"another ifl command holds {path}; is the daemon running? "
-                "Only one command that writes to Immich can run at a time"
+                "only one command that writes to Immich can run at a time, and another "
+                f"holds the run lock {path}; is the daemon running?"
             ) from None
         yield
     finally:

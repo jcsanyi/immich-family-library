@@ -258,8 +258,8 @@ def test_the_daily_report_names_members_with_trashed_reuploads(tmp_path, caplog)
 
         report_reuploads(state, cfg, accounts, now=at)
         assert sorted(r.getMessage() for r in caplog.records) == [
-            "alice re-uploaded 3 photos the family already has in the last 24 hours; trashed",
-            "bob re-uploaded 1 photo the family already has in the last 24 hours; trashed",
+            "alice re-uploaded 3 photos the family already has in the last day; trashed",
+            "bob re-uploaded 1 photo the family already has in the last day; trashed",
         ]
         assert all(r.levelno == logging.WARNING for r in caplog.records)
         assert state.members[ALICE].reuploads == 0 and state.last_report == at
@@ -271,3 +271,22 @@ def test_the_daily_report_names_members_with_trashed_reuploads(tmp_path, caplog)
         assert [r.getMessage() for r in caplog.records] == [
             "alice re-uploaded 2 photos the family already has since 2026-10-11T22:05+00:00; trashed"
         ]
+
+
+async def test_a_pass_that_raises_still_reports(world, state, monkeypatch, caplog):
+    import logging
+    from datetime import UTC, datetime, timedelta
+
+    accounts = make_accounts()
+    cfg = parse_config(RAW)
+    at = datetime(2026, 10, 11, 22, 5, tzinfo=UTC)
+    state.start_clock(at - timedelta(days=1))
+    state.add_reuploads(ALICE, 2)  # tallied by the webhook while passes fail
+
+    async def broken(accounts):
+        raise RuntimeError("immich went away")
+
+    monkeypatch.setattr("ifl.process.scan_albums", broken)
+    with caplog.at_level(logging.WARNING, logger="ifl.process"), pytest.raises(RuntimeError):
+        await run_pass(accounts, cfg, state, now=at)
+    assert "alice re-uploaded 2 photos" in caplog.text and state.members[ALICE].reuploads == 0

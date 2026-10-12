@@ -190,8 +190,7 @@ What the service does about it:
   into a family album by hand is a move or a re-share, never a loop, so it
   isn't counted even when the family already has it. A member with the
   setting on produces none. Once a day, at `report_at`, one warning per member
-  says how many of their photos were re-uploaded and trashed in the last 24
-  hours. A member with none gets no line. The tally is what a nudge to the
+  says how many of their photos were re-uploaded and trashed in the last day. A member with none gets no line. The tally is what a nudge to the
   member will one day be built on; a loop needs a nudge, not a pager.
 
 Trashing a re-upload quickly saves Immich no work, since every job already
@@ -230,11 +229,22 @@ report is dropped. Config labels are never stored, in the file or in Immich.
 Renaming a member in the config changes how messages read and nothing else.
 The one place a label lands in Immich is the `from/<member>` tag.
 
-One process writes the state file at a time, and a lock beside it decides
-which. The daemon holds the lock for as long as it runs. A one-off command
-that writes to Immich holds it for the length of the command, and a second
-writer is refused before it touches anything. `observe` reads the file and
-never locks. The file isn't meant to be edited by hand.
+A member taken out of the config is dropped from the state file the next time
+a writing command starts. Added back later, they start as a new member does:
+their mark begins at that pass, and nothing from the gap is trashed. The file
+isn't meant to be edited by hand.
+
+Only one command that writes to Immich runs at a time. Two at once could each
+look for a family album, find none, and both create it, and the same goes for
+the dropbox and the members' workflows. They could also both work on one
+photo. So every writing command takes the run lock first: the daemon for as
+long as it runs, a one-off command for its own length. A second one is refused
+before it touches anything. `observe` writes nothing and never takes it.
+
+The run lock is a file, and it sits beside the state file only because that
+directory is the one place the service can write. It isn't a lock on the state
+file. But it has that effect: whoever holds it is the state file's only
+writer, so the file needs no locking of its own.
 
 The daemon's pass and its webhook receiver share a set of in-flight asset ids,
 so they never work on the same photo at once. Whoever is second skips, and a

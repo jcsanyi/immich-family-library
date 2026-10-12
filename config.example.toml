@@ -45,8 +45,8 @@ from_prefix = "from"
 
 # A phone that hasn't synced a deletion re-uploads moved photos once the trash
 # purges. They're trashed again automatically. Once a day, at this local time,
-# a warning names each member whose re-uploads were trashed in the last 24
-# hours. The container's TZ sets the local time.
+# a warning names each member whose re-uploads were trashed in the last day.
+# The compose file gives the container the host's timezone.
 [warnings]
 report_at = "22:00"
 

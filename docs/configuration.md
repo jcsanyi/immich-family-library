@@ -56,7 +56,7 @@ and that does not occur as a keyword in their files.
 
 | Setting | Default | What it is |
 |---|---|---|
-| `report_at` | `"22:00"` | The local time of day for the daily re-upload report. One warning per member whose re-uploads were trashed in the last 24 hours. The container's `TZ` sets the local time. |
+| `report_at` | `"22:00"` | The local time of day for the daily re-upload report. One warning per member whose re-uploads were trashed in the last day. The compose file gives the container the host's timezone. |
 
 ## `[family]`
 

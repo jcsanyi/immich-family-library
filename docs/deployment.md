@@ -35,6 +35,9 @@ shares, and one workflow per member.
   shows the name).
 - It mounts `./config` read-only at `/config`. It mounts a named volume,
   `ifl-data`, at `/data` for the state file.
+- It mounts the host's `/etc/localtime` read-only, so the container uses the
+  host's timezone. `report_at` and the log times are in that timezone. Without
+  the mount, they are in UTC.
 - It names the container `ifl`, which is what the webhook URL uses. No port
   is published. Immich reaches the receiver inside the network.
 - It runs `ifl daemon` by default, and restarts it unless stopped.
@@ -64,12 +67,13 @@ Then it converts and moves whatever is waiting, under the limits.
 ## Running one-off commands beside the daemon
 
 `docker compose run --rm ifl <command>` runs a command in a second container
-with the same config and the same state volume. The daemon holds a lock on
-the state file for as long as it runs. A command that writes to Immich
-(`process`, `move`, `convert-album`, `reconcile-albums`) needs that lock. So
+with the same config and the same state volume. Only one command that writes
+to Immich can run at a time, and the run lock makes sure of that. The daemon
+holds the run lock for as long as it runs. A command that writes to Immich
+(`process`, `move`, `convert-album`, `reconcile-albums`) needs it too. So
 beside a running daemon, the command refuses with exit code 3. Stop the
 daemon first, or let the daemon do the work. `observe` and `show-config` do
-not lock and are always safe.
+not take the run lock and are always safe.
 
 ## Webhook
 
@@ -97,8 +101,15 @@ library as duplicates of family photos. The record of where a family photo
 came from is on the photo itself, in its `ifl` metadata entry and its
 `from/<member>` tag.
 
-The lock file beside it, `state.json.lock`, uses flock. On an NFS volume,
-flock is not reliable. Keep the state volume on a local disk.
+The file beside it, `state.json.lock`, is the run lock. It is not a lock on
+the state file. It stops two commands that write to Immich from running at the
+same time, and all of them take it, including the commands that do not use
+the state file. It is in this directory because the service can write here.
+The run lock uses flock. On an NFS volume, flock is not reliable. Keep the
+state volume on a local disk.
+
+If you remove a member from the config, the service removes that member from
+the state file at its next start.
 
 Do not edit the file. The daemon loads it one time, when it starts, and
 writes it from memory after that. If the file does not parse at start, the

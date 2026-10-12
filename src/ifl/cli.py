@@ -21,6 +21,7 @@ from ifl.daemon import Daemon
 from ifl.move import (
     MoveBlocked,
     MoveError,
+    MoveManyResult,
     MoveOptions,
     advance_marks,
     move_asset,
@@ -47,8 +48,9 @@ log = logging.getLogger("ifl")
 @asynccontextmanager
 async def opened(config_path: Path, *, writes: bool) -> AsyncIterator[tuple[Config, Accounts]]:
     """The config and the opened accounts. A command that writes to Immich also
-    holds the lock beside the state file for its whole run, so two of them never
-    work on the same photos, and the lock holder is the state file's one writer."""
+    holds the run lock for its whole run, so two of them never create the same
+    album twice or work on the same photos. As a side effect the holder is the
+    state file's one writer."""
     cfg = load_config(config_path)
     if writes and cfg.readonly:
         raise ConfigError(
@@ -60,6 +62,13 @@ async def opened(config_path: Path, *, writes: bool) -> AsyncIterator[tuple[Conf
             yield cfg, accounts
         finally:
             await accounts.close()
+
+
+def own_state(cfg: Config, accounts: Accounts) -> State:
+    """The state for a command that holds the run lock, cut down to the configured members."""
+    state = State.load(cfg.state_path, owner=True)
+    state.keep_only({m.user_id for m in accounts.members.values()})
+    return state
 
 
 async def run_observe(config_path: Path) -> int:
@@ -132,7 +141,7 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
         if backlog:
             log.error("not moving anything: Immich has jobs waiting: %s", backlog)
             return 1
-        state = State.load(cfg.state_path, owner=True)
+        state = own_state(cfg, accounts)
         scan = await scan_assets(accounts, cfg.dropbox_album, state=state)
         opts = MoveOptions.from_config(cfg)
         if asset_id is None:
@@ -171,15 +180,14 @@ async def _move_one(
     for w in result.warnings:
         log.warning("%s: %s", result.file_name, w)
     log.info("%s", result)
-    if result.counts_as_reupload:
-        state.add_reuploads(result.owner_id, 1)
+    tally_reuploads(state, MoveManyResult(done=[result]))
     return 0
 
 
 async def run_process(config_path: Path) -> int:
     """One complete pass: conversions, reconcile, moves, under the limits."""
     async with opened(config_path, writes=True) as (cfg, accounts):
-        result = await run_pass(accounts, cfg, State.load(cfg.state_path, owner=True))
+        result = await run_pass(accounts, cfg, own_state(cfg, accounts))
         log.info("pass done: %s", result)
         return 1 if result.failed else 0
 
@@ -192,7 +200,7 @@ async def run_daemon(config_path: Path) -> int:
             cfg.interval_seconds,
             "" if cfg.webhook else "; no webhook configured",
         )
-        await Daemon(accounts, cfg, State.load(cfg.state_path, owner=True)).run()
+        await Daemon(accounts, cfg, own_state(cfg, accounts)).run()
         return 0
 
 

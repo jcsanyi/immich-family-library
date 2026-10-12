@@ -51,6 +51,29 @@ def test_the_owner_moves_a_file_that_does_not_parse_aside_and_a_reader_leaves_it
     assert "starting over" in caplog.text
 
 
+@pytest.mark.parametrize(
+    "content",
+    [b"\xff\xfe\x00not text", b'{"members": {"%s": {"reuploads": 1e999}}}' % str(ALICE).encode()],
+)
+def test_bytes_that_are_not_text_and_a_number_out_of_range_do_not_parse(tmp_path, content):
+    path = tmp_path / "state.json"
+    path.write_bytes(content)
+    assert State.load(path).members == {} and path.exists()
+    assert State.load(path, owner=True).members == {} and not path.exists()
+    assert (tmp_path / "state.json.bad").read_bytes() == content
+
+
+def test_a_save_that_fails_is_logged_and_the_run_goes_on(tmp_path, caplog):
+    blocker = tmp_path / "data"
+    blocker.write_text("a file where the directory should be")
+    state = State(blocker / "state.json")
+    with caplog.at_level(logging.ERROR, logger="ifl.state"):
+        state.set_mark(ALICE, NOW)
+        state.add_reuploads(ALICE, 1)
+    assert state.get_mark(ALICE) == NOW and state.members[ALICE].reuploads == 1
+    assert caplog.text.count("cannot write the state file") == 2
+
+
 def test_a_file_that_cannot_be_read_is_an_error_and_is_left_alone(tmp_path):
     path = tmp_path / "state.json"
     path.mkdir()  # reading a directory fails with an OSError that is not "missing"
@@ -62,7 +85,7 @@ def test_a_file_that_cannot_be_read_is_an_error_and_is_left_alone(tmp_path):
 def test_a_lock_file_that_cannot_be_opened_is_an_error(tmp_path):
     (tmp_path / "state.json.lock").mkdir()
     with (
-        pytest.raises(StateError, match="cannot open the lock file"),
+        pytest.raises(StateError, match="cannot open the run lock"),
         hold_lock(tmp_path / "state.json"),
     ):
         pass
@@ -110,6 +133,18 @@ def test_take_report_returns_non_zero_tallies_and_resets_them(tmp_path):
     assert State.load(state.path).last_report == NOW
     assert state.members[ALICE].reuploads == 0 and state.get_mark(BOB) == NOW
     assert state.take_report(NOW) == {}
+
+
+def test_keep_only_drops_other_members_and_saves(tmp_path, caplog):
+    state = State(tmp_path / "state.json")
+    state.set_mark(ALICE, NOW)
+    state.add_reuploads(BOB, 2)
+    with caplog.at_level(logging.INFO, logger="ifl.state"):
+        state.keep_only({ALICE, BOB})
+        assert not caplog.records
+        state.keep_only({ALICE})
+    assert set(state.members) == {ALICE} and set(State.load(state.path).members) == {ALICE}
+    assert f"dropped state for 1 user(s) no longer in the config: ['{BOB}']" in caplog.text
 
 
 def test_the_lock_refuses_a_second_holder_and_frees_on_exit(tmp_path):

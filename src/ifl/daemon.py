@@ -16,8 +16,9 @@ in-flight asset ids:
 The receiver never wakes the pass: the interval and the limits are the pacing
 for real moves, and nothing the receiver handles is metered by them.
 
-The daemon holds the lock beside the state file for as long as it runs, so it
-is the file's only writer: the file is loaded once, at start. Both halves
+The daemon holds the run lock for as long as it runs, so no other command
+writes to Immich beside it, and it is the state file's only writer: the file
+is loaded once, at start. Both halves
 share one in-memory state, which saves itself on every change.
 """
 
