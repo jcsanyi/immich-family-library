@@ -21,13 +21,13 @@ from ifl.daemon import Daemon
 from ifl.move import (
     MoveBlocked,
     MoveError,
-    MoveManyResult,
     MoveOptions,
     advance_marks,
     move_asset,
     move_assets,
     outside_partners,
     pass_backlog,
+    tally_reupload,
 )
 from ifl.observer import (
     AssetScan,
@@ -38,7 +38,7 @@ from ifl.observer import (
     scan_assets,
     scan_reconcile,
 )
-from ifl.process import run_pass, tally_reuploads
+from ifl.process import run_pass
 from ifl.reconcile import reconcile
 from ifl.state import Locked, State, StateError, hold_lock
 
@@ -149,9 +149,10 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
                 log.warning("skipping %s: %s", b.what, b.reason)
             for s in scan.skipped_reuploads:
                 log.info("skipping re-upload %s", s)
-            many = await move_assets(accounts, opts, scan.moves, limit=cfg.assets_per_pass)
+            many = await move_assets(
+                accounts, opts, scan.moves, state=state, limit=cfg.assets_per_pass
+            )
             advance_marks(state, scan, many, accounts)
-            tally_reuploads(state, many)
             log.info("%s", many)
             return 1 if many.failed else 0
         return await _move_one(accounts, state, opts, scan, asset_id)
@@ -177,10 +178,10 @@ async def _move_one(
     except MoveBlocked as e:
         log.warning("blocked %s: %s", target.file_name, e)
         return 1
+    tally_reupload(state, result)
     for w in result.warnings:
         log.warning("%s: %s", result.file_name, w)
     log.info("%s", result)
-    tally_reuploads(state, MoveManyResult(done=[result]))
     return 0
 
 

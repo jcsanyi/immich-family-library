@@ -114,6 +114,8 @@ class State:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_name(self.path.name + ".tmp")
+            # A leftover from a run under another `user:` cannot be opened for writing.
+            tmp.unlink(missing_ok=True)
             tmp.write_text(json.dumps(raw, indent=2) + "\n")
             tmp.replace(self.path)
         except OSError as e:
@@ -195,7 +197,9 @@ def hold_lock(state_path: Path) -> Iterator[None]:
     path = lock_path(state_path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        # Read-only is enough for flock, and it lets a different `user:` from
+        # the one that created the file take the lock.
+        fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
     except OSError as e:
         raise StateError(f"cannot open the run lock {path}: {e}") from None
     try:

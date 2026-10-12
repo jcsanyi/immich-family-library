@@ -91,6 +91,20 @@ def test_a_lock_file_that_cannot_be_opened_is_an_error(tmp_path):
         pass
 
 
+def test_a_lock_file_that_is_not_writable_can_still_be_held(tmp_path):
+    lock = lock_path(tmp_path / "state.json")
+    lock.touch(mode=0o444)  # as another `user:` sees a lock file it did not create
+    with hold_lock(tmp_path / "state.json"):
+        pass
+
+
+def test_a_save_replaces_a_leftover_temp_file_that_is_not_writable(tmp_path):
+    state = State(tmp_path / "state.json")
+    (tmp_path / "state.json.tmp").touch(mode=0o444)
+    state.set_mark(ALICE, NOW)
+    assert State.load(state.path).get_mark(ALICE) == NOW
+
+
 def test_a_time_without_an_offset_is_read_as_utc(tmp_path):
     path = tmp_path / "state.json"
     path.write_text(

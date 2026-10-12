@@ -119,16 +119,15 @@ async def _run_pass(
             log.info("skipping re-upload %s", s)
         opts = MoveOptions.from_config(cfg)
         moved = await move_assets(
-            accounts, opts, assets.moves, limit=cfg.assets_per_pass, in_flight=in_flight
+            accounts,
+            opts,
+            assets.moves,
+            state=state,
+            limit=cfg.assets_per_pass,
+            in_flight=in_flight,
         )
         advance_marks(state, assets, moved, accounts)
-        tally_reuploads(state, moved)
     return PassResult(converted, reconciled, backlog, moved)
-
-
-def tally_reuploads(state: State, moved: MoveManyResult) -> None:
-    for uid, n in moved.reuploads_trashed().items():
-        state.add_reuploads(uid, n)
 
 
 STALE_REPORT = timedelta(hours=26)  # past this, the window is named rather than called a day

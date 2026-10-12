@@ -38,7 +38,7 @@ from ifl.config import Config
 from ifl.immich import TOKEN_HEADER, get_asset
 from ifl.move import MoveOptions, move_assets
 from ifl.observer import AssetScan, describe_assets, reupload_items
-from ifl.process import run_pass, tally_reuploads
+from ifl.process import run_pass
 from ifl.state import State
 
 log = logging.getLogger(__name__)
@@ -158,10 +158,9 @@ class Daemon:
         log.info("webhook: %s", "; ".join(describe_assets(scan)))
         opts = MoveOptions.from_config(self.cfg)
         result = await move_assets(
-            self.accounts, opts, scan.moves, limit=0, in_flight=self.in_flight
+            self.accounts, opts, scan.moves, state=self.state, limit=0, in_flight=self.in_flight
         )
         log.info("webhook: %s", result)
-        tally_reuploads(self.state, result)
 
     @staticmethod
     async def _read(member: Account, asset_id: UUID):

@@ -232,7 +232,7 @@ class MoveManyResult:
     skipped_in_flight: int = 0  # another path was already on it
 
     def reuploads_trashed(self) -> dict[UUID, int]:
-        """Trashed re-uploads per member, for the daily tally."""
+        """Trashed re-uploads per member, for the summary line."""
         out: dict[UUID, int] = {}
         for r in self.done:
             if r.counts_as_reupload:
@@ -253,12 +253,15 @@ async def move_assets(
     opts: MoveOptions,
     moves: list[MoveAsset],
     *,
+    state: State,
     limit: int,
     in_flight: set[UUID] | None = None,
 ) -> MoveManyResult:
     """Move assets in scan order, at most `limit` of them (0 for no limit). Each
     item is a MoveAsset from the scan. One asset blocking or failing doesn't stop
-    the others, whatever the exception. Per-owner lookups happen once.
+    the others, whatever the exception. Per-owner lookups happen once. Each
+    trashed re-upload joins its member's tally as soon as its move returns, so a
+    run that is cut short has still counted what it trashed.
 
     `in_flight` is shared between the daemon's pass and its webhook receiver:
     an asset the other path is already on is skipped here, and ours are held in
@@ -308,6 +311,7 @@ async def move_assets(
         finally:
             if in_flight is not None:
                 in_flight.discard(m.asset_id)
+        tally_reupload(state, result)
         for w in result.warnings:
             log.warning("%s: %s", result.file_name, w)
         log.info("%s", result)
@@ -315,6 +319,11 @@ async def move_assets(
     if out.remaining:
         log.info("%d more assets to move; limit is %d per pass", out.remaining, limit)
     return out
+
+
+def tally_reupload(state: State, result: MoveResult) -> None:
+    if result.counts_as_reupload:
+        state.add_reuploads(result.owner_id, 1)
 
 
 def advance_marks(state: State, scan: AssetScan, many: MoveManyResult, accounts: Accounts) -> None:

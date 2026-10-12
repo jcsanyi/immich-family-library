@@ -225,12 +225,12 @@ service keeps one small JSON file, the state file, and nothing in it is needed
 for correctness. It holds each member's re-upload scan mark, each member's
 tally of trashed re-uploads since the last daily report, and when that report
 last ran. Losing it means the marks start again at the next pass and one
-report is dropped. Config labels are never stored, in the file or in Immich.
-Renaming a member in the config changes how messages read and nothing else.
-The one place a label lands in Immich is the `from/<member>` tag.
+report is dropped. The file never stores config labels. Immich stores a label
+in one place only, the `from/<member>` tag. Apart from that tag, renaming a
+member in the config changes only how messages read.
 
 A member taken out of the config is dropped from the state file the next time
-a writing command starts. Added back later, they start as a new member does:
+the file is used. Added back later, they start as a new member does:
 their mark begins at that pass, and nothing from the gap is trashed. The file
 isn't meant to be edited by hand.
 
