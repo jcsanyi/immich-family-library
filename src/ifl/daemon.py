@@ -1,6 +1,6 @@
 """Stage 7: the long-running service.
 
-Two things in one process, sharing the accounts, the ledger and a set of
+Two things in one process, sharing the accounts, the state and a set of
 in-flight asset ids:
 
 - the pass, run every `interval_seconds`: conversions, reconcile, moves, under
@@ -15,6 +15,11 @@ in-flight asset ids:
 
 The receiver never wakes the pass: the interval and the limits are the pacing
 for real moves, and nothing the receiver handles is metered by them.
+
+The daemon holds the lock beside the state file for as long as it runs, so it
+is the file's only writer. It still re-reads the file before each pass, so a
+mark or tally edited by hand takes effect without a restart. Both halves share
+one in-memory state and save after every change.
 """
 
 from __future__ import annotations
@@ -31,10 +36,10 @@ from aiohttp import web
 from ifl.accounts import Account, Accounts
 from ifl.config import Config
 from ifl.immich import TOKEN_HEADER, get_asset
-from ifl.ledger import Ledger
 from ifl.move import MoveOptions, move_assets
 from ifl.observer import AssetScan, describe_assets, reupload_items
-from ifl.process import run_pass
+from ifl.process import run_pass, tally_reuploads
+from ifl.state import State
 
 log = logging.getLogger(__name__)
 
@@ -42,10 +47,10 @@ BATCH_WAIT = 1.0  # seconds to collect more events after the first, so a backup 
 
 
 class Daemon:
-    def __init__(self, accounts: Accounts, cfg: Config, ledger: Ledger):
+    def __init__(self, accounts: Accounts, cfg: Config, state: State):
         self.accounts = accounts
         self.cfg = cfg
-        self.ledger = ledger
+        self.state = state
         self.in_flight: set[UUID] = set()
         self.events: asyncio.Queue[tuple[UUID, UUID | None]] = asyncio.Queue()
         self.stopping = asyncio.Event()
@@ -74,10 +79,11 @@ class Daemon:
     async def passes(self) -> None:
         while not self.stopping.is_set():
             try:
+                self.state.reload()
                 result = await run_pass(
-                    self.accounts, self.cfg, self.ledger, in_flight=self.in_flight
+                    self.accounts, self.cfg, self.state, in_flight=self.in_flight
                 )
-                log.info("pass done: %s; ledger: %s", result, self.ledger.counts())
+                log.info("pass done: %s", result)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -153,9 +159,12 @@ class Daemon:
         log.info("webhook: %s", "; ".join(describe_assets(scan)))
         opts = MoveOptions.from_config(self.cfg)
         result = await move_assets(
-            self.accounts, self.ledger, opts, scan.moves, limit=0, in_flight=self.in_flight
+            self.accounts, opts, scan.moves, limit=0, in_flight=self.in_flight
         )
         log.info("webhook: %s", result)
+        if result.reuploads_trashed():
+            tally_reuploads(self.state, result)
+            self.state.save()
 
     @staticmethod
     async def _read(member: Account, asset_id: UUID):

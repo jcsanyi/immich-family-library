@@ -11,7 +11,10 @@ scans":
    metadata queues means the moves wait for the next pass, and so does the
    re-upload mark.
 4. Asset scan, re-uploads included, then moves, up to `assets_per_pass`. Then
-   each member's re-upload mark advances as far as what was finished.
+   each member's re-upload mark advances as far as what was finished, and the
+   trashed re-uploads join their member's tally.
+5. The daily report, once `report_at` has passed since the last one: one
+   warning per member with a non-zero tally. Then the state file is saved.
 
 Nothing here is a loop. The long-running service (stage 7) calls this once per
 interval; `ifl process` calls it once.
@@ -21,19 +24,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from ifl.accounts import Accounts
 from ifl.config import Config
 from ifl.convert import ConvertManyResult, convert_albums
-from ifl.ledger import Ledger
 from ifl.move import (
     MoveManyResult,
     MoveOptions,
     advance_marks,
     move_assets,
     pass_backlog,
-    reupload_warnings,
 )
 from ifl.observer import (
     describe_albums,
@@ -43,6 +45,7 @@ from ifl.observer import (
     scan_reconcile,
 )
 from ifl.reconcile import ReconcileResult, reconcile
+from ifl.state import State
 
 log = logging.getLogger(__name__)
 
@@ -76,7 +79,12 @@ class PassResult:
 
 
 async def run_pass(
-    accounts: Accounts, cfg: Config, ledger: Ledger, *, in_flight: set[UUID] | None = None
+    accounts: Accounts,
+    cfg: Config,
+    state: State,
+    *,
+    in_flight: set[UUID] | None = None,
+    now: datetime | None = None,
 ) -> PassResult:
     albums = await scan_albums(accounts)
     for b in albums.blocked:
@@ -89,19 +97,57 @@ async def run_pass(
     reconciled = await reconcile(accounts, fixes, cfg.webhook) if fixes else None
 
     backlog = await pass_backlog(accounts)
+    moved = None
     if backlog:
         log.warning("not moving anything this pass: Immich has jobs waiting: %s", backlog)
-        return PassResult(converted, reconciled, backlog, None)
-
-    assets = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
-    for b in assets.blocked:
-        log.warning("not moving %s: %s", b.what, b.reason)
-    for s in assets.skipped_reuploads:
-        log.info("skipping re-upload %s", s)
-    reupload_warnings(assets, cfg.reuploads_per_pass)
-    opts = MoveOptions.from_config(cfg)
-    moved = await move_assets(
-        accounts, ledger, opts, assets.moves, limit=cfg.assets_per_pass, in_flight=in_flight
-    )
-    advance_marks(ledger, assets, moved, accounts)
+    else:
+        assets = await scan_assets(accounts, cfg.dropbox_album, state=state)
+        for b in assets.blocked:
+            log.warning("not moving %s: %s", b.what, b.reason)
+        for s in assets.skipped_reuploads:
+            log.info("skipping re-upload %s", s)
+        opts = MoveOptions.from_config(cfg)
+        moved = await move_assets(
+            accounts, opts, assets.moves, limit=cfg.assets_per_pass, in_flight=in_flight
+        )
+        advance_marks(state, assets, moved, accounts)
+        tally_reuploads(state, moved)
+    report_reuploads(state, cfg, accounts, now)
+    state.save()
     return PassResult(converted, reconciled, backlog, moved)
+
+
+def tally_reuploads(state: State, moved: MoveManyResult) -> None:
+    for uid, n in moved.reuploads_trashed().items():
+        state.add_reuploads(uid, n)
+
+
+STALE_REPORT = timedelta(hours=36)  # past this, the window is named rather than called a day
+
+
+def report_reuploads(
+    state: State, cfg: Config, accounts: Accounts, now: datetime | None = None
+) -> None:
+    """Once a day, when `report_at` has passed since the last report: one warning
+    per member whose re-uploads were trashed since then. The first call starts
+    the clock and says nothing, so the first report comes at the next
+    `report_at`."""
+    now = now or datetime.now().astimezone()
+    if state.last_report is None:
+        state.last_report = now
+        return
+    if not state.report_due(now, cfg.report_at):
+        return
+    since = state.last_report
+    window = "in the last 24 hours"
+    if since is not None and now - since > STALE_REPORT:
+        window = f"since {since.astimezone(now.tzinfo).isoformat(timespec='minutes')}"
+    names = {uid: a.name for uid, a in accounts.by_user_id().items()}
+    for uid, n in state.take_report(now).items():
+        log.warning(
+            "%s re-uploaded %d photo%s the family already has %s; trashed",
+            names.get(uid, str(uid)),
+            n,
+            "" if n == 1 else "s",
+            window,
+        )

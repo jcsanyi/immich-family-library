@@ -62,7 +62,7 @@ def test_reload_picks_up_what_another_writer_saved(tmp_path):
 @pytest.mark.parametrize(
     "last_report, now, due",
     [
-        (None, NOW, True),  # never reported: the first pass starts the clock
+        (None, NOW, False),  # never reported: the caller starts the clock
         (NOW, NOW + timedelta(minutes=10), False),  # reported at 22:05, now 22:15
         (NOW, NOW + timedelta(hours=23, minutes=50), False),  # 21:55 the next day
         (NOW, NOW + timedelta(hours=24), True),  # 22:05 the next day

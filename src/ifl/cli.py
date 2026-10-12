@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import sys
 from collections.abc import AsyncIterator
@@ -17,7 +18,6 @@ from ifl.accounts import AccountError, Accounts, open_accounts
 from ifl.config import Config, ConfigError, load_config, to_raw
 from ifl.convert import ConvertError, convert_album, convert_albums
 from ifl.daemon import Daemon
-from ifl.ledger import Ledger
 from ifl.move import (
     MoveBlocked,
     MoveError,
@@ -27,7 +27,6 @@ from ifl.move import (
     move_assets,
     outside_partners,
     pass_backlog,
-    reupload_warnings,
 )
 from ifl.observer import (
     AssetScan,
@@ -38,44 +37,46 @@ from ifl.observer import (
     scan_assets,
     scan_reconcile,
 )
-from ifl.process import run_pass
+from ifl.process import run_pass, tally_reuploads
 from ifl.reconcile import reconcile
+from ifl.state import Locked, State, hold_lock
 
 log = logging.getLogger("ifl")
 
 
 @asynccontextmanager
 async def opened(config_path: Path, *, writes: bool) -> AsyncIterator[tuple[Config, Accounts]]:
+    """The config and the opened accounts. A command that writes to Immich also
+    holds the lock beside the state file for its whole run, so two of them never
+    work on the same photos, and the lock holder is the state file's one writer."""
     cfg = load_config(config_path)
     if writes and cfg.readonly:
         raise ConfigError(
             "config is readonly; set readonly = false under [service] to allow this command"
         )
-    accounts = await open_accounts(cfg)
-    try:
-        yield cfg, accounts
-    finally:
-        await accounts.close()
+    with hold_lock(cfg.state_path) if writes else contextlib.nullcontext():
+        accounts = await open_accounts(cfg)
+        try:
+            yield cfg, accounts
+        finally:
+            await accounts.close()
 
 
 async def run_observe(config_path: Path) -> int:
-    """One pass: report what the rules would do. Never writes to Immich. The
-    ledger file is created if missing, so the counts can be reported."""
+    """One pass: report what the rules would do. Never writes to Immich, and
+    reads the state file without creating it."""
     async with opened(config_path, writes=False) as (cfg, accounts):
-        ledger = Ledger(cfg.ledger_path)
-        try:
-            # The same three scans `process` acts on, in the same order, reported only.
-            albums = await scan_albums(accounts)
-            log.info("albums: %s", "; ".join(describe_albums(albums)))
-            fixes = await scan_reconcile(accounts, cfg.dropbox_album, cfg.webhook)
-            log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
-            assets = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
-            log.info("assets: %s", "; ".join(describe_assets(assets)))
-            reupload_warnings(assets, cfg.reuploads_per_pass, when="waiting")
-            log.info("ledger: %s", ledger.counts())
-            return 0
-        finally:
-            ledger.close()
+        state = State.load(cfg.state_path)
+        # The same three scans `process` acts on, in the same order, reported only.
+        albums = await scan_albums(accounts)
+        log.info("albums: %s", "; ".join(describe_albums(albums)))
+        fixes = await scan_reconcile(accounts, cfg.dropbox_album, cfg.webhook)
+        log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
+        assets = await scan_assets(accounts, cfg.dropbox_album, state=state)
+        log.info("assets: %s", "; ".join(describe_assets(assets)))
+        for who, n in assets.reuploads_by_owner().items():
+            log.info("%s has %d re-uploads waiting", who, n)
+        return 0
 
 
 async def run_convert_album(config_path: Path, album_id: UUID | None) -> int:
@@ -131,29 +132,25 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
         if backlog:
             log.error("not moving anything: Immich has jobs waiting: %s", backlog)
             return 1
-        ledger = Ledger(cfg.ledger_path)
-        try:
-            scan = await scan_assets(accounts, cfg.dropbox_album, ledger=ledger)
-            opts = MoveOptions.from_config(cfg)
-            if asset_id is None:
-                for b in scan.blocked:
-                    log.warning("skipping %s: %s", b.what, b.reason)
-                for s in scan.skipped_reuploads:
-                    log.info("skipping re-upload %s", s)
-                reupload_warnings(scan, cfg.reuploads_per_pass)
-                many = await move_assets(
-                    accounts, ledger, opts, scan.moves, limit=cfg.assets_per_pass
-                )
-                advance_marks(ledger, scan, many, accounts)
-                log.info("%s", many)
-                return 1 if many.failed else 0
-            return await _move_one(accounts, ledger, opts, scan, asset_id)
-        finally:
-            ledger.close()
+        state = State.load(cfg.state_path)
+        scan = await scan_assets(accounts, cfg.dropbox_album, state=state)
+        opts = MoveOptions.from_config(cfg)
+        if asset_id is None:
+            for b in scan.blocked:
+                log.warning("skipping %s: %s", b.what, b.reason)
+            for s in scan.skipped_reuploads:
+                log.info("skipping re-upload %s", s)
+            many = await move_assets(accounts, opts, scan.moves, limit=cfg.assets_per_pass)
+            advance_marks(state, scan, many, accounts)
+            tally_reuploads(state, many)
+            state.save()
+            log.info("%s", many)
+            return 1 if many.failed else 0
+        return await _move_one(accounts, state, opts, scan, asset_id)
 
 
 async def _move_one(
-    accounts: Accounts, ledger: Ledger, opts: MoveOptions, scan: AssetScan, asset_id: UUID
+    accounts: Accounts, state: State, opts: MoveOptions, scan: AssetScan, asset_id: UUID
 ) -> int:
     target = next((m for m in scan.moves if m.asset_id == asset_id), None)
     if target is None:
@@ -168,43 +165,36 @@ async def _move_one(
             "%s partner-shares their library with non-participant %s", target.owner.name, uid
         )
     try:
-        result = await move_asset(
-            accounts, ledger, opts, asset_id, target.owner, reupload=target.reupload
-        )
+        result = await move_asset(accounts, opts, asset_id, target.owner, reupload=target.reupload)
     except MoveBlocked as e:
         log.warning("blocked %s: %s", target.file_name, e)
         return 1
     for w in result.warnings:
         log.warning("%s: %s", result.file_name, w)
     log.info("%s", result)
+    if result.reupload and result.trashed:
+        state.add_reuploads(result.owner_id, 1)
+        state.save()
     return 0
 
 
 async def run_process(config_path: Path) -> int:
     """One complete pass: conversions, reconcile, moves, under the limits."""
     async with opened(config_path, writes=True) as (cfg, accounts):
-        ledger = Ledger(cfg.ledger_path)
-        try:
-            result = await run_pass(accounts, cfg, ledger)
-            log.info("pass done: %s; ledger: %s", result, ledger.counts())
-        finally:
-            ledger.close()
+        result = await run_pass(accounts, cfg, State.load(cfg.state_path))
+        log.info("pass done: %s", result)
         return 1 if result.failed else 0
 
 
 async def run_daemon(config_path: Path) -> int:
     """The long-running service: passes on an interval, plus the webhook receiver."""
     async with opened(config_path, writes=True) as (cfg, accounts):
-        ledger = Ledger(cfg.ledger_path)
-        try:
-            log.info(
-                "daemon: a pass every %ds%s",
-                cfg.interval_seconds,
-                "" if cfg.webhook else "; no webhook configured",
-            )
-            await Daemon(accounts, cfg, ledger).run()
-        finally:
-            ledger.close()
+        log.info(
+            "daemon: a pass every %ds%s",
+            cfg.interval_seconds,
+            "" if cfg.webhook else "; no webhook configured",
+        )
+        await Daemon(accounts, cfg, State.load(cfg.state_path)).run()
         return 0
 
 
@@ -274,6 +264,9 @@ def main(argv: list[str] | None = None) -> int:
     except (ConvertError, MoveError) as e:
         log.error("%s", e)
         return 1
+    except Locked as e:
+        log.error("%s", e)
+        return 3
     except KeyboardInterrupt:
         return 130
 

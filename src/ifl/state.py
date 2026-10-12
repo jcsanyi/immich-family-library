@@ -100,9 +100,9 @@ class State:
 
     def report_due(self, now: datetime, at: time) -> bool:
         """Whether the daily report time has passed since the last report. A
-        state that has never reported is due, so the first pass starts the clock."""
+        state that has never reported is not due: the caller starts the clock."""
         if self.last_report is None:
-            return True
+            return False
         scheduled = now.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
         if scheduled > now:
             scheduled -= timedelta(days=1)
