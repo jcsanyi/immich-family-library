@@ -24,10 +24,9 @@ def test_missing_file_is_empty_and_save_round_trips(tmp_path):
     state.set_mark(ALICE, NOW)
     state.add_reuploads(ALICE, 2)
     state.add_reuploads(BOB, 1)
-    state.last_report = NOW - timedelta(days=1)
-    state.save()
+    state.start_clock(NOW - timedelta(days=1))
 
-    again = State.load(path)
+    again = State.load(path)  # every change saved itself; no explicit save
     assert again.get_mark(ALICE) == NOW and again.get_mark(BOB) is None
     assert again.members[ALICE].reuploads == 2 and again.members[BOB].reuploads == 1
     assert again.last_report == NOW - timedelta(days=1)
@@ -53,7 +52,6 @@ def test_reload_picks_up_what_another_writer_saved(tmp_path):
     mine = State.load(path)
     theirs = State.load(path)
     theirs.set_mark(ALICE, NOW)
-    theirs.save()
     assert mine.get_mark(ALICE) is None
     mine.reload()
     assert mine.get_mark(ALICE) == NOW
@@ -83,6 +81,7 @@ def test_take_report_returns_non_zero_tallies_and_resets_them(tmp_path):
     state.set_mark(BOB, NOW)
     assert state.take_report(NOW) == {ALICE: 3}
     assert state.last_report == NOW
+    assert State.load(state.path).last_report == NOW
     assert state.members[ALICE].reuploads == 0 and state.get_mark(BOB) == NOW
     assert state.take_report(NOW) == {}
 

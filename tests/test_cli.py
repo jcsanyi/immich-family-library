@@ -173,7 +173,6 @@ def test_move_one_tallies_a_reupload(world, config, tmp_path):
     re = world.add_asset(FakeAsset(uuid4(), ALICE, "aa", "a.jpg"))
     state = State(tmp_path / "state.json")
     state.set_mark(ALICE, datetime(2025, 1, 1, tzinfo=UTC))
-    state.save()
 
     assert run(path, "move", str(re.id)) == 0 and re.is_trashed
     assert State.load(state.path).members[ALICE].reuploads == 1

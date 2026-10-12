@@ -14,7 +14,7 @@ scans":
    each member's re-upload mark advances as far as what was finished, and the
    trashed re-uploads join their member's tally.
 5. The daily report, once `report_at` has passed since the last one: one
-   warning per member with a non-zero tally. Then the state file is saved.
+   warning per member with a non-zero tally.
 
 Nothing here is a loop. The long-running service (stage 7) calls this once per
 interval; `ifl process` calls it once.
@@ -113,7 +113,6 @@ async def run_pass(
         advance_marks(state, assets, moved, accounts)
         tally_reuploads(state, moved)
     report_reuploads(state, cfg, accounts, now)
-    state.save()
     return PassResult(converted, reconciled, backlog, moved)
 
 
@@ -134,7 +133,7 @@ def report_reuploads(
     `report_at`."""
     now = now or datetime.now().astimezone()
     if state.last_report is None:
-        state.last_report = now
+        state.start_clock(now)
         return
     if not state.report_due(now, cfg.report_at):
         return

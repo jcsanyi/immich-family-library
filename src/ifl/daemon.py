@@ -19,7 +19,7 @@ for real moves, and nothing the receiver handles is metered by them.
 The daemon holds the lock beside the state file for as long as it runs, so it
 is the file's only writer. It still re-reads the file before each pass, so a
 mark or tally edited by hand takes effect without a restart. Both halves share
-one in-memory state and save after every change.
+one in-memory state, which saves itself on every change.
 """
 
 from __future__ import annotations
@@ -162,9 +162,7 @@ class Daemon:
             self.accounts, opts, scan.moves, limit=0, in_flight=self.in_flight
         )
         log.info("webhook: %s", result)
-        if result.reuploads_trashed():
-            tally_reuploads(self.state, result)
-            self.state.save()
+        tally_reuploads(self.state, result)
 
     @staticmethod
     async def _read(member: Account, asset_id: UUID):

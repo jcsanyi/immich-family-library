@@ -198,7 +198,6 @@ async def test_each_pass_rereads_the_state_file(world, state, monkeypatch):
     # Edited on disk while the daemon runs: the next pass sees it, no restart needed.
     edited = State(state.path)
     edited.set_mark(ALICE, mark)
-    edited.save()
     seen = []
 
     async def one_pass(accounts, cfg, st, *, in_flight):

@@ -6,6 +6,12 @@ ran. Nothing in it is needed for correctness: the move derives its state from
 Immich, and the `ifl` entry on each family copy records where it came from.
 Losing the file restarts the marks at the next pass and drops one report.
 
+Every method that changes the state saves before it returns, so the file
+always equals memory. The daemon's pass and webhook batch share one state on
+one event loop, and a change and its save happen in one synchronous step, so
+neither half can interleave with the other's write, and a reload never drops
+a change.
+
 One process writes the file at a time. The lock beside it decides who: the
 daemon takes it for as long as it runs, and a one-off command that writes to
 Immich takes it for the length of the command. `observe` only reads.
@@ -73,6 +79,7 @@ class State:
         self.members, self.last_report = members, last_report
 
     def save(self) -> None:
+        """Write the file. Every mutating method calls this; calling it again is harmless."""
         raw = {
             "last_report": _iso(self.last_report),
             "members": {
@@ -94,9 +101,16 @@ class State:
 
     def set_mark(self, user_id: UUID, until: datetime) -> None:
         self._member(user_id).scanned_until = until
+        self.save()
 
     def add_reuploads(self, user_id: UUID, n: int) -> None:
         self._member(user_id).reuploads += n
+        self.save()
+
+    def start_clock(self, now: datetime) -> None:
+        """The first report time, from which the next report is due. Says nothing."""
+        self.last_report = now
+        self.save()
 
     def report_due(self, now: datetime, at: time) -> bool:
         """Whether the daily report time has passed since the last report. A
@@ -114,6 +128,7 @@ class State:
         for m in self.members.values():
             m.reuploads = 0
         self.last_report = now
+        self.save()
         return out
 
 

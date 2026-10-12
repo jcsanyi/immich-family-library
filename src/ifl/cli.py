@@ -143,7 +143,6 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
             many = await move_assets(accounts, opts, scan.moves, limit=cfg.assets_per_pass)
             advance_marks(state, scan, many, accounts)
             tally_reuploads(state, many)
-            state.save()
             log.info("%s", many)
             return 1 if many.failed else 0
         return await _move_one(accounts, state, opts, scan, asset_id)
@@ -174,7 +173,6 @@ async def _move_one(
     log.info("%s", result)
     if result.reupload and result.trashed:
         state.add_reuploads(result.owner_id, 1)
-        state.save()
     return 0
 
 
