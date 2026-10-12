@@ -79,7 +79,15 @@ are listed here so that the next Immich upgrade knows what to re-check.
 - An edit does not move the asset's `updatedAt`. The sidecar job does,
   seconds later. So "recently updated" is false exactly while a write is
   pending, and the settle period cannot guard against a stale sidecar. The
-  tag trigger does.
+  tag trigger does, for every edit made before the tag went on: a sidecar
+  that holds the tag is newer than the tag.
+- The tag trigger does not cover an edit made after the tag went on. Such an
+  edit reaches the family copy only if Immich wrote it to the sidecar before
+  the move read the sidecar. This applies to an edit made while a move runs.
+  It also applies when the original already has the tag at the start, because
+  the move then adds no tag and gets no new write. That occurs after a move
+  that stopped partway, and when a member uses the same tag name. Immich has
+  no call that writes the sidecar again, so the service accepts this limit.
 
 ## Uploads (`services/asset-media.service.ts`)
 

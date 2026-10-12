@@ -440,6 +440,9 @@ async def move_asset(
         if asset.is_trashed:
             raise MoveError(f"{asset.original_file_name} is in the trash")
         # The sidecar, written by Immich after the moved tag goes on.
+        # An original that already wears the tag gets no new sidecar write, so
+        # an edit from the last few seconds can be missing from the one we read.
+        # Accepted: see "Sidecar" in docs/immich-notes.md.
         if not have_tag:
             await tag_asset(owner.client, await upsert_tag(owner.client, opts.moved_tag), asset_id)
         xmp = await _fresh_sidecar(owner, asset_id, opts.moved_tag, opts.sidecar_timeout)

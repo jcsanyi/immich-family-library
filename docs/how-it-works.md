@@ -110,6 +110,11 @@ tag list becomes the single entry `from/<member>`. Extraction prefers that
 list over any keywords in the file, so the family copy ends up with exactly
 that tag and none of the member's. Both tag names are set in `[tags]`.
 
+What happens to an edit made while the photo is being moved isn't defined. The
+photo still moves. Whether that last edit reaches the family copy depends on
+whether Immich had written it to the sidecar by the time the move read it. If
+it hadn't, the edit stays behind on the original in the trash.
+
 **The upload.** The family's bulk upload check says whether the family already
 has the checksum. If not, the original bytes go up with the rewritten sidecar,
 the original's dates, its favourite flag and its visibility. Extraction on the
