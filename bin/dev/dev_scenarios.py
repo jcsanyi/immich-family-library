@@ -3,10 +3,10 @@
 Each subcommand arranges one situation the service should then handle, the way
 a member or the family would arrange it in the UI. They were used to verify
 each action and are kept so the same checks can be re-run after a change.
-Most assume the seed has run (`scripts/seed_dev.py`) and refer to its photos by
+Most assume the seed has run (`bin/dev/seed_dev.py`) and refer to its photos by
 file name. Like the seed, they log in with the shared dev password:
 
-    IFL_DEV_PASSWORD=... uv run --group seed python scripts/dev_scenarios.py <subcommand>
+    IFL_DEV_PASSWORD=... uv run --group seed python bin/dev/dev_scenarios.py <subcommand>
 
 Subcommands:
 
@@ -67,7 +67,7 @@ from immichpy.client.generated.models.update_album_user_dto import UpdateAlbumUs
 from immichpy.client.generated.models.update_asset_dto import UpdateAssetDto
 from immichpy.client.main import AsyncClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from seed_dev import BASE, PHOTOS, add_to_album, ensure_album, login_all, make_jpeg, upload  # noqa: E402
 
 from ifl.accounts import ADMIN_PERMISSIONS, MEMBER_PERMISSIONS, Account, Accounts  # noqa: E402

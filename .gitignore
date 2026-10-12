@@ -151,7 +151,9 @@ activemq-data/
 
 # Environments
 .env
-.envrc
+# .envrc is committed: it only syncs the venv and puts it on PATH. Personal
+# settings go in .envrc.local, which it sources when present.
+.envrc.local
 .venv
 env/
 venv/

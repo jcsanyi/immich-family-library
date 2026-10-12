@@ -1,0 +1,6 @@
+#!/bin/sh
+# Apply ruff's safe fixes, then reformat.
+set -e
+cd "$(dirname "$0")/.."
+uv run ruff check --fix .
+uv run ruff format .
