@@ -128,9 +128,11 @@ async def run_reconcile_albums(config_path: Path) -> int:
     async with opened(config_path, writes=True) as (cfg, accounts):
         scan = await scan_reconcile(accounts, cfg.dropbox_album, cfg.webhook)
         log.info("family albums: %s", "; ".join(describe_reconcile(scan, accounts)))
-        if scan:
-            log.info("%s", await reconcile(accounts, scan, cfg.webhook))
-        return 0
+        if not scan:
+            return 0
+        result = await reconcile(accounts, scan, cfg.webhook)
+        log.info("%s", result)
+        return 1 if result.failed else 0
 
 
 async def run_move(config_path: Path, asset_id: UUID | None) -> int:

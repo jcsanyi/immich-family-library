@@ -141,6 +141,17 @@ def test_reconcile_albums_exits_0_and_fixes_what_it_finds(world, config):
     assert any(w[0] == "role" for w in world.writes)  # bob promoted
 
 
+def test_reconcile_albums_exits_1_when_a_fix_fails(world, config, monkeypatch):
+    world.album("Hikes", FAMILY, roles={ALICE: EDITOR, BOB: VIEWER})
+
+    async def refuse(client, album_id, user_id, role):
+        raise ConnectionError("immich went away")
+
+    monkeypatch.setattr("ifl.reconcile.set_album_user_role", refuse)
+    assert run(config(), "reconcile-albums") == 1
+    assert any(w[0] == "create" for w in world.writes)  # the dropbox, all the same
+
+
 def test_a_writing_command_refuses_while_another_holds_the_lock(world, config, tmp_path):
     from ifl.state import hold_lock
 

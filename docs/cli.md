@@ -36,8 +36,8 @@ Immich, and it reads the state file without creating it. It reports:
 - `CONVERT` for each album that a pass converts, and `BLOCKED` with the
   reason for each one it does not.
 - The family album fixes that reconcile makes: `CREATE dropbox`, `SHARE`,
-  `PROMOTE`, `PARTNER-SHARE`, `CREATE webhook workflow`, or "family albums
-  consistent".
+  `PROMOTE`, `PARTNER-SHARE`, `CREATE webhook workflow`, `FIX webhook
+  workflow`, or "family albums consistent".
 - `MOVE` lines for member photos in family albums, with `[dropbox]` marked.
   `REUPLOAD` lines for members' recent uploads that the family already has.
   `SKIP` lines for re-uploads whose family copy is trashed. `BLOCKED` photos.
@@ -63,7 +63,8 @@ Makes the family albums consistent. It creates the dropbox if it is missing.
 It adds every member as an editor to every family-owned album and promotes
 viewers. It partner-shares the family library with every member. With
 `[webhook]` configured, it creates or fixes each member's webhook workflow. It
-removes nothing. On a consistent instance it does nothing and says so.
+removes nothing. On a consistent instance it does nothing and says so. One
+fix that fails does not stop the others. If any fix failed, it exits 1.
 
 ## `ifl move <asset-id>` and `ifl move --all`
 
@@ -91,8 +92,9 @@ and moves under `assets_per_pass`, re-uploads included. A just-converted
 album's photos move in the same pass. A queue backlog skips the moves for this
 pass, not the album work. It ends with one summary line. Once a day, when
 `report_at` has passed since the last report, it also logs one warning per
-member whose re-uploads were trashed in the last day. If any conversion
-or move failed, or the state file could not be written, it exits 1.
+member whose re-uploads were trashed in the last day. If any conversion,
+reconcile fix or move failed, or the state file could not be written, it
+exits 1.
 
 Run it by hand, or from cron, as an alternative to the daemon.
 
@@ -119,8 +121,8 @@ do.
 ## Exit codes
 
 - `0`: everything asked for was done.
-- `1`: something was blocked or failed. The log says what. For `--all` and
-  `process`, only failures count, not blocks. A state file that `move` or
+- `1`: something was blocked or failed. The log says what. For `--all`,
+  `reconcile-albums` and `process`, only failures count, not blocks. A state file that `move` or
   `process` could not write is a failure.
 - `2`: the config or a key is wrong, or `readonly` refused the command, or
   the state file or the run lock cannot be opened.
