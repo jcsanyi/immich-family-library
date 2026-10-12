@@ -20,10 +20,10 @@ log = logging.getLogger(__name__)
 
 MIN_SERVER = (3, 3, 0)
 
-# docs/configuration.md has the table and which call needs what.
+# docs/configuration.md has the table and which call needs what. No set has
+# `apiKey.read`: a key reads its own entry, as the startup check does, without it.
 MEMBER_PERMISSIONS = {
     "user.read",
-    "apiKey.read",
     "album.read",
     "asset.read",
     "albumAsset.create",  # add own photos to a family album
@@ -41,26 +41,26 @@ MEMBER_PERMISSIONS = {
     "workflow.create",
     "workflow.update",
 }
-MEMBER_ONLY = {
-    "tag.create",
-    "tag.asset",
-    "sharedLink.read",
-    "workflow.read",
-    "workflow.create",
-    "workflow.update",
-}
-FAMILY_PERMISSIONS = (MEMBER_PERMISSIONS - MEMBER_ONLY) | {
+# Written out, not derived from the member set: the family key reads no
+# original and deletes no album, and should not have to be able to.
+FAMILY_PERMISSIONS = {
+    "user.read",
+    "album.read",
     "album.create",
     "albumUser.create",
     "albumUser.update",  # promote a member who is only a viewer on a family album
-    "partner.create",  # share the family library with each member
-    "asset.upload",  # the family copy
+    "albumAsset.create",  # the copy into the family albums
+    "asset.read",
+    "asset.upload",  # the family copy, and the checksum lookup
     "asset.update",  # its provenance entry
     "asset.edit.create",  # its edits
+    "asset.delete",  # only to restore a trashed copy; the service trashes nothing of the family's
+    "partner.read",
+    "partner.create",  # share the family library with each member
 }
-# The admin key does one thing, read the job queues before a pass. The other two
-# are what the startup check itself needs to confirm whose key it is.
-ADMIN_PERMISSIONS = {"user.read", "apiKey.read", "queue.read"}
+# The admin key does one thing, read the job queues before a pass. `user.read`
+# is what the startup check needs to confirm whose key it is.
+ADMIN_PERMISSIONS = {"user.read", "queue.read"}
 
 
 class AccountError(Exception):

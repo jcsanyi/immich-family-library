@@ -6,9 +6,9 @@
 # Immich stack, the server's container name works: "http://immich_server:2283".
 url = "https://photos.example.com"
 # Optional. Any admin user's API key (the family account or a member, if
-# they're an admin) with `queue.read`, plus `user.read` and `apiKey.read` for
-# the startup check. Before moving anything, the service checks that the
-# sidecar and metadata queues have no backlog; without this key it skips that.
+# they're an admin) with `queue.read`, plus `user.read` for the startup
+# check. Before moving anything, the service checks that the sidecar and
+# metadata queues have no backlog; without this key it skips that.
 admin_api_key = ""
 
 [service]

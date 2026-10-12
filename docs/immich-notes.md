@@ -35,6 +35,11 @@ are listed here so that the next Immich upgrade knows what to re-check.
 - Queue endpoints (`/queues`) are admin-only. That is why the queue check
   needs an admin key.
 - Workflows belong to a user and fire only for that user's assets.
+- `GET /api-keys/me` needs no permission. A key can always read its own name
+  and permissions, which is the startup check. The list of an account's keys
+  (`GET /api-keys`) needs `apiKey.read`, and the service does not use it.
+  Confirmed on dev: a key with only `user.read` got 200 from the first call
+  and 403 from the second.
 
 ## Per-asset metadata store (`/assets/{id}/metadata`)
 

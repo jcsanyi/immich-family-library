@@ -21,7 +21,7 @@ start.
 | Setting | Default | What it is |
 |---|---|---|
 | `url` | required | Where the service reaches Immich. In the compose stack, the server's container name works: `http://immich_server:2283`. |
-| `admin_api_key` | none | Optional. Any admin user's key with `queue.read`, plus `user.read` and `apiKey.read`. With it, no move starts while the sidecar or metadata queues have a backlog. |
+| `admin_api_key` | none | Optional. Any admin user's key with `queue.read` and `user.read`. With it, no move starts while the sidecar or metadata queues have a backlog. |
 
 ## `[service]`
 
@@ -106,21 +106,25 @@ startup check requires every one listed. A key with `all` passes.
 
 **Member keys**
 
-`user.read`, `apiKey.read`, `album.read`, `album.delete`, `albumAsset.create`,
-`asset.read`, `asset.download`, `asset.delete`, `asset.edit.get`,
-`assetFile.read`, `assetFile.download`, `tag.create`, `tag.asset`,
-`sharedLink.read`, `partner.read`, `workflow.read`, `workflow.create`,
-`workflow.update`.
+`user.read`, `album.read`, `album.delete`, `albumAsset.create`, `asset.read`,
+`asset.download`, `asset.delete`, `asset.edit.get`, `assetFile.read`,
+`assetFile.download`, `tag.create`, `tag.asset`, `sharedLink.read`,
+`partner.read`, `workflow.read`, `workflow.create`, `workflow.update`.
 
 **Family key**
 
-The member set without the tag, shared-link and workflow permissions, plus
-`album.create`, `albumUser.create`, `albumUser.update`, `partner.create`,
-`asset.upload`, `asset.update`, `asset.edit.create`.
+`user.read`, `album.read`, `album.create`, `albumUser.create`,
+`albumUser.update`, `albumAsset.create`, `asset.read`, `asset.upload`,
+`asset.update`, `asset.edit.create`, `asset.delete`, `partner.read`,
+`partner.create`.
+
+The service trashes nothing in the family account. Immich puts the restore of
+a trashed photo under `asset.delete`, and the service restores the family's
+copy when a member shares a photo that the family deleted.
 
 **Admin key** (optional)
 
-`queue.read`, `user.read`, `apiKey.read`. Any admin user's key works, the
+`queue.read`, `user.read`. Any admin user's key works, the
 family account or a member included. The check is that the owner is an admin.
 
 Which keys each operation uses:
