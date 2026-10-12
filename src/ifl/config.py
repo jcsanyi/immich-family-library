@@ -281,58 +281,35 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
         out = {"email": a.email} if a.email else {}
         return {**out, "api_key": redact(a.api_key)}
 
-    default_state = cfg.config_dir / DEFAULTS["service"]["state_path"]
-    service = {
-        "readonly": cfg.readonly,
-        "state_path": str(cfg.state_path),
-        "settle_seconds": cfg.settle_seconds,
-        "interval_seconds": cfg.interval_seconds,
+    out: dict = {
+        "immich": {"url": cfg.immich_url},
+        "service": {
+            "readonly": cfg.readonly,
+            "state_path": str(cfg.state_path),
+            "settle_seconds": cfg.settle_seconds,
+            "interval_seconds": cfg.interval_seconds,
+        },
+        "limits": {"albums_per_pass": cfg.albums_per_pass, "assets_per_pass": cfg.assets_per_pass},
+        "tags": {"moved": cfg.moved_tag, "from_prefix": cfg.from_prefix},
+        "warnings": {"report_at": cfg.report_at.strftime("%H:%M")},
+        "family": {**account(cfg.family), "dropbox_album": cfg.dropbox_album},
+        "members": {name: account(m) for name, m in cfg.members.items()},
     }
-    limits = {"albums_per_pass": cfg.albums_per_pass, "assets_per_pass": cfg.assets_per_pass}
-    tags = {"moved": cfg.moved_tag, "from_prefix": cfg.from_prefix}
-    warnings = {"report_at": cfg.report_at.strftime("%H:%M")}
-    if minimal:
-        defaults = {
-            **{("service", k): v for k, v in DEFAULTS["service"].items()},
-            ("service", "state_path"): str(default_state),
-            **{("limits", k): v for k, v in DEFAULTS["limits"].items()},
-            **{("tags", k): v for k, v in DEFAULTS["tags"].items()},
-            **{("warnings", k): v for k, v in DEFAULTS["warnings"].items()},
-        }
-        sections = (
-            ("service", service),
-            ("limits", limits),
-            ("tags", tags),
-            ("warnings", warnings),
-        )
-        for section in sections:
-            name, values = section
-            for key in list(values):
-                if values[key] == defaults[(name, key)]:
-                    del values[key]
-
-    out: dict = {"immich": {"url": cfg.immich_url}}
     if cfg.admin_api_key:
         out["immich"]["admin_api_key"] = redact(cfg.admin_api_key)
-    for name, values in (
-        ("service", service),
-        ("limits", limits),
-        ("tags", tags),
-        ("warnings", warnings),
-    ):
-        if values:
-            out[name] = values
-    out["family"] = account(cfg.family)
-    if not minimal or cfg.dropbox_album != DEFAULTS["family"]["dropbox_album"]:
-        out["family"]["dropbox_album"] = cfg.dropbox_album
-    out["members"] = {name: account(m) for name, m in cfg.members.items()}
     if cfg.webhook:
-        wh = {
+        out["webhook"] = {
             "url": cfg.webhook.url,
             "token": redact(cfg.webhook.token),
             "listen": cfg.webhook.listen,
         }
-        if minimal and wh["listen"] == DEFAULTS["webhook"]["listen"]:
-            del wh["listen"]
-        out["webhook"] = wh
+    if minimal:
+        # The one default that is not a constant: it is relative to the config file.
+        default_state = str(cfg.config_dir / DEFAULTS["service"]["state_path"])
+        defaults = {**DEFAULTS, "service": {**DEFAULTS["service"], "state_path": default_state}}
+        for section, settings in defaults.items():
+            for key, default in settings.items():
+                if section in out and out[section][key] == default:
+                    del out[section][key]
+        out = {section: settings for section, settings in out.items() if settings}
     return out
