@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
+from datetime import time
 from pathlib import Path
 
 DEFAULTS = {
     "service": {
         "readonly": True,
-        "ledger_path": "data/ledger.sqlite",
+        "state_path": "data/state.json",
         "settle_seconds": 60,
         "interval_seconds": 600,
     },
@@ -17,7 +19,7 @@ DEFAULTS = {
     "family": {"dropbox_album": "Family Dropbox"},
     "limits": {"albums_per_pass": 5, "assets_per_pass": 20},
     "tags": {"moved": "family", "from_prefix": "from"},
-    "warnings": {"reuploads_per_pass": 10},
+    "warnings": {"report_at": "22:00"},
 }
 
 
@@ -25,13 +27,13 @@ DEFAULTS = {
 # typo or an old name fails at startup instead of silently taking the default.
 SCHEMA = {
     "immich": {"url", "admin_api_key"},
-    "service": {"readonly", "ledger_path", "settle_seconds", "interval_seconds"},
+    "service": {"readonly", "state_path", "settle_seconds", "interval_seconds"},
     "webhook": {"url", "token", "listen", "path"},
     "family": {"email", "api_key", "dropbox_album"},
     "members": {"email", "api_key"},  # per [members.<name>] table
     "limits": {"albums_per_pass", "assets_per_pass"},
     "tags": {"moved", "from_prefix"},
-    "warnings": {"reuploads_per_pass"},
+    "warnings": {"report_at"},
 }
 
 
@@ -60,7 +62,7 @@ class Config:
     family: AccountConfig
     dropbox_album: str
     members: dict[str, AccountConfig]
-    ledger_path: Path = Path("data/ledger.sqlite")
+    state_path: Path = Path("data/state.json")
     readonly: bool = True
     settle_seconds: int = 60  # leave an asset alone this long after its last change
     interval_seconds: int = 600  # the daemon's pause between passes
@@ -70,7 +72,7 @@ class Config:
     moved_tag: str = "family"  # goes on a member's original when it's moved
     from_prefix: str = "from"  # the family copy is tagged "<from_prefix>/<member>"
     admin_api_key: str | None = None  # any admin user's key; only for the queue check
-    reuploads_per_pass: int = 10  # warn about a member above this many re-uploads in a pass
+    report_at: time = time(22, 0)  # local time of day for the daily re-upload report
     config_dir: Path = field(default=Path("."), compare=False)
 
 
@@ -135,9 +137,9 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
         seen_emails.add(m.email)
 
     service = raw.get("service") or {}
-    ledger = Path(service.get("ledger_path", DEFAULTS["service"]["ledger_path"]))
-    if not ledger.is_absolute():
-        ledger = config_dir / ledger
+    state_path = Path(service.get("state_path", DEFAULTS["service"]["state_path"]))
+    if not state_path.is_absolute():
+        state_path = config_dir / state_path
 
     limits = raw.get("limits") or {}
     albums_per_pass = limits.get("albums_per_pass", DEFAULTS["limits"]["albums_per_pass"])
@@ -182,9 +184,7 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
             )
 
     warnings = raw.get("warnings") or {}
-    reuploads = warnings.get("reuploads_per_pass", DEFAULTS["warnings"]["reuploads_per_pass"])
-    if not isinstance(reuploads, int) or reuploads < 0:
-        raise ConfigError("[warnings] reuploads_per_pass must be a whole number")
+    report_at = _time_of_day(warnings.get("report_at", DEFAULTS["warnings"]["report_at"]))
 
     admin_api_key = immich.get("admin_api_key") or None
     if admin_api_key is not None and not isinstance(admin_api_key, str):
@@ -195,7 +195,7 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
         family=family,
         dropbox_album=dropbox_album,
         members=members,
-        ledger_path=ledger,
+        state_path=state_path,
         readonly=bool(service.get("readonly", DEFAULTS["service"]["readonly"])),
         settle_seconds=settle,
         interval_seconds=interval,
@@ -205,9 +205,18 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
         moved_tag=moved_tag,
         from_prefix=from_prefix,
         admin_api_key=admin_api_key,
-        reuploads_per_pass=reuploads,
+        report_at=report_at,
         config_dir=config_dir,
     )
+
+
+def _time_of_day(value: object) -> time:
+    if isinstance(value, str) and re.fullmatch(r"\d\d:\d\d", value):
+        try:
+            return time.fromisoformat(value)
+        except ValueError:
+            pass
+    raise ConfigError('[warnings] report_at must be a time of day as "HH:MM"')
 
 
 def redact(secret: str) -> str:
@@ -227,20 +236,20 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
         out = {"email": a.email} if a.email else {}
         return {**out, "api_key": redact(a.api_key)}
 
-    default_ledger = cfg.config_dir / DEFAULTS["service"]["ledger_path"]
+    default_state = cfg.config_dir / DEFAULTS["service"]["state_path"]
     service = {
         "readonly": cfg.readonly,
-        "ledger_path": str(cfg.ledger_path),
+        "state_path": str(cfg.state_path),
         "settle_seconds": cfg.settle_seconds,
         "interval_seconds": cfg.interval_seconds,
     }
     limits = {"albums_per_pass": cfg.albums_per_pass, "assets_per_pass": cfg.assets_per_pass}
     tags = {"moved": cfg.moved_tag, "from_prefix": cfg.from_prefix}
-    warnings = {"reuploads_per_pass": cfg.reuploads_per_pass}
+    warnings = {"report_at": cfg.report_at.strftime("%H:%M")}
     if minimal:
         defaults = {
             **{("service", k): v for k, v in DEFAULTS["service"].items()},
-            ("service", "ledger_path"): str(default_ledger),
+            ("service", "state_path"): str(default_state),
             **{("limits", k): v for k, v in DEFAULTS["limits"].items()},
             **{("tags", k): v for k, v in DEFAULTS["tags"].items()},
             **{("warnings", k): v for k, v in DEFAULTS["warnings"].items()},

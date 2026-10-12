@@ -8,8 +8,8 @@ from uuid import uuid4
 import pytest
 from fakes import ALICE, BOB, EDITOR, FAMILY, FakeAsset, make_accounts, patch_world
 
-from ifl.ledger import Ledger
 from ifl.observer import describe_assets, scan_assets
+from ifl.state import State
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 T1 = datetime(2026, 10, 9, tzinfo=UTC)
@@ -24,13 +24,11 @@ def world(monkeypatch):
 
 
 @pytest.fixture
-def ledger(tmp_path):
-    led = Ledger(tmp_path / "ledger.sqlite")
-    yield led
-    led.close()
+def state(tmp_path):
+    return State(tmp_path / "state.json")
 
 
-async def test_reuploads_are_found_and_the_mark_is_only_read(world, ledger):
+async def test_reuploads_are_found_and_the_mark_is_only_read(world, state):
     accounts = make_accounts()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     # The family owns "beach" (moved earlier) and "old" (uploaded directly).
@@ -47,10 +45,10 @@ async def test_reuploads_are_found_and_the_mark_is_only_read(world, ledger):
     world.add_asset(
         FakeAsset(uuid4(), BOB, checksum="old", original_file_name="old.jpg", created_at=T0)
     )
-    ledger.set_mark(ALICE, T0)
-    ledger.set_mark(BOB, T1)
+    state.set_mark(ALICE, T0)
+    state.set_mark(BOB, T1)
 
-    scan = await scan_assets(accounts, "Drop", ledger=ledger, now=NOW)
+    scan = await scan_assets(accounts, "Drop", state=state, now=NOW)
 
     assert [(m.file_name, m.owner.name, m.reupload, m.created_at) for m in scan.moves] == [
         ("beach.jpg", "alice", True, T1)
@@ -59,11 +57,11 @@ async def test_reuploads_are_found_and_the_mark_is_only_read(world, ledger):
     assert scan.scanned_at == NOW and scan.reuploads_by_owner() == {"alice": 1}
     assert describe_assets(scan) == ["REUPLOAD beach.jpg from alice: family already has it"]
     # The scan never advances a mark.
-    assert ledger.get_mark(ALICE) == T0 and ledger.get_mark(BOB) == T1
+    assert state.get_mark(ALICE) == T0 and state.get_mark(BOB) == T1
 
 
 async def test_a_member_with_no_mark_is_not_scanned_for_reuploads(
-    world, ledger, caplog, monkeypatch
+    world, state, caplog, monkeypatch
 ):
     import logging
 
@@ -84,19 +82,19 @@ async def test_a_member_with_no_mark_is_not_scanned_for_reuploads(
             yield a
 
     monkeypatch.setattr("ifl.observer.iter_assets_created_after", counting)
-    ledger.set_mark(BOB, T1)
+    state.set_mark(BOB, T1)
 
     with caplog.at_level(logging.INFO, logger="ifl.observer"):
-        scan = await scan_assets(accounts, "Drop", ledger=ledger, now=NOW)
+        scan = await scan_assets(accounts, "Drop", state=state, now=NOW)
 
     assert not scan.moves and scan.scanned_at == NOW
     assert reads == [BOB]  # alice's library was never read
     assert "alice: first re-upload scan" in caplog.text
-    assert ledger.get_mark(ALICE) is None  # the scan only reads; advance_marks sets it
+    assert state.get_mark(ALICE) is None  # the scan only reads; advance_marks sets it
 
 
 async def test_a_trashed_family_copy_is_skipped_and_a_family_album_asset_is_not_doubled(
-    world, ledger
+    world, state
 ):
     accounts = make_accounts()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
@@ -106,7 +104,7 @@ async def test_a_trashed_family_copy_is_skipped_and_a_family_album_asset_is_not_
     world.add_asset(
         FakeAsset(uuid4(), ALICE, checksum="cat", original_file_name="cat.jpg", created_at=T1)
     )
-    ledger.set_mark(ALICE, T0)
+    state.set_mark(ALICE, T0)
     # An asset already found in a family album is a plain move, not also a re-upload.
     world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="trip", original_file_name="trip.jpg"))
     trip = world.add_asset(
@@ -114,7 +112,7 @@ async def test_a_trashed_family_copy_is_skipped_and_a_family_album_asset_is_not_
     )
     world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[trip])
 
-    scan = await scan_assets(accounts, "Drop", ledger=ledger, now=NOW)
+    scan = await scan_assets(accounts, "Drop", state=state, now=NOW)
 
     assert [(m.file_name, m.reupload) for m in scan.moves] == [("trip.jpg", False)]
     assert scan.skipped_reuploads == ["cat.jpg from alice: the family's copy is in the trash"]
@@ -124,7 +122,7 @@ async def test_a_trashed_family_copy_is_skipped_and_a_family_album_asset_is_not_
     )
 
 
-async def test_without_a_ledger_the_scan_does_not_look_for_reuploads(world):
+async def test_without_the_state_the_scan_does_not_look_for_reuploads(world):
     accounts = make_accounts()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="beach"))

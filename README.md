@@ -20,7 +20,7 @@ There is one extra Immich user, the family account, and it owns the family libra
 
 ## Running it
 
-The service is one container next to Immich, on the same docker network, with a volume for its state database. `compose.yml` is the deployment and `config.example.toml` is the annotated configuration. [docs/deployment.md](docs/deployment.md) has the steps.
+The service is one container next to Immich, on the same docker network, with a volume for its state file. `compose.yml` is the deployment and `config.example.toml` is the annotated configuration. [docs/deployment.md](docs/deployment.md) has the steps.
 
 ## Documentation
 
@@ -28,7 +28,7 @@ The service is one container next to Immich, on the same docker network, with a 
 - [docs/how-it-works.md](docs/how-it-works.md): the model. The one rule, the flows, the move step by step, re-uploads, state and pacing.
 - [docs/cli.md](docs/cli.md): every command, the exit codes, a first run.
 - [docs/configuration.md](docs/configuration.md): every setting with its default, and the API key permissions.
-- [docs/deployment.md](docs/deployment.md): compose, the webhook, the ledger, upgrades, what to check before production.
+- [docs/deployment.md](docs/deployment.md): compose, the webhook, the state file, upgrades, what to check before production.
 - [docs/immich-notes.md](docs/immich-notes.md): what the service relies on in Immich 3.3.1, and how each point was confirmed.
 - [docs/development.md](docs/development.md): tests, the fake Immich, the dev scripts, branches.
 

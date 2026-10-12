@@ -15,7 +15,7 @@ from fakes import ALICE, BOB, FAMILY, FakeAsset, make_accounts, patch_world
 from ifl.config import parse_config
 from ifl.daemon import Daemon
 from ifl.immich import TOKEN_HEADER
-from ifl.ledger import Ledger
+from ifl.state import State
 
 RAW = {
     "immich": {"url": "https://x.example"},
@@ -37,15 +37,13 @@ def world(monkeypatch):
 
 
 @pytest.fixture
-def ledger(tmp_path):
-    led = Ledger(tmp_path / "ledger.sqlite")
-    yield led
-    led.close()
+def state(tmp_path):
+    return State(tmp_path / "state.json")
 
 
 @pytest.fixture
-async def daemon(world, ledger):
-    return Daemon(make_accounts(), parse_config(RAW), ledger)
+async def daemon(world, state):
+    return Daemon(make_accounts(), parse_config(RAW), state)
 
 
 async def client_for(daemon) -> TestClient:
@@ -80,7 +78,7 @@ async def test_receiver_checks_the_token_and_the_shape(daemon):
         await client.close()
 
 
-async def test_a_batch_trashes_reuploads_and_ignores_the_rest(world, ledger, daemon):
+async def test_a_batch_trashes_reuploads_and_ignores_the_rest(world, state, daemon):
     copy = world.add_asset(
         FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg")
     )
@@ -114,11 +112,13 @@ async def test_a_batch_trashes_reuploads_and_ignores_the_rest(world, ledger, dae
     await daemon.handle_batch([(re.id, None), (new.id, ALICE), (uuid4(), stranger), (re.id, ALICE)])
 
     assert re.is_trashed and not new.is_trashed
-    assert ledger.counts()["reuploads"] == 1 and ledger.get("beach")["reupload_count"] == 1
+    # Tallied and saved at once, so a restart keeps it.
+    assert state.members[ALICE].reuploads == 1
+    assert State.load(state.path).members[ALICE].reuploads == 1
     assert not daemon.in_flight
 
 
-async def test_drain_coalesces_events(world, ledger, daemon, monkeypatch):
+async def test_drain_coalesces_events(world, state, daemon, monkeypatch):
     monkeypatch.setattr("ifl.daemon.BATCH_WAIT", 0.05)
     seen = []
 
@@ -136,7 +136,7 @@ async def test_drain_coalesces_events(world, ledger, daemon, monkeypatch):
 
 
 async def test_a_server_that_fails_to_start_takes_the_pass_task_down_with_it(
-    world, ledger, daemon, monkeypatch
+    world, state, daemon, monkeypatch
 ):
     started = asyncio.Event()
 
@@ -160,18 +160,18 @@ async def test_a_server_that_fails_to_start_takes_the_pass_task_down_with_it(
     assert left == []
 
 
-def local_daemon(ledger, **service) -> Daemon:
+def local_daemon(state, **service) -> Daemon:
     """A daemon whose receiver binds an ephemeral port on loopback."""
     raw = {
         **RAW,
         "service": {**RAW["service"], **service},
         "webhook": {**RAW["webhook"], "listen": "127.0.0.1:0"},
     }
-    return Daemon(make_accounts(), parse_config(raw), ledger)
+    return Daemon(make_accounts(), parse_config(raw), state)
 
 
-async def test_run_does_a_pass_serves_and_stops_when_told(world, ledger, monkeypatch):
-    daemon = local_daemon(ledger)
+async def test_run_does_a_pass_serves_and_stops_when_told(world, state, monkeypatch):
+    daemon = local_daemon(state)
     passes = []
 
     async def one_pass(accounts, cfg, led, *, in_flight):
@@ -191,9 +191,9 @@ async def test_run_does_a_pass_serves_and_stops_when_told(world, ledger, monkeyp
 
 
 async def test_a_failing_pass_is_logged_and_the_next_one_still_runs(
-    world, ledger, monkeypatch, caplog
+    world, state, monkeypatch, caplog
 ):
-    daemon = local_daemon(ledger, interval_seconds=1)
+    daemon = local_daemon(state, interval_seconds=1)
     calls = []
 
     async def flaky(*a, **kw):
@@ -212,8 +212,8 @@ async def test_a_failing_pass_is_logged_and_the_next_one_still_runs(
     assert "pass failed; next one in 1s" in caplog.text and "immich went away" in caplog.text
 
 
-async def test_serve_binds_the_listen_address_and_the_receiver_answers(world, ledger):
-    daemon = local_daemon(ledger)
+async def test_serve_binds_the_listen_address_and_the_receiver_answers(world, state):
+    daemon = local_daemon(state)
     runner = await daemon.serve()
     try:
         host, port = runner.addresses[0][:2]
@@ -230,7 +230,7 @@ async def test_serve_binds_the_listen_address_and_the_receiver_answers(world, le
 
 
 async def test_a_failing_batch_is_logged_and_the_drain_keeps_going(
-    world, ledger, daemon, monkeypatch, caplog
+    world, state, daemon, monkeypatch, caplog
 ):
     monkeypatch.setattr("ifl.daemon.BATCH_WAIT", 0.05)
     seen = []

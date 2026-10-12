@@ -97,7 +97,7 @@ facial recognition reset is needed. Do not rely on faces or on people sharing.
 - `src/ifl/observer.py`: the three scans, read-only. `observe` reports them. `process` acts on them.
 - `src/ifl/convert.py`, `reconcile.py`, `move.py`: the three actions. `sidecar.py` is the XMP tag rewrite.
 - `src/ifl/process.py`: one pass. `daemon.py`: the pass on an interval, plus the webhook receiver.
-- `src/ifl/ledger.py`: the SQLite record.
+- `src/ifl/state.py`: the state file, and the run lock that sits beside it.
 - `src/ifl/cli.py`: argument parsing and the commands.
 
 ## Tests
@@ -117,7 +117,7 @@ service reads when the `immichpy` pin changes.
 Test files follow the source: `test_observer`, `test_convert`,
 `test_reconcile`, `test_move`, `test_reuploads`, `test_process`,
 `test_daemon` (which runs the receiver on a real aiohttp test server),
-`test_sidecar`, `test_config`, `test_ledger`, and `test_cli` for the exit
+`test_sidecar`, `test_config`, `test_state`, and `test_cli` for the exit
 codes. Two files test the layers the
 fake replaces, against stub clients that return real models: `test_immich`
 covers every adapter helper, and `test_accounts` covers the startup checks on
@@ -162,8 +162,8 @@ What is true of any dev instance for this project:
 - On the dev host the service runs only as the container. `ifl daemon` is the
   container's default command. For a one-off command next to it, use
   `docker compose run --rm ifl observe` (or `process`, `show-config`, ...).
-  The daemon and a one-off share the ledger file safely. Do not run two
-  `process`-style commands at once.
+  The daemon holds the run lock, so a one-off command that writes to Immich
+  exits 3 beside it. `observe` is fine.
   `docker compose logs --no-log-prefix --since 5m` shows the daemon's log.
 - The dev config has a `[webhook]` section that points at
   `http://ifl:8080/webhook/asset-created`. The daemon's first pass creates the

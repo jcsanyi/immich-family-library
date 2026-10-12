@@ -34,9 +34,9 @@ Two terms that the docs use and `README.md` does not:
 - The one rule: the service moves a member-owned asset found in a family-owned
   album to the family account. Every flow is a way to get an asset into that
   position.
-- Ledger: the local SQLite record, keyed by checksum, of what moved, from whom,
-  and where it went. It is a record, not a controller. The move path derives
-  its state from Immich.
+- State file: the local JSON file that holds each member's re-upload scan
+  mark and daily re-upload tally. Nothing in it is necessary for correctness.
+  The move path derives its state from Immich.
 
 ## How to work on this
 
@@ -87,7 +87,8 @@ When the user says to commit, do all of this:
 
 Code reaches the dev host only through git. Do not `rsync` or `scp` files to
 it. The checkout there uses a read-only deploy key, so it can pull but never
-push. Its config and ledger are untracked and survive pulls.
+push. Its config is untracked and survives pulls. Its state file is in a
+docker volume.
 
 Keep instance-specific values (hostnames, emails, network names) out of
 tracked files. This is a public project. Examples use example.com.

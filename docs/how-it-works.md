@@ -105,10 +105,10 @@ description, date and zone, location and rating, in an XMP sidecar that it
 writes itself whenever those change. The service never writes that file. It
 gets Immich to, by adding the moved tag (`family` by default) to the original,
 which fires the sidecar job. The service waits until the tag shows up in the
-sidecar, which means the sidecar is current. Then it changes one thing: the tag list becomes the single
-entry `from/<member>`. Extraction prefers that list over any keywords in the
-file, so the family copy ends up with exactly that tag and none of the
-member's. Both tag names are set in `[tags]`.
+sidecar, which means the sidecar is current. Then it changes one thing: the
+tag list becomes the single entry `from/<member>`. Extraction prefers that
+list over any keywords in the file, so the family copy ends up with exactly
+that tag and none of the member's. Both tag names are set in `[tags]`.
 
 **The upload.** The family's bulk upload check says whether the family already
 has the checksum. If not, the original bytes go up with the rewritten sidecar,
@@ -129,7 +129,7 @@ owner's key is tried where they're an editor. If every eligible key fails, the
 move stops before the trash. A photo never quietly vanishes from an album.
 
 **The trash.** The original is trashed with the owner's key, never deleted
-outright, and the ledger records the move.
+outright.
 
 State comes from Immich at every step. The family owning the checksum means
 the upload happened. The original still existing means it hasn't been
@@ -156,18 +156,18 @@ What the service does about it:
   on the app's "Sync remote deletions" setting, which makes the phone drop
   its local copy while the original is still in the server trash. That ends
   the loop for that photo. The setting exists only on Android 12 or later, so
-  an iPhone keeps looping and the service keeps trashing. The service never force-empties trash, for exactly this
-  reason.
+  an iPhone keeps looping and the service keeps trashing. The service never
+  force-empties trash, for exactly this reason.
 - The asset scan has a second source: per member, the photos uploaded since
   the last look, with their checksums batched through the family's bulk
-  check. The last look is a per-member mark in the ledger. A match goes
+  check. The last look is a per-member mark in the state file. A match goes
   through the same move: the copy is found by checksum, nothing is uploaded,
   the copy is re-linked into any album the duplicate sits in, the duplicate
-  is trashed, and the ledger counts it.
+  is trashed, and it joins the member's daily tally.
 - A member's first scan reads nothing. Before the service has moved anything
   of theirs, nothing they hold can be a re-upload, so the mark simply starts
   at that pass. Photos they and the family both held from before are left
-  where they are. The same goes for a lost ledger: re-uploads from the gap
+  where they are. The same goes for a lost state file: re-uploads from the gap
   are never looked for, and sit as harmless duplicates in the member's
   library.
 - The moved tag tells a duplicate from a crashed move. The service puts that
@@ -184,12 +184,15 @@ What the service does about it:
   member's. But if a member shares that photo into a family album again, the
   service restores the family's copy from the trash rather than uploading it
   anew.
-- The service counts re-uploads per checksum and per member. A re-upload here
-  means what the re-upload scan or the webhook found: an upload a phone made
-  on its own. A photo a member puts into a family album by hand is a move or
-  a re-share, never a loop, so it isn't counted even when the family already
-  has it. A member with the setting on produces none. A member who passes
-  `reuploads_per_pass` in one pass gets a warning naming them.
+- The service tallies trashed re-uploads per member, from the pass and from
+  the webhook alike. A re-upload here means what the re-upload scan or the
+  webhook found: an upload a phone made on its own. A photo a member puts
+  into a family album by hand is a move or a re-share, never a loop, so it
+  isn't counted even when the family already has it. A member with the
+  setting on produces none. Once a day, at `report_at`, one warning per member
+  says how many of their photos were re-uploaded and trashed in the last day.
+  A member with none gets no line. The tally is what a nudge to the member
+  will one day be built on; a loop needs a nudge, not a pager.
 
 Trashing a re-upload quickly saves Immich no work, since every job already
 queued for it runs regardless. What it does is restart the 30-day clock and
@@ -210,20 +213,38 @@ and, for now, manual face corrections and stacks (see the issues).
 Each family copy carries two marks. The `from/<member>` tag is for people,
 since tags are per account and so it's visible to whoever browses as the
 family. The `ifl` metadata entry, with the origin user id, origin asset id
-and move time, is for the service, and the ledger can be rebuilt from it. The
-description is the one field members can see on a partner's photo, and the
-service never writes into it.
+and move time, is for the service, and it's the one record of where a copy
+came from. The description is the one field members can see on a partner's
+photo, and the service never writes into it.
 
 ## State
 
-Immich is the source of truth for anything in flight. The ledger is one SQLite
-file, and it's a record, not a controller: what moved, from whom, to what,
-when, plus the re-upload count per checksum and the per-member scan marks. It
-exists for the two things Immich can't tell us once an original is purged,
-namely who a family photo came from and who is looping, and it's the audit
-trail. Config labels are never stored. Renaming a member in the config changes
-how messages read and nothing else. The one place a label lands in Immich is
-the `from/<member>` tag.
+Immich is the source of truth for everything. Where a copy came from is in its
+`ifl` entry, and whether a move is finished is in what Immich holds. The
+service keeps one small JSON file, the state file, and nothing in it is needed
+for correctness. It holds each member's re-upload scan mark, each member's
+tally of trashed re-uploads since the last daily report, and when that report
+last ran. Losing it means the marks start again at the next pass and one
+report is dropped. The file never stores config labels. Immich stores a label
+in one place only, the `from/<member>` tag. Apart from that tag, renaming a
+member in the config changes only how messages read.
+
+A member taken out of the config is dropped from the state file the next time
+the daemon, `process` or `move` starts. Added back later, they start as a new
+member does: their mark begins at that pass, and nothing from the gap is
+trashed. The file isn't meant to be edited by hand.
+
+Only one command that writes to Immich runs at a time. Two at once could each
+look for a family album, find none, and both create it, and the same goes for
+the dropbox and the members' workflows. They could also both work on one
+photo. So every writing command takes the run lock first: the daemon for as
+long as it runs, a one-off command for its own length. A second one is refused
+before it touches anything. `observe` writes nothing and never takes it.
+
+The run lock is a file, and it sits beside the state file only because that
+directory is the one place the service can write. It isn't a lock on the state
+file. But it has that effect: whoever holds it is the state file's only
+writer, so the file needs no locking of its own.
 
 The daemon's pass and its webhook receiver share a set of in-flight asset ids,
 so they never work on the same photo at once. Whoever is second skips, and a

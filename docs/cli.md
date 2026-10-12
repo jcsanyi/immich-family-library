@@ -21,11 +21,17 @@ same way, which is why the emails are checked.
 While `readonly` is true in the config, every command that writes to Immich
 refuses to start. `observe` and `show-config` still work.
 
+Only one command that writes to Immich can run at a time. Two at the same
+time can create an album or a workflow twice. So each such command takes the
+run lock before it starts. If the daemon or another such command holds the
+run lock, the command exits with code 3 before it touches anything. The run
+lock is a file beside the state file. [deployment.md](deployment.md) says
+more.
+
 ## `ifl observe`
 
 One pass of the three scans, reported and nothing more. It never writes to
-Immich. If the ledger file is missing, it creates it, so that it can report
-the counts. It reports:
+Immich, and it reads the state file without creating it. It reports:
 
 - `CONVERT` for each album that a pass converts, and `BLOCKED` with the
   reason for each one it does not.
@@ -35,9 +41,7 @@ the counts. It reports:
 - `MOVE` lines for member photos in family albums, with `[dropbox]` marked.
   `REUPLOAD` lines for members' recent uploads that the family already has.
   `SKIP` lines for re-uploads whose family copy is trashed. `BLOCKED` photos.
-- A count of re-uploads waiting per member. Above `reuploads_per_pass`, it is
-  a warning.
-- The ledger's counts.
+- A count of re-uploads waiting per member.
 
 Run it first on any new install. Run it again after any config change, before
 you set `readonly` to false.
@@ -70,7 +74,8 @@ reports the reason and exits 1.
 
 The asset id is in the address bar when the photo is open. `--all` reports
 moved, blocked, failed and remaining. It advances the re-upload marks for what
-finished. If anything failed, it exits 1.
+finished. Both forms add each trashed re-upload to its member's daily tally.
+If anything failed, or the state file could not be written, it exits 1.
 
 With `admin_api_key` set, both forms refuse to start while Immich's sidecar or
 metadata queues have jobs waiting.
@@ -84,8 +89,10 @@ One complete pass: the album scan and conversions under `albums_per_pass`,
 reconcile, the queue check if an admin key is configured, then the asset scan
 and moves under `assets_per_pass`, re-uploads included. A just-converted
 album's photos move in the same pass. A queue backlog skips the moves for this
-pass, not the album work. It ends with one summary line and the ledger
-counts. If any conversion or move failed, it exits 1.
+pass, not the album work. It ends with one summary line. Once a day, when
+`report_at` has passed since the last report, it also logs one warning per
+member whose re-uploads were trashed in the last day. If any conversion
+or move failed, or the state file could not be written, it exits 1.
 
 Run it by hand, or from cron, as an alternative to the daemon.
 
@@ -98,7 +105,9 @@ seconds. Nothing else the receiver sees is acted on, so the interval and the
 limits remain the only pacing for real moves. It stops cleanly on SIGINT or
 SIGTERM. If a pass fails, the failure is logged and the next pass runs on
 schedule. If a webhook batch fails, the failure is logged and the next pass
-picks up what it missed. This is the container's default command.
+picks up what it missed. It holds the run lock for as long as it runs, and it
+loads the state file one time, when it starts. This is the container's
+default command.
 
 ## `ifl show-config [--minimal]`
 
@@ -111,8 +120,12 @@ do.
 
 - `0`: everything asked for was done.
 - `1`: something was blocked or failed. The log says what. For `--all` and
-  `process`, only failures count, not blocks.
-- `2`: the config or a key is wrong, or `readonly` refused the command.
+  `process`, only failures count, not blocks. A state file that `move` or
+  `process` could not write is a failure.
+- `2`: the config or a key is wrong, or `readonly` refused the command, or
+  the state file or the run lock cannot be opened.
+- `3`: the daemon or another writing command holds the run lock. Wait for
+  it, or stop the daemon.
 
 ## A first run
 

@@ -1,3 +1,4 @@
+from datetime import time
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,8 @@ def test_parse_good():
     assert cfg.family.email == "f@x"
     assert cfg.dropbox_album == "Drop"
     assert cfg.members["a"].name == "a"
-    assert cfg.ledger_path == Path("/etc/ifl/data/ledger.sqlite")
+    assert cfg.state_path == Path("/etc/ifl/data/state.json")
+    assert cfg.report_at == time(22, 0)
     assert cfg.readonly is True
     assert cfg.albums_per_pass == 5
 
@@ -82,7 +84,7 @@ def test_to_raw_redacts_and_resolves():
     assert raw["members"]["a"]["api_key"] == "*********mber"
     assert raw["service"] == {
         "readonly": True,
-        "ledger_path": "/etc/ifl/data/ledger.sqlite",
+        "state_path": "/etc/ifl/data/state.json",
         "settle_seconds": 60,
         "interval_seconds": 600,
     }
@@ -169,6 +171,12 @@ def test_stage4_settings_and_admin_key():
         (lambda r: r.update({"tags": {"moved": "/family"}}), "tags. moved"),
         (lambda r: r.update({"tags": {"from_prefix": ""}}), "from_prefix"),
         (lambda r: r["immich"].update({"admin_api_key": 5}), "admin_api_key"),
+        (lambda r: r.update({"warnings": {"report_at": "10pm"}}), "report_at"),
+        (lambda r: r.update({"warnings": {"report_at": "22:00:00"}}), "report_at"),
+        (lambda r: r.update({"warnings": {"report_at": 22}}), "report_at"),
+        (lambda r: r.update({"warnings": {"report_at": "10+01"}}), "report_at"),
+        (lambda r: r.update({"warnings": {"report_at": "T1200"}}), "report_at"),
+        (lambda r: r.update({"warnings": {"report_at": "24:00"}}), "report_at"),
     ],
 )
 def test_stage4_setting_errors(mutate, msg):
@@ -178,6 +186,15 @@ def test_stage4_setting_errors(mutate, msg):
     mutate(raw)
     with pytest.raises(ConfigError, match=msg):
         parse_config(raw)
+
+
+def test_report_at_is_a_local_time_of_day():
+    from ifl.config import to_raw
+
+    cfg = parse_config({**GOOD, "warnings": {"report_at": "06:30"}})
+    assert cfg.report_at == time(6, 30)
+    assert to_raw(cfg, minimal=True)["warnings"] == {"report_at": "06:30"}
+    assert "warnings" not in to_raw(parse_config(GOOD), minimal=True)
 
 
 def test_webhook_and_interval_settings():

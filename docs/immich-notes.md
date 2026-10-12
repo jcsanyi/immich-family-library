@@ -49,11 +49,12 @@ are listed here so that the next Immich upgrade knows what to re-check.
   own mobile app depends on the store. Both make its removal unlikely. A
   change to its semantics, for example a fixed list of keys, is possible. Check
   this section on each upgrade.
-- The service does not depend on the store alone. The ledger holds the same
-  facts, and the `from/<member>` tag holds the member. The move reads the
-  entry only as a veto: a copy whose entry names a different original is not
-  this asset's. If the store changes, the fallback is a second tag on the
-  copy, `ifl/<origin-asset-id>`, backfilled from the ledger.
+- The store is the one record of which original a copy came from. The
+  `from/<member>` tag holds the member. The move reads the entry only as a
+  veto: a copy whose entry names a different original is not this asset's. If
+  the store changes, the fallback is a second tag on the copy,
+  `ifl/<origin-asset-id>`, written by the move from then on. Older copies keep
+  the member tag and lose the asset id.
 
 ## Sidecar (`services/metadata.service.ts`)
 

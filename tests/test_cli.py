@@ -17,7 +17,7 @@ CONFIG = """
 url = "https://x.example"
 [service]
 readonly = {readonly}
-ledger_path = "ledger.sqlite"
+state_path = "state.json"
 settle_seconds = 0
 [family]
 email = "f@x"
@@ -139,3 +139,72 @@ def test_reconcile_albums_exits_0_and_fixes_what_it_finds(world, config):
     assert run(config(), "reconcile-albums") == 0
     assert any(w[0] == "create" for w in world.writes)  # the dropbox
     assert any(w[0] == "role" for w in world.writes)  # bob promoted
+
+
+def test_a_writing_command_refuses_while_another_holds_the_lock(world, config, tmp_path):
+    from ifl.state import hold_lock
+
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    with hold_lock(tmp_path / "state.json"):
+        assert run(path, "process") == 3
+        assert run(path, "move", "--all") == 3
+        assert run(path, "observe") == 0  # reads only, so it never needs the lock
+    assert run(path, "process") == 0
+
+
+def test_observe_reads_the_state_without_creating_it_and_process_writes_it(world, config, tmp_path):
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    assert run(path, "observe") == 0 and not (tmp_path / "state.json").exists()
+    assert run(path, "process") == 0 and (tmp_path / "state.json").exists()
+    assert run(path, "observe") == 0
+
+
+def test_a_one_off_command_fails_when_the_state_cannot_be_saved(world, config, tmp_path):
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    (tmp_path / "state.json.tmp").mkdir()  # every save fails; the lock still opens
+
+    assert run(path, "process") == 1 and not (tmp_path / "state.json").exists()
+    assert run(path, "move", "--all") == 1
+
+
+def test_move_one_tallies_a_reupload(world, config, tmp_path):
+    from datetime import UTC, datetime
+
+    from ifl.state import State
+
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    copy = world.add_asset(FakeAsset(uuid4(), FAMILY, "aa", "a.jpg"))
+    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    re = world.add_asset(FakeAsset(uuid4(), ALICE, "aa", "a.jpg"))
+    state = State(tmp_path / "state.json")
+    state.set_mark(ALICE, datetime(2025, 1, 1, tzinfo=UTC))
+
+    assert run(path, "move", str(re.id)) == 0 and re.is_trashed
+    assert State.load(state.path).members[ALICE].reuploads == 1
+
+
+def test_a_lock_that_cannot_be_opened_exits_2_without_a_traceback(world, config, tmp_path):
+    (tmp_path / "state.json.lock").mkdir()
+    assert run(config(), "reconcile-albums") == 2
+    assert run(config(), "observe") == 0
+
+
+def test_a_writing_command_drops_removed_members_and_observe_does_not(world, config, tmp_path):
+    from datetime import UTC, datetime
+
+    from ifl.state import State
+
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    gone = uuid4()
+    state = State(tmp_path / "state.json")
+    state.set_mark(gone, datetime(2025, 1, 1, tzinfo=UTC))
+    state.add_reuploads(gone, 4)
+
+    assert run(path, "observe") == 0 and gone in State.load(state.path).members
+    assert run(path, "process") == 0
+    assert set(State.load(state.path).members) == {ALICE, BOB}

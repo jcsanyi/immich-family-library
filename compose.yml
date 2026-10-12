@@ -1,5 +1,6 @@
 # Runs the service next to an Immich compose stack: `docker compose up -d` in
-# this checkout, with config.toml in ./config and the ledger in ./data.
+# this checkout, with config.toml in ./config and the state file in a named
+# volume. Nothing in that volume needs a backup; see docs/deployment.md.
 #
 # The service joins the Immich stack's network so it can reach the server by
 # container name, and so Immich's webhook can reach the service the same way:
@@ -16,13 +17,18 @@ services:
     build: .
     container_name: ifl
     restart: unless-stopped
-    # Rootful docker: uncomment and match the owner of ./config and ./data.
+    # Rootful docker: uncomment and match the owner of ./config.
     # user: "1000:1000"
     volumes:
       - ./config:/config:ro
-      - ./data:/data
+      - ifl-data:/data
+      # The host's timezone, so that [warnings] report_at is the host's local time.
+      - /etc/localtime:/etc/localtime:ro
     networks:
       - immich
+
+volumes:
+  ifl-data:
 
 networks:
   immich:
