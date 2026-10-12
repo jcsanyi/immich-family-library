@@ -75,6 +75,21 @@ def test_parse_errors(mutate, msg):
         parse_config(raw)
 
 
+def test_the_example_file_shows_every_default():
+    import re
+    import tomllib
+
+    from ifl.config import DEFAULTS
+
+    text = (Path(__file__).parents[1] / "config.example.toml").read_text()
+    # The [webhook] section is commented out in the example; read it as written.
+    text = re.sub(r"(?m)^# (\[webhook\]|(?:url|token|listen) = )", r"\1", text)
+    example = tomllib.loads(text)
+    for section, settings in DEFAULTS.items():
+        for key, default in settings.items():
+            assert example[section][key] == default, f"[{section}] {key}"
+
+
 def test_dropbox_album_defaults():
     import copy
 

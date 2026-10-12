@@ -9,6 +9,9 @@ from datetime import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+# The one place in the code that holds a default. `parse_config` fills every
+# field of `Config` from the file or from here, so the dataclasses carry none.
+# config.example.toml shows the same values, and a test holds it to them.
 DEFAULTS = {
     "service": {
         "readonly": True,
@@ -53,7 +56,7 @@ class AccountConfig:
 class WebhookConfig:
     url: str  # what Immich calls, e.g. http://ifl:8080/webhook/asset-created
     token: str  # sent by Immich in the X-IFL-Token header; the receiver checks it
-    listen: str = "0.0.0.0:8080"
+    listen: str
 
     @property
     def path(self) -> str:
@@ -74,18 +77,18 @@ class Config:
     family: AccountConfig
     dropbox_album: str
     members: dict[str, AccountConfig]
-    state_path: Path = Path("data/state.json")
-    readonly: bool = True
-    settle_seconds: int = 60  # leave an asset alone this long after its last change
-    interval_seconds: int = 600  # the daemon's pause between passes
-    webhook: WebhookConfig | None = None  # the daemon's receiver; None means no webhook
-    albums_per_pass: int = 5  # 0 means no limit
-    assets_per_pass: int = 20  # 0 means no limit
-    moved_tag: str = "family"  # goes on a member's original when it's moved
-    from_prefix: str = "from"  # the family copy is tagged "<from_prefix>/<member>"
-    admin_api_key: str | None = None  # any admin user's key; only for the queue check
-    report_at: time = time(22, 0)  # local time of day for the daily re-upload report
-    config_dir: Path = field(default=Path("."), compare=False)
+    state_path: Path
+    readonly: bool
+    settle_seconds: int  # leave an asset alone this long after its last change
+    interval_seconds: int  # the daemon's pause between passes
+    webhook: WebhookConfig | None  # the daemon's receiver; None means no webhook
+    albums_per_pass: int  # 0 means no limit
+    assets_per_pass: int  # 0 means no limit
+    moved_tag: str  # goes on a member's original when it's moved
+    from_prefix: str  # the family copy is tagged "<from_prefix>/<member>"
+    admin_api_key: str | None  # any admin user's key; only for the queue check
+    report_at: time  # local time of day for the daily re-upload report
+    config_dir: Path = field(compare=False)
 
 
 KINDS = {str: "a string", bool: "true or false", int: "a whole number"}
