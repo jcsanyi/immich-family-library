@@ -71,7 +71,9 @@ and that does not occur as a keyword in their files.
 One section per participating member. The section name is the label used in
 logs and in the `from/<name>` tag. Immich identity comes from the key, which
 is checked against `email`. Emails must be unique across the family and the
-members.
+members. At startup the service also refuses two sections whose keys belong
+to the same Immich user. The admin key is the exception: it can belong to the
+family account or to a member.
 
 | Setting | Default | What it is |
 |---|---|---|

@@ -145,9 +145,18 @@ async def open_accounts(cfg: Config) -> Accounts:
         version = await check_server(family.client)
         log.info("server %s at %s", version, cfg.immich_url)
         members: dict[str, Account] = {}
+        # The config compares emails as written; Immich's user id is what counts.
+        # The admin key is left out: it may be the family's or a member's.
+        participants = {family.user_id: family}
         for name, m in cfg.members.items():
             members[name] = await open_account(cfg.immich_url, m, required=MEMBER_PERMISSIONS)
             opened.append(members[name])
+            other = participants.setdefault(members[name].user_id, members[name])
+            if other is not members[name]:
+                raise AccountError(
+                    f"[{other.name}] and [{name}] are the same Immich user, {other.email}. "
+                    "Each account can be configured once."
+                )
         admin = None
         if cfg.admin_api_key:
             admin_cfg = AccountConfig(name="admin", api_key=cfg.admin_api_key)

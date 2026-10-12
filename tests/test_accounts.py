@@ -25,7 +25,7 @@ from ifl.accounts import (
     open_account,
     open_accounts,
 )
-from ifl.config import AccountConfig, parse_config
+from ifl.config import AccountConfig, Config, parse_config
 
 URL = "https://x.example"
 
@@ -207,3 +207,46 @@ async def test_open_accounts_opens_every_key_and_closes_them_all_if_one_fails(st
     with pytest.raises(AccountError, match=r"\[bob\]"):
         await open_accounts(cfg)
     assert [c.api_key for c in stub.made] == ["kf", "k1", "k2"] and all(c.closed for c in stub.made)
+
+
+def two_member_config(bob_email: str, admin_key: str | None = None) -> Config:
+    return parse_config(
+        {
+            "immich": {"url": URL, **({"admin_api_key": admin_key} if admin_key else {})},
+            "family": {"email": "f@x", "api_key": "kf"},
+            "members": {
+                "alice": {"email": "a@x", "api_key": "k1"},
+                "bob": {"email": bob_email, "api_key": "k2"},
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("bob_email", "same_as", "named"), [("A@x", "k1", "alice"), ("F@x", "kf", "family")]
+)
+async def test_one_immich_user_cannot_be_two_participants(stub, bob_email, same_as, named):
+    # The emails differ only in case, so the config's own check lets them through.
+    stub.KEYS = {
+        "kf": {"user": user("f@x"), "key": key(FAMILY_PERMISSIONS | MEMBER_PERMISSIONS)},
+        "k1": {"user": user("a@x"), "key": key(MEMBER_PERMISSIONS)},
+    }
+    stub.KEYS["k2"] = stub.KEYS[same_as]
+    with pytest.raises(AccountError, match=rf"\[{named}\] and \[bob\] are the same Immich user"):
+        await open_accounts(two_member_config(bob_email))
+    assert all(c.closed for c in stub.made)
+
+
+@pytest.mark.parametrize("shared_with", ["kf", "k1"])
+async def test_the_admin_key_may_belong_to_the_family_or_a_member(stub, shared_with):
+    everything = FAMILY_PERMISSIONS | MEMBER_PERMISSIONS | ADMIN_PERMISSIONS
+    stub.KEYS = {
+        "kf": {"user": user("f@x", is_admin=True), "key": key(everything)},
+        "k1": {"user": user("a@x", is_admin=True), "key": key(everything)},
+        "k2": {"user": user("b@x"), "key": key(MEMBER_PERMISSIONS)},
+    }
+    stub.KEYS["ka"] = stub.KEYS[shared_with]  # a second key for the same user
+    opened = await open_accounts(two_member_config("b@x", admin_key="ka"))
+    owner = opened.family if shared_with == "kf" else opened.members["alice"]
+    assert opened.admin.user_id == owner.user_id and len(opened.by_user_id()) == 3
+    await opened.close()
