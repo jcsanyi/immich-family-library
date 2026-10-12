@@ -109,7 +109,9 @@ the wasted upload, once a month per photo.
   stack itself stays.
 - Live photos aren't moved yet. They stay in your account for now.
 - Taking a photo back from the family isn't possible yet. For now, ask whoever
-  runs the service.
+  runs the service. Restoring your original from the trash won't do it: the
+  photo is still in the family album, so it goes back to your trash within the
+  hour.
 - You'll be asked once for an API key from your account. That's what lets the
   service move photos on your behalf. Whoever runs it will tell you which
   boxes to tick when you create it. Nothing else about your account changes.

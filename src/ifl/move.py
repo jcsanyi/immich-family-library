@@ -382,10 +382,15 @@ async def move_asset(
     # trash a re-upload seconds after it lands.
     have_tag = any(t.value == opts.moved_tag for t in asset.tags or [])
 
-    async def is_duplicate() -> bool:
+    async def copy_state() -> tuple[bool, bool]:
+        """(duplicate, fixed up). The fix-ups write the edits first and the
+        entry last, so an entry that names this asset says both are done. That
+        is a move that stopped at the re-link or the trash, or a moved original
+        its owner took back out of the trash: either way they are not repeated."""
         provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
-        foreign = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
-        return foreign or not have_tag
+        ours = bool(provenance) and provenance.get("origin_asset_id") == str(asset_id)
+        foreign = bool(provenance) and not ours
+        return foreign or not have_tag, ours
 
     owned = await existing_asset_by_checksum(family.client, asset.checksum)
     if reupload and (owned is None or owned.is_trashed):
@@ -395,9 +400,9 @@ async def move_asset(
             "the family's copy is in the trash" if owned else "the family no longer has a copy"
         )
     family_id = owned.asset_id if owned else None
-    duplicate = False
+    duplicate = fixed_up = False
     if owned and not owned.is_trashed:
-        duplicate = await is_duplicate()
+        duplicate, fixed_up = await copy_state()
 
     if not duplicate:
         if asset.exif_info is None:
@@ -423,7 +428,7 @@ async def move_asset(
             raise MoveBlocked(
                 f"in {a.name!r}, owned by a non-participant, and {owner.name} can't re-add to it"
             )
-    edits = [] if duplicate else await get_asset_edits(owner.client, asset_id)
+    edits = [] if duplicate or fixed_up else await get_asset_edits(owner.client, asset_id)
 
     # A trashed original with no copy isn't moved; a trashed original with a copy
     # is a move that died late.
@@ -435,7 +440,7 @@ async def move_asset(
         log.info(
             "%s: restored the family copy %s from the trash", asset.original_file_name, family_id
         )
-        duplicate = await is_duplicate()
+        duplicate, fixed_up = await copy_state()
     if family_id is None:
         if asset.is_trashed:
             raise MoveError(f"{asset.original_file_name} is in the trash")
@@ -465,9 +470,12 @@ async def move_asset(
     else:
         log.info("%s: family already has it as %s", asset.original_file_name, family_id)
 
-    # Fix-ups, all idempotent. A duplicate leaves the copy's edits and provenance
-    # alone: they describe the move that already happened.
-    if not duplicate:
+    # Fix-ups, edits before provenance: `copy_state` relies on that order. A
+    # duplicate leaves the copy's edits and provenance alone: they describe the
+    # move that already happened. So does a copy whose fix-ups are already done.
+    applied = 0
+    if not duplicate and not fixed_up:
+        applied = len(edits)
         if edits:
             await _wait_for_dimensions(family, family_id, opts.extraction_timeout)
             await set_asset_edits(family.client, family_id, edits)
@@ -505,7 +513,7 @@ async def move_asset(
         checksum=asset.checksum,
         file_name=asset.original_file_name,
         uploaded=uploaded,
-        edits=len(edits) if not duplicate else 0,
+        edits=applied,
         duplicate=duplicate,
         restored=restored,
         reupload=reupload,

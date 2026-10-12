@@ -136,10 +136,17 @@ move stops before the trash. A photo never quietly vanishes from an album.
 **The trash.** The original is trashed with the owner's key, never deleted
 outright.
 
+A member who restores a moved original from their trash doesn't get the photo
+back. A trashed photo keeps its place in its albums, so the restored original
+is once more a member's photo in a family album, and the next pass trashes it
+again. The family's copy isn't touched: its `ifl` entry names that original,
+which says the edits were already carried, so they aren't carried twice.
+
 State comes from Immich at every step. The family owning the checksum means
 the upload happened. The original still existing means it hasn't been
-trashed. The fix-ups are idempotent. A move that died anywhere finishes on the
-next run.
+trashed. The copy's `ifl` entry naming the original means the fix-ups
+happened, since it's written last of them. A move that died anywhere finishes
+on the next run.
 
 ## The dropbox
 

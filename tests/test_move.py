@@ -218,6 +218,29 @@ async def test_relink_failure_keeps_the_original(world):
     assert not result.uploaded and a.is_trashed and result.relinked_member == ["Bobs"]
 
 
+async def test_a_restored_original_is_trashed_again_without_redoing_the_fixups(world):
+    accounts = make_accounts()
+    a = alice_asset(world)
+    world.edits[a.id] = ["alice-crop"]
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    first = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+    copy = first.family_asset_id
+    assert first.edits == 1 and world.edits[copy] == ["alice-crop"] and a.is_trashed
+    entry = dict(world.metadata[copy]["ifl"])
+
+    # The family re-crops its copy. Then alice takes her original back out of
+    # the trash, where it is still a member of the family album.
+    world.edits[copy] = ["family-crop"]
+    a.is_trashed = False
+    later = NOW + timedelta(days=3)
+    again = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=later)
+
+    # The entry names this original, so the fix-ups are known to be done.
+    assert world.edits[copy] == ["family-crop"] and world.metadata[copy]["ifl"] == entry
+    assert again.edits == 0 and not again.uploaded and not again.duplicate
+    assert a.is_trashed and again.trashed and world.library[copy] in world.assets[trip.id]
+
+
 async def test_dying_at_the_edits_step_keeps_the_original_and_resumes(world, monkeypatch):
     accounts = make_accounts()
     a = alice_asset(world)
