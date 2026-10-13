@@ -84,7 +84,11 @@ async def test_failed_add_leaves_original_in_place(world):
     orig = world.album("Beach", ALICE, roles={FAMILY: EDITOR}, assets=[a1, b1])
     world.fail_adds[b1.id] = BulkIdErrorReason.NO_PERMISSION
 
-    with pytest.raises(ConvertError, match="bob could not add 1 of 1"):
+    with pytest.raises(ConvertError, match=r"bob could not add 1 of 1 .*\(no_permission: nope\)"):
+        await convert_album(accounts, conversion(accounts, orig))
+    # A failure that Immich gives no reason for reads the same way.
+    world.fail_adds[b1.id] = None
+    with pytest.raises(ConvertError, match=r"bob could not add 1 of 1 .*\(unknown: nope\)"):
         await convert_album(accounts, conversion(accounts, orig))
 
     assert orig.id in world.albums
@@ -96,18 +100,24 @@ async def test_failed_add_leaves_original_in_place(world):
     assert len(world.family_albums_named("Beach")) == 1
 
 
-async def test_asset_added_during_conversion_is_picked_up(world):
+async def test_a_photo_added_after_the_read_stays_with_its_owner(world, monkeypatch):
     accounts = make_accounts()
-    a1, late = FakeAsset(uuid4(), ALICE), FakeAsset(uuid4(), BOB)
+    a1, late = FakeAsset(uuid4(), ALICE), world.add_asset(FakeAsset(uuid4(), BOB))
     orig = world.album("Beach", ALICE, roles={FAMILY: EDITOR}, assets=[a1])
-    # Appears after the first read of the original.
-    world.on_read = [lambda: None, lambda: world.assets[orig.id].append(late)]
+    real_add = world.add_album_assets
+
+    async def add_while_bob_adds_one(client, album_id, asset_ids):
+        world.assets[orig.id].append(late)
+        return await real_add(client, album_id, asset_ids)
+
+    monkeypatch.setattr("ifl.convert.add_album_assets", add_while_bob_adds_one)
 
     result = await convert_album(accounts, conversion(accounts, orig))
 
+    # The accepted limit: the album is gone, and the late photo is in no album.
     (fam,) = world.family_albums_named("Beach")
-    assert {a.id for a in world.assets[fam.id]} == {a1.id, late.id}
-    assert result.assets_added == 2
+    assert {a.id for a in world.assets[fam.id]} == {a1.id} and result.assets_added == 1
+    assert orig.id not in world.albums and world.find_asset(late.id) is late
 
 
 async def test_two_family_albums_with_the_name_is_an_error(world):
@@ -173,24 +183,3 @@ async def test_an_unexpected_error_on_one_album_does_not_stop_the_others(world, 
     assert "immich went away" in str(result.failed[0][1])
     assert [r.family_album.name for r in result.done] == ["A1"]
     assert albums[0].id in world.albums and albums[1].id not in world.albums
-
-
-async def test_original_stays_if_the_family_album_does_not_hold_every_asset(world, monkeypatch):
-    accounts = make_accounts()
-    a1, a2 = FakeAsset(uuid4(), ALICE), FakeAsset(uuid4(), ALICE)
-    orig = world.album("Beach", ALICE, roles={FAMILY: EDITOR}, assets=[a1, a2])
-    real_add = world.add_album_assets
-
-    async def add_but_lose_one(client, album_id, asset_ids):
-        # The server says yes to every id, yet one never lands in the album.
-        results = await real_add(client, album_id, asset_ids)
-        world.assets[album_id] = [a for a in world.assets[album_id] if a.id != a2.id]
-        return results
-
-    monkeypatch.setattr("ifl.convert.add_album_assets", add_but_lose_one)
-
-    with pytest.raises(ConvertError, match="1 of 2 assets from 'Beach' are not in the family"):
-        await convert_album(accounts, conversion(accounts, orig))
-
-    assert orig.id in world.albums
-    assert not any(w[0] == "delete" for w in world.writes)

@@ -77,6 +77,15 @@ def test_observe_reports_and_exits_0_whatever_it_finds(world, config):
     assert not a.is_trashed and not world.uploads
 
 
+def test_observe_warns_about_a_queue_backlog(world, config, monkeypatch, caplog):
+    async def waiting(accounts):
+        return {"sidecar": 3}
+
+    monkeypatch.setattr("ifl.cli.pass_backlog", waiting)
+    assert run(config(), "observe") == 0
+    assert "a pass would move nothing now: Immich has jobs waiting: {'sidecar': 3}" in caplog.text
+
+
 def test_process_exits_0_when_clean_and_1_when_a_move_fails(world, config, monkeypatch):
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
@@ -100,6 +109,7 @@ def test_process_exits_0_when_clean_and_1_when_a_move_fails(world, config, monke
 
     monkeypatch.setattr("ifl.move.add_album_assets", refuse_bobs)
     assert run(path, "process") == 1 and not b.is_trashed
+    assert run(path, "move", str(b.id)) == 1 and not b.is_trashed
 
 
 def test_move_one_exits_1_when_blocked_or_not_movable_and_0_when_done(world, config):
@@ -134,11 +144,34 @@ def test_convert_album_exits_1_for_an_album_the_scan_would_not_convert(world, co
     assert run(path, "convert-album", "--all") == 0
 
 
+def test_convert_album_by_id_exits_1_when_the_conversion_fails(world, config, monkeypatch):
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    shared = world.album("Beach", ALICE, roles={FAMILY: EDITOR}, assets=[FakeAsset(uuid4(), ALICE)])
+
+    async def fail(accounts, conv):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr("ifl.convert.convert_album", fail)
+    assert run(path, "convert-album", str(shared.id)) == 1 and shared.id in world.albums
+
+
 def test_reconcile_albums_exits_0_and_fixes_what_it_finds(world, config):
     world.album("Hikes", FAMILY, roles={ALICE: EDITOR, BOB: VIEWER})
     assert run(config(), "reconcile-albums") == 0
     assert any(w[0] == "create" for w in world.writes)  # the dropbox
     assert any(w[0] == "role" for w in world.writes)  # bob promoted
+
+
+def test_reconcile_albums_exits_1_when_a_fix_fails(world, config, monkeypatch):
+    world.album("Hikes", FAMILY, roles={ALICE: EDITOR, BOB: VIEWER})
+
+    async def refuse(client, album_id, user_id, role):
+        raise ConnectionError("immich went away")
+
+    monkeypatch.setattr("ifl.reconcile.set_album_user_role", refuse)
+    assert run(config(), "reconcile-albums") == 1
+    assert any(w[0] == "create" for w in world.writes)  # the dropbox, all the same
 
 
 def test_a_writing_command_refuses_while_another_holds_the_lock(world, config, tmp_path):

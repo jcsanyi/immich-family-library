@@ -18,12 +18,14 @@ from ifl.config import AccountConfig, Config
 
 log = logging.getLogger(__name__)
 
+# The Immich minor that the pinned client was generated from. Nobody has run
+# the service against a later one.
 MIN_SERVER = (3, 3, 0)
 
-# docs/configuration.md has the table and which call needs what.
+# docs/configuration.md has the table and which call needs what. No set has
+# `apiKey.read`: a key reads its own entry, as the startup check does, without it.
 MEMBER_PERMISSIONS = {
     "user.read",
-    "apiKey.read",
     "album.read",
     "asset.read",
     "albumAsset.create",  # add own photos to a family album
@@ -41,26 +43,26 @@ MEMBER_PERMISSIONS = {
     "workflow.create",
     "workflow.update",
 }
-MEMBER_ONLY = {
-    "tag.create",
-    "tag.asset",
-    "sharedLink.read",
-    "workflow.read",
-    "workflow.create",
-    "workflow.update",
-}
-FAMILY_PERMISSIONS = (MEMBER_PERMISSIONS - MEMBER_ONLY) | {
+# Written out, not derived from the member set: the family key reads no
+# original and deletes no album, and should not have to be able to.
+FAMILY_PERMISSIONS = {
+    "user.read",
+    "album.read",
     "album.create",
     "albumUser.create",
     "albumUser.update",  # promote a member who is only a viewer on a family album
-    "partner.create",  # share the family library with each member
-    "asset.upload",  # the family copy
+    "albumAsset.create",  # the copy into the family albums
+    "asset.read",
+    "asset.upload",  # the family copy, and the checksum lookup
     "asset.update",  # its provenance entry
     "asset.edit.create",  # its edits
+    "asset.delete",  # only to restore a trashed copy; the service trashes nothing of the family's
+    "partner.read",
+    "partner.create",  # share the family library with each member
 }
-# The admin key does one thing, read the job queues before a pass. The other two
-# are what the startup check itself needs to confirm whose key it is.
-ADMIN_PERMISSIONS = {"user.read", "apiKey.read", "queue.read"}
+# The admin key does one thing, read the job queues before a pass. `user.read`
+# is what the startup check needs to confirm whose key it is.
+ADMIN_PERMISSIONS = {"user.read", "queue.read"}
 
 
 class AccountError(Exception):
@@ -134,6 +136,13 @@ async def check_server(client: AsyncClient) -> str:
         raise AccountError(
             f"server is {'.'.join(map(str, version))}, need {'.'.join(map(str, MIN_SERVER))}+"
         )
+    if version[:2] > MIN_SERVER[:2]:
+        log.warning(
+            "server is %s; this release was built for Immich %d.%d and is not tested on a "
+            "later one. Look for a matching release of the service.",
+            ".".join(map(str, version)),
+            *MIN_SERVER[:2],
+        )
     return ".".join(map(str, version))
 
 
@@ -145,9 +154,18 @@ async def open_accounts(cfg: Config) -> Accounts:
         version = await check_server(family.client)
         log.info("server %s at %s", version, cfg.immich_url)
         members: dict[str, Account] = {}
+        # The config compares emails as written; Immich's user id is what counts.
+        # The admin key is left out: it may be the family's or a member's.
+        participants = {family.user_id: family}
         for name, m in cfg.members.items():
             members[name] = await open_account(cfg.immich_url, m, required=MEMBER_PERMISSIONS)
             opened.append(members[name])
+            other = participants.setdefault(members[name].user_id, members[name])
+            if other is not members[name]:
+                raise AccountError(
+                    f"[{other.name}] and [{name}] are the same Immich user, {other.email}. "
+                    "Each account can be configured once."
+                )
         admin = None
         if cfg.admin_api_key:
             admin_cfg = AccountConfig(name="admin", api_key=cfg.admin_api_key)

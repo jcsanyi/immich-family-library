@@ -122,6 +122,11 @@ its API client to the Immich version it was built against.
 [development.md](development.md) says which. Upgrading Immich past that
 version needs a matching release of the service. Check the changelog.
 
+The service refuses to start on an Immich that is older than that version. On
+a later minor or major version it starts, and it logs a warning that the
+release is not tested there. Do not let it move photos on such a version
+until a matching release is out: set `readonly` to true.
+
 ## Before production
 
 Two gaps are open as issues:

@@ -30,7 +30,6 @@ from immichpy.client.generated.models.workflow_trigger import WorkflowTrigger
 
 from ifl.accounts import Account, Accounts
 from ifl.immich import AlbumSummary, Owned, summarize_album, webhook_step
-from ifl.sidecar import with_only_tag
 
 FAMILY, ALICE, BOB, STRANGER = (uuid4() for _ in range(4))
 EDITOR, VIEWER, OWNER = AlbumUserRole.EDITOR, AlbumUserRole.VIEWER, AlbumUserRole.OWNER
@@ -155,7 +154,6 @@ class FakeWorld:
         self.sidecar_writes: bool = True  # False: tagging never produces a sidecar
         self.workflows: dict[UUID, list] = {}  # owner -> workflow response-like objects
         self.fail_adds: dict[UUID, BulkIdErrorReason] = {}
-        self.on_read: list = []  # callbacks run once each, in order, on asset reads
 
     def album(self, name, owner, roles=None, assets=(), description="", shared_link=False):
         """An album as Immich would return it, summarised the way the service does."""
@@ -184,8 +182,6 @@ class FakeWorld:
         return [a for a in self.albums.values() if client.user_id in a.user_ids]
 
     async def iter_album_assets(self, client, album_id):
-        if self.on_read:
-            self.on_read.pop(0)()
         for a in list(self.assets[album_id]):
             yield a
 
@@ -288,15 +284,22 @@ class FakeWorld:
     def _write_sidecar(self, asset: AssetResponseDto) -> None:
         """What Immich's sidecar job would write: the asset's tags (plus whatever
         edited fields; the fake only tracks description)."""
-        xmp = with_only_tag(None, "placeholder")
-        xmp = xmp.replace(
-            b"<rdf:li>placeholder</rdf:li>",
-            b"".join(f"<rdf:li>{t.value}</rdf:li>".encode() for t in asset.tags or []),
-        )
+        tags = "".join(f"<rdf:li>{t.value}</rdf:li>" for t in asset.tags or [])
         description = asset.exif_info.description if asset.exif_info else None
-        if description:
-            desc = f'<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:description><rdf:Alt><rdf:li xml:lang="x-default">{description}</rdf:li></rdf:Alt></dc:description></rdf:Description>'
-            xmp = xmp.replace(b"<rdf:Description", desc.encode() + b"<rdf:Description", 1)
+        desc = (
+            '<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            f'<dc:description><rdf:Alt><rdf:li xml:lang="x-default">{description}</rdf:li>'
+            "</rdf:Alt></dc:description></rdf:Description>"
+            if description
+            else ""
+        )
+        xmp = (
+            '<x:xmpmeta xmlns:x="adobe:ns:meta/">'
+            '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+            f'{desc}<rdf:Description rdf:about="" xmlns:digiKam="http://www.digikam.org/ns/1.0/">'
+            f"<digiKam:TagsList><rdf:Seq>{tags}</rdf:Seq></digiKam:TagsList>"
+            "</rdf:Description></rdf:RDF></x:xmpmeta>"
+        ).encode()
         self.sidecars[asset.id] = xmp
 
     # Move-path reads.

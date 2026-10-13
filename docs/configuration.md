@@ -12,12 +12,16 @@ section or setting with any other name is an error, and the service does not
 start. This catches a typo or an old name, which would otherwise take the
 default without a message.
 
+A setting with a value of the wrong type is also an error. For example,
+`readonly = "false"` is a string, not a boolean, and the service does not
+start.
+
 ## `[immich]`
 
 | Setting | Default | What it is |
 |---|---|---|
 | `url` | required | Where the service reaches Immich. In the compose stack, the server's container name works: `http://immich_server:2283`. |
-| `admin_api_key` | none | Optional. Any admin user's key with `queue.read`, plus `user.read` and `apiKey.read`. With it, no move starts while the sidecar or metadata queues have a backlog. |
+| `admin_api_key` | none | Optional. Any admin user's key with `queue.read` and `user.read`. With it, no move starts while the sidecar or metadata queues have a backlog. |
 
 ## `[service]`
 
@@ -71,7 +75,9 @@ and that does not occur as a keyword in their files.
 One section per participating member. The section name is the label used in
 logs and in the `from/<name>` tag. Immich identity comes from the key, which
 is checked against `email`. Emails must be unique across the family and the
-members.
+members. At startup the service also refuses two sections whose keys belong
+to the same Immich user. The admin key is the exception: it can belong to the
+family account or to a member.
 
 | Setting | Default | What it is |
 |---|---|---|
@@ -89,10 +95,9 @@ uploads to it.
 
 | Setting | Default | What it is |
 |---|---|---|
-| `url` | required | What Immich calls. On the shared docker network, the container name works: `http://ifl:8080/webhook/asset-created`. |
+| `url` | required | What Immich calls, as an `http` or `https` URL. On the shared docker network, the container name works: `http://ifl:8080/webhook/asset-created`. The receiver serves the path of this URL. |
 | `token` | required | A secret you make up. Immich sends it in the `X-IFL-Token` header. The receiver rejects anything else. |
-| `listen` | `"0.0.0.0:8080"` | The receiver's bind address. |
-| `path` | `"/webhook/asset-created"` | The receiver's path. It must match the path in `url`. |
+| `listen` | `"0.0.0.0:8080"` | The receiver's bind address, as `host:port`. The port is a number from 1 to 65535. An empty host listens on every address: `":8080"`. Put an IPv6 address in brackets: `"[::]:8080"`. |
 
 ## API key permissions
 
@@ -101,21 +106,25 @@ startup check requires every one listed. A key with `all` passes.
 
 **Member keys**
 
-`user.read`, `apiKey.read`, `album.read`, `album.delete`, `albumAsset.create`,
-`asset.read`, `asset.download`, `asset.delete`, `asset.edit.get`,
-`assetFile.read`, `assetFile.download`, `tag.create`, `tag.asset`,
-`sharedLink.read`, `partner.read`, `workflow.read`, `workflow.create`,
-`workflow.update`.
+`user.read`, `album.read`, `album.delete`, `albumAsset.create`, `asset.read`,
+`asset.download`, `asset.delete`, `asset.edit.get`, `assetFile.read`,
+`assetFile.download`, `tag.create`, `tag.asset`, `sharedLink.read`,
+`partner.read`, `workflow.read`, `workflow.create`, `workflow.update`.
 
 **Family key**
 
-The member set without the tag, shared-link and workflow permissions, plus
-`album.create`, `albumUser.create`, `albumUser.update`, `partner.create`,
-`asset.upload`, `asset.update`, `asset.edit.create`.
+`user.read`, `album.read`, `album.create`, `albumUser.create`,
+`albumUser.update`, `albumAsset.create`, `asset.read`, `asset.upload`,
+`asset.update`, `asset.edit.create`, `asset.delete`, `partner.read`,
+`partner.create`.
+
+The service trashes nothing in the family account. Immich puts the restore of
+a trashed photo under `asset.delete`. The service restores the family's copy
+when a member shares a photo that the family deleted.
 
 **Admin key** (optional)
 
-`queue.read`, `user.read`, `apiKey.read`. Any admin user's key works, the
+`queue.read`, `user.read`. Any admin user's key works, the
 family account or a member included. The check is that the owner is an admin.
 
 Which keys each operation uses:

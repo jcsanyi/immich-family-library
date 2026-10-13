@@ -112,20 +112,27 @@ async def list_albums(client: AsyncClient) -> list[AlbumSummary]:
     return [summarize_album(a) for a in albums]
 
 
-async def iter_album_assets(
-    client: AsyncClient, album_id: UUID, *, page_size: int = 250
+async def _search(
+    client: AsyncClient, *, page_size: int, **criteria: Any
 ) -> AsyncIterator[AssetResponseDto]:
-    """Every asset in an album, with owner and checksum, via metadata search."""
+    """Every asset a metadata search matches, one page at a time."""
     page = 1
     while True:
         res = await client.search.search_assets(
-            MetadataSearchDto(album_ids=[album_id], page=page, size=page_size, with_exif=False)
+            MetadataSearchDto(**criteria, page=page, size=page_size, with_exif=False)
         )
         for a in res.assets.items:
             yield a
         if not res.assets.next_page:
             return
         page = int(res.assets.next_page)
+
+
+def iter_album_assets(
+    client: AsyncClient, album_id: UUID, *, page_size: int = 250
+) -> AsyncIterator[AssetResponseDto]:
+    """Every asset in an album, with owner and checksum, via metadata search."""
+    return _search(client, page_size=page_size, album_ids=[album_id])
 
 
 async def list_partner_ids(client: AsyncClient) -> set[UUID]:
@@ -162,11 +169,19 @@ async def add_album_assets(
     client: AsyncClient, album_id: UUID, asset_ids: Iterable[UUID]
 ) -> list[BulkIdResponseDto]:
     """One result per id. An asset already in the album comes back as a
-    'duplicate' failure, which callers treat as success."""
+    'duplicate' failure, which callers treat as success: see `bulk_failure`."""
     ids = list(asset_ids)
     if not ids:
         return []
     return await client.albums.add_assets_to_album(id=album_id, bulk_ids_dto=BulkIdsDto(ids=ids))
+
+
+def bulk_failure(r: BulkIdResponseDto) -> str | None:
+    """Why one entry of a bulk response failed, or None when it did not. An id
+    that was already there comes back as a 'duplicate' failure, and is not one."""
+    if r.success or r.error == BulkIdErrorReason.DUPLICATE:
+        return None
+    return f"{r.error.value if r.error else 'unknown'}: {r.error_message or 'no detail'}"
 
 
 async def delete_album(client: AsyncClient, album_id: UUID) -> None:
@@ -256,9 +271,8 @@ async def upsert_tag(client: AsyncClient, name: str) -> UUID:
 async def tag_asset(client: AsyncClient, tag_id: UUID, asset_id: UUID) -> None:
     results = await client.tags.tag_assets(id=tag_id, bulk_ids_dto=BulkIdsDto(ids=[asset_id]))
     for r in results:
-        if not r.success and r.error != BulkIdErrorReason.DUPLICATE:
-            why = r.error.value if r.error else "unknown"
-            raise RuntimeError(f"tagging failed: {why} {r.error_message or ''}".strip())
+        if why := bulk_failure(r):
+            raise RuntimeError(f"tagging failed: {why}")
 
 
 async def upload_asset(
@@ -312,21 +326,12 @@ async def trash_assets(client: AsyncClient, asset_ids: Iterable[UUID]) -> None:
     await client.assets.delete_assets(AssetBulkDeleteDto(ids=list(asset_ids), force=False))
 
 
-async def iter_assets_created_after(
+def iter_assets_created_after(
     client: AsyncClient, since: datetime | None, *, page_size: int = 250
 ) -> AsyncIterator[AssetResponseDto]:
     """This account's view of assets uploaded after `since` (all of them when None).
     Includes partners' assets; callers filter by owner."""
-    page = 1
-    while True:
-        res = await client.search.search_assets(
-            MetadataSearchDto(created_after=since, page=page, size=page_size, with_exif=False)
-        )
-        for a in res.assets.items:
-            yield a
-        if not res.assets.next_page:
-            return
-        page = int(res.assets.next_page)
+    return _search(client, page_size=page_size, created_after=since)
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-"""Stage 4: the per-asset move.
+"""The per-asset move.
 
 A member-owned asset in a family-owned album is re-uploaded under the family
 account with everything Immich lets us carry, re-linked into the albums it was
@@ -25,8 +25,7 @@ authoritative: edits and provenance are left alone, the copy is re-linked into
 any album the duplicate sits in, and the duplicate is trashed. The copy's `ifl`
 entry is a veto on top: if it names a different original, the copy already has
 its owner, whatever tag this asset wears. A family copy found in the trash
-while a member shares the photo again is
-restored first.
+while a member shares the photo again is restored first.
 
 Re-linking into a member-owned album runs under the album owner's key, which
 works because an owner can always add and the family partner-shares with every
@@ -45,7 +44,6 @@ from uuid import UUID
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
 from immichpy.client.generated.models.asset_visibility import AssetVisibility
-from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 
 from ifl.accounts import Account, Accounts
 from ifl.config import Config
@@ -53,6 +51,7 @@ from ifl.immich import (
     AlbumSummary,
     add_album_assets,
     albums_containing,
+    bulk_failure,
     download_asset_file,
     download_original,
     existing_asset_by_checksum,
@@ -113,7 +112,6 @@ class MoveResult:
     asset_id: UUID
     owner_id: UUID
     family_asset_id: UUID
-    checksum: str
     file_name: str
     uploaded: bool  # False when the family already had the checksum
     edits: int
@@ -128,8 +126,7 @@ class MoveResult:
     @property
     def counts_as_reupload(self) -> bool:
         """A phone's re-upload of a photo the family already had, now trashed. A
-        scan item that ended as a real move, because the family's copy was gone
-        by then, is not one."""
+        scan item that finished an interrupted move is not one."""
         return self.reupload and self.duplicate and self.trashed
 
     def __str__(self) -> str:
@@ -178,8 +175,8 @@ async def _fresh_sidecar(owner: Account, asset_id: UUID, tag: str, timeout: floa
 
 async def _add_to_album(client, album: AlbumSummary, asset_id: UUID) -> None:
     for r in await add_album_assets(client, album.id, [asset_id]):
-        if not r.success and r.error != BulkIdErrorReason.DUPLICATE:
-            raise RuntimeError(f"{r.error.value}: {r.error_message or 'no detail'}")
+        if why := bulk_failure(r):
+            raise RuntimeError(why)
 
 
 async def _relink_member_album(
@@ -361,7 +358,8 @@ async def move_asset(
     reupload: bool = False,
 ) -> MoveResult:
     """`reupload` says the asset came from the re-upload scan rather than a family
-    album: a trashed family copy then blocks instead of being restored, and a
+    album. It then needs a live family copy: a trashed one blocks instead of
+    being restored, a missing one blocks instead of being uploaded, and a
     duplicate counts as a re-upload."""
     family = accounts.family
     now = now or datetime.now(UTC)
@@ -382,16 +380,27 @@ async def move_asset(
     # trash a re-upload seconds after it lands.
     have_tag = any(t.value == opts.moved_tag for t in asset.tags or [])
 
-    async def is_duplicate() -> bool:
+    async def copy_state() -> tuple[bool, bool]:
+        """(duplicate, fixed up). The fix-ups write the edits first and the
+        entry last, so an entry that names this asset says both are done. That
+        is a move that stopped at the re-link or the trash, or a moved original
+        its owner took back out of the trash: either way they are not repeated."""
         provenance = await get_asset_metadata_value(family.client, family_id, PROVENANCE_KEY)
-        foreign = bool(provenance) and provenance.get("origin_asset_id") != str(asset_id)
-        return foreign or not have_tag
+        ours = bool(provenance) and provenance.get("origin_asset_id") == str(asset_id)
+        foreign = bool(provenance) and not ours
+        return foreign or not have_tag, ours
 
     owned = await existing_asset_by_checksum(family.client, asset.checksum)
+    if reupload and (owned is None or owned.is_trashed):
+        # Only a family album makes a photo the family's. Without a live copy
+        # this is the member's own photo, whatever the scan saw a moment ago.
+        raise MoveBlocked(
+            "the family's copy is in the trash" if owned else "the family no longer has a copy"
+        )
     family_id = owned.asset_id if owned else None
-    duplicate = False
+    duplicate = fixed_up = False
     if owned and not owned.is_trashed:
-        duplicate = await is_duplicate()
+        duplicate, fixed_up = await copy_state()
 
     if not duplicate:
         if asset.exif_info is None:
@@ -417,25 +426,26 @@ async def move_asset(
             raise MoveBlocked(
                 f"in {a.name!r}, owned by a non-participant, and {owner.name} can't re-add to it"
             )
-    edits = [] if duplicate else await get_asset_edits(owner.client, asset_id)
+    edits = [] if duplicate or fixed_up else await get_asset_edits(owner.client, asset_id)
 
     # A trashed original with no copy isn't moved; a trashed original with a copy
     # is a move that died late.
     uploaded = restored = False
     if owned and owned.is_trashed:
-        if reupload:
-            raise MoveBlocked("the family's copy is in the trash")
         # Shared again after the family deleted it: bring the copy back.
         await restore_assets(family.client, [owned.asset_id])
         restored = True
         log.info(
             "%s: restored the family copy %s from the trash", asset.original_file_name, family_id
         )
-        duplicate = await is_duplicate()
+        duplicate, fixed_up = await copy_state()
     if family_id is None:
         if asset.is_trashed:
             raise MoveError(f"{asset.original_file_name} is in the trash")
         # The sidecar, written by Immich after the moved tag goes on.
+        # An original that already wears the tag gets no new sidecar write, so
+        # an edit from the last few seconds can be missing from the one we read.
+        # Accepted: see "Sidecar" in docs/immich-notes.md.
         if not have_tag:
             await tag_asset(owner.client, await upsert_tag(owner.client, opts.moved_tag), asset_id)
         xmp = await _fresh_sidecar(owner, asset_id, opts.moved_tag, opts.sidecar_timeout)
@@ -458,9 +468,12 @@ async def move_asset(
     else:
         log.info("%s: family already has it as %s", asset.original_file_name, family_id)
 
-    # Fix-ups, all idempotent. A duplicate leaves the copy's edits and provenance
-    # alone: they describe the move that already happened.
-    if not duplicate:
+    # Fix-ups, edits before provenance: `copy_state` relies on that order. A
+    # duplicate leaves the copy's edits and provenance alone: they describe the
+    # move that already happened. So does a copy whose fix-ups are already done.
+    applied = 0
+    if not duplicate and not fixed_up:
+        applied = len(edits)
         if edits:
             await _wait_for_dimensions(family, family_id, opts.extraction_timeout)
             await set_asset_edits(family.client, family_id, edits)
@@ -495,10 +508,9 @@ async def move_asset(
     return MoveResult(
         asset_id=asset_id,
         family_asset_id=family_id,
-        checksum=asset.checksum,
         file_name=asset.original_file_name,
         uploaded=uploaded,
-        edits=len(edits) if not duplicate else 0,
+        edits=applied,
         duplicate=duplicate,
         restored=restored,
         reupload=reupload,

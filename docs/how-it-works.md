@@ -15,7 +15,7 @@ The family account and every participating member give the service an API
 key. A member without a key can still share an album with the family user,
 but the service converts and moves nothing of theirs, and says so.
 
-## The one rule
+## What the service moves
 
 The service moves any member-owned photo it finds in a family-owned album to
 the family account. Album conversion, the dropbox, and adding to a family
@@ -57,15 +57,19 @@ For a member album with the family user on it:
    their side.
 4. Each contributor adds their own photos to the family album, with their own
    key. Editors can add their own photos, and that's all it takes.
-5. The service re-reads the original once, in case anything was added in the
-   meantime, then asks the server whether every photo is now in the family
-   album.
-6. The original album is deleted. Only the album: the photos are still the
-   member's, now sitting in a family album, which is exactly what the one rule
-   acts on.
+5. The original album is deleted, once Immich has accepted every photo. Only
+   the album: the photos are still the member's, now sitting in a family
+   album, which is exactly what the service moves.
 
 Every step is idempotent. A conversion that died partway finishes on the next
 run.
+
+The service reads the original once. A photo that someone adds to the original
+after that read, and before the delete, is not carried over. The window is
+short: the read, one add request per contributor, and the delete. Immich has
+no way to lock an album or to delete it only if it is unchanged. The photo is
+not lost: it stays in its owner's library, in no album, and the owner can add
+it to the family album.
 
 ## Family album consistency
 
@@ -110,6 +114,11 @@ tag list becomes the single entry `from/<member>`. Extraction prefers that
 list over any keywords in the file, so the family copy ends up with exactly
 that tag and none of the member's. Both tag names are set in `[tags]`.
 
+What happens to an edit made while the photo is being moved isn't defined. The
+photo still moves. Whether that last edit reaches the family copy depends on
+whether Immich had written it to the sidecar by the time the move read it. If
+it hadn't, the edit stays behind on the original in the trash.
+
 **The upload.** The family's bulk upload check says whether the family already
 has the checksum. If not, the original bytes go up with the rewritten sidecar,
 the original's dates, its favourite flag and its visibility. Extraction on the
@@ -131,10 +140,17 @@ move stops before the trash. A photo never quietly vanishes from an album.
 **The trash.** The original is trashed with the owner's key, never deleted
 outright.
 
+A member who restores a moved original from their trash doesn't get the photo
+back. A trashed photo keeps its place in its albums, so the restored original
+is once more a member's photo in a family album, and the next pass trashes it
+again. The family's copy isn't touched: its `ifl` entry names that original,
+which says the edits were already carried, so they aren't carried twice.
+
 State comes from Immich at every step. The family owning the checksum means
 the upload happened. The original still existing means it hasn't been
-trashed. The fix-ups are idempotent. A move that died anywhere finishes on the
-next run.
+trashed. The copy's `ifl` entry naming the original means the fix-ups
+happened, since it's written last of them. A move that died anywhere finishes
+on the next run.
 
 ## The dropbox
 
@@ -184,6 +200,10 @@ What the service does about it:
   member's. But if a member shares that photo into a family album again, the
   service restores the family's copy from the trash rather than uploading it
   anew.
+- A match whose family copy is gone for good by the time the move runs is
+  left alone too. With no copy it's the member's own photo again, and only a
+  family album makes a photo the family's. The scan stops matching it at the
+  next pass.
 - The service tallies trashed re-uploads per member, from the pass and from
   the webhook alike. A re-upload here means what the re-upload scan or the
   webhook found: an upload a phone made on its own. A photo a member puts
@@ -207,6 +227,10 @@ through the cluster group. The copy gets one tag, `from/<member>`.
 
 Lost: the member's own tags, on purpose; likes and comments on album photos;
 and, for now, manual face corrections and stacks (see the issues).
+
+A converted album keeps its name, description, photos and users. It loses its
+cover, its sort order and its activity setting, which go back to Immich's
+defaults (see the issues).
 
 ## Provenance
 

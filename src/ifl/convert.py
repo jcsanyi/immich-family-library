@@ -1,16 +1,16 @@
-"""Stage 2: album conversion.
+"""Album conversion.
 
 A member-owned album shared with the family user becomes a family-owned album
 with the same name. The family account gets an album by that name (or already
 has one), everyone who should be on it is added, each contributor adds their
 own photos to it with their own key, and the original is deleted. No photo
 moves here: afterwards they're member-owned assets in a family-owned album,
-which is exactly what the one rule acts on.
+which is exactly what the service moves.
 
 Every step is derived from what Immich has, so a run that died halfway is
 finished by running it again: the family album is found by name, users and
-assets already on it are skipped, and the original is only deleted once the
-server confirms everything landed.
+assets already on it are skipped, and the original is only deleted once
+Immich has accepted every photo.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
-from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 from immichpy.client.main import AsyncClient
 
 from ifl.accounts import Account, Accounts
@@ -29,6 +28,7 @@ from ifl.immich import (
     AlbumSummary,
     add_album_assets,
     add_album_users,
+    bulk_failure,
     create_album,
     delete_album,
     iter_album_assets,
@@ -105,12 +105,11 @@ async def _add_assets(
         if owner is None:
             raise ConvertError(f"asset owner {owner_id} is not a participant")
         results = await add_album_assets(owner.client, album.id, ids)
-        failed = [r for r in results if not r.success and r.error != BulkIdErrorReason.DUPLICATE]
+        failed = [why for r in results if (why := bulk_failure(r))]
         if failed:
-            why = f"{failed[0].error.value}: {failed[0].error_message or 'no detail'}"
             raise ConvertError(
                 f"{owner.name} could not add {len(failed)} of {len(ids)} assets to "
-                f"{album.name!r} ({why})"
+                f"{album.name!r} ({failed[0]})"
             )
         added += sum(1 for r in results if r.success)
         dupes += sum(1 for r in results if not r.success)
@@ -170,24 +169,13 @@ async def convert_album(accounts: Accounts, conv: ConvertAlbum) -> ConvertResult
     if missing:
         log.info("shared %r with %d more users", fam_album.name, len(missing))
 
-    # Each contributor adds their own photos with their own key, then one
-    # re-read of the original for anything that appeared meanwhile.
-    first = await _assets_by_owner(owner.client, original.id)
-    added, dupes = await _add_assets(accounts, fam_album, first)
-    seen = {i for ids in first.values() for i in ids}
-    again = await _assets_by_owner(owner.client, original.id)
-    late = {o: [i for i in ids if i not in seen] for o, ids in again.items()}
-    added2, dupes2 = await _add_assets(accounts, fam_album, {o: i for o, i in late.items() if i})
-    added, dupes = added + added2, dupes + dupes2
-
-    # Delete the original only once the server says everything is in the family album.
-    want = {i for ids in again.values() for i in ids}
-    have = {a.id async for a in iter_album_assets(family.client, fam_album.id)}
-    if want - have:
-        raise ConvertError(
-            f"{len(want - have)} of {len(want)} assets from {original.name!r} are not in the "
-            f"family album; original left in place"
-        )
+    # Each contributor adds their own photos with their own key. Immich answers
+    # for every id, and any refusal raises before the delete. A photo that
+    # joins the original after this read is not carried: see "Album conversion"
+    # in docs/how-it-works.md.
+    added, dupes = await _add_assets(
+        accounts, fam_album, await _assets_by_owner(owner.client, original.id)
+    )
     await delete_album(owner.client, original.id)
     log.info("deleted %s's album %r", owner.name, original.name)
 

@@ -145,8 +145,9 @@ come as one grouped pull request. A major release gets its own pull request.
 ## The dev instance
 
 Testing happens on a separate Immich instance, never on production.
-`AGENTS.local.md`, which is gitignored, describes the one this project uses:
-its URL, host, accounts, where the keys live, and how to deploy to it.
+Use `AGENTS.local.md` (which is gitignored) to describe the dev instance this
+project uses: its URL, host, accounts, where the keys live, and how to deploy
+to it.
 
 What is true of any dev instance for this project:
 

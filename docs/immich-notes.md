@@ -35,6 +35,11 @@ are listed here so that the next Immich upgrade knows what to re-check.
 - Queue endpoints (`/queues`) are admin-only. That is why the queue check
   needs an admin key.
 - Workflows belong to a user and fire only for that user's assets.
+- `GET /api-keys/me` needs no permission. A key can always read its own name
+  and permissions, which is the startup check. The list of an account's keys
+  (`GET /api-keys`) needs `apiKey.read`, and the service does not use it.
+  Confirmed on dev: a key with only `user.read` got 200 from the first call
+  and 403 from the second.
 
 ## Per-asset metadata store (`/assets/{id}/metadata`)
 
@@ -74,7 +79,15 @@ are listed here so that the next Immich upgrade knows what to re-check.
 - An edit does not move the asset's `updatedAt`. The sidecar job does,
   seconds later. So "recently updated" is false exactly while a write is
   pending, and the settle period cannot guard against a stale sidecar. The
-  tag trigger does.
+  tag trigger does, for every edit made before the tag went on: a sidecar
+  that holds the tag is newer than the tag.
+- The tag trigger does not cover an edit made after the tag went on. Such an
+  edit reaches the family copy only if Immich wrote it to the sidecar before
+  the move read the sidecar. This applies to an edit made while a move runs.
+  It also applies when the original already has the tag at the start, because
+  the move then adds no tag and gets no new write. That occurs after a move
+  that stopped partway, and when a member uses the same tag name. Immich has
+  no call that writes the sidecar again, so the service accepts this limit.
 
 ## Uploads (`services/asset-media.service.ts`)
 

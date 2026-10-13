@@ -8,8 +8,8 @@ Each pass is three scans, in this order:
 2. Family albums. The invariant: the dropbox exists, every configured member
    is an editor on every family-owned album, and the family partner-shares
    with every member (reconcile).
-3. Assets. The one rule: a member-owned asset sitting in a family-owned album
-   gets moved to the family account. Plus re-uploads: a member-owned asset,
+3. Assets. A member-owned asset sitting in a family-owned album gets moved to
+   the family account. Plus re-uploads: a member-owned asset,
    uploaded since the last look, whose checksum the family already owns. The
    same move handles both; a re-upload just has nothing to upload.
 """
@@ -95,7 +95,6 @@ class ReconcileScan:
 @dataclass(frozen=True)
 class MoveAsset:
     asset_id: UUID
-    checksum: str
     owner: Account
     album: AlbumSummary | None  # the family album it was found in; None for a re-upload
     file_name: str
@@ -243,7 +242,6 @@ async def scan_assets(
             scan.moves.append(
                 MoveAsset(
                     asset_id=asset.id,
-                    checksum=asset.checksum,
                     owner=owner,
                     album=album,
                     file_name=asset.original_file_name,
@@ -269,7 +267,7 @@ async def _scan_reuploads(
         mark = state.get_mark(member.user_id)
         if mark is None:
             log.info(
-                "%s: first re-upload scan; the mark starts now, nothing earlier can be a re-upload",
+                "%s: no re-upload mark yet; a pass sets it, and nothing earlier can be a re-upload",
                 member.name,
             )
             continue
@@ -304,7 +302,6 @@ async def reupload_items(
             scan.moves.append(
                 MoveAsset(
                     asset_id=a.id,
-                    checksum=checksum,
                     owner=member,
                     album=None,
                     file_name=a.original_file_name,

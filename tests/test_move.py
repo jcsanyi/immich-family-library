@@ -207,9 +207,38 @@ async def test_relink_failure_keeps_the_original(world):
 
     assert not a.is_trashed
     assert len(world.uploads) == 1  # the copy exists; a rerun after fixing the share finishes
+    # A refused add that Immich gives no reason for still reads as a refusal.
+    world.fail_adds[world.uploads[0]["id"]] = None
+    with pytest.raises(RuntimeError, match="unknown: nope"):
+        await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+    assert not a.is_trashed
+    world.fail_adds.clear()
     world.partners[FAMILY] = {ALICE, BOB}
     result = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
     assert not result.uploaded and a.is_trashed and result.relinked_member == ["Bobs"]
+
+
+async def test_a_restored_original_is_trashed_again_without_redoing_the_fixups(world):
+    accounts = make_accounts()
+    a = alice_asset(world)
+    world.edits[a.id] = ["alice-crop"]
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    first = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+    copy = first.family_asset_id
+    assert first.edits == 1 and world.edits[copy] == ["alice-crop"] and a.is_trashed
+    entry = dict(world.metadata[copy]["ifl"])
+
+    # The family re-crops its copy. Then alice takes her original back out of
+    # the trash, where it is still a member of the family album.
+    world.edits[copy] = ["family-crop"]
+    a.is_trashed = False
+    later = NOW + timedelta(days=3)
+    again = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=later)
+
+    # The entry names this original, so the fix-ups are known to be done.
+    assert world.edits[copy] == ["family-crop"] and world.metadata[copy]["ifl"] == entry
+    assert again.edits == 0 and not again.uploaded and not again.duplicate
+    assert a.is_trashed and again.trashed and world.library[copy] in world.assets[trip.id]
 
 
 async def test_dying_at_the_edits_step_keeps_the_original_and_resumes(world, monkeypatch):
@@ -312,7 +341,7 @@ async def test_move_all_honours_the_limit_and_continues_past_blocks_and_failures
     world.album("Bobs", BOB, roles={ALICE: VIEWER}, assets=[assets[2]])
     world.partners[FAMILY] = {ALICE}
     world.shared_links[ALICE] = {assets[3].id}  # blocked, via the once-per-owner lookup
-    moves = [MoveAsset(a.id, a.checksum, alice, trip, a.original_file_name) for a in assets]
+    moves = [MoveAsset(a.id, alice, trip, a.original_file_name) for a in assets]
 
     result = await move_assets(accounts, OPTS, moves, state=state, limit=4)
 
@@ -353,6 +382,26 @@ async def test_a_reupload_is_trashed_and_counted_without_touching_the_copy(world
     assert copy in world.assets[private.id] and re.is_trashed
     assert not world.uploads and not any(w[0] == "tag" for w in world.writes)
     assert "re-upload, family already has it" in str(result)
+
+
+async def test_a_reupload_the_webhook_already_trashed_is_not_trashed_or_counted_again(world, state):
+    from ifl.move import move_assets
+    from ifl.observer import MoveAsset
+
+    accounts = make_accounts()
+    copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
+    re = alice_asset(world)
+    # The pass scanned this item while the original was live. The webhook
+    # finished with it before the pass reached it.
+    item = MoveAsset(re.id, accounts.members["alice"], None, "a.jpg", reupload=True)
+
+    by_webhook = await move_assets(accounts, OPTS, [item], state=state, limit=0, in_flight=set())
+    by_pass = await move_assets(accounts, OPTS, [item], state=state, limit=0, in_flight=set())
+
+    assert by_webhook.done[0].trashed and not by_pass.done[0].trashed
+    assert [w for w in world.writes if w[0] == "trash"] == [("trash", ALICE, re.id)]
+    assert state.members[ALICE].reuploads == 1 and by_pass.reuploads_trashed() == {}
+    assert by_pass.done[0].family_asset_id == copy.id and not by_pass.unfinished
 
 
 async def test_a_copy_the_family_got_some_other_way_is_authoritative(world):
@@ -428,6 +477,17 @@ async def test_a_trashed_family_copy_is_restored_when_shared_again(world):
     assert copy.is_trashed and not re2.is_trashed
 
 
+async def test_a_reupload_whose_family_copy_is_gone_is_left_alone(world):
+    accounts = make_accounts()
+    # The scan saw a family copy; it was deleted for good before the move ran.
+    re = alice_asset(world)
+
+    with pytest.raises(MoveBlocked, match="no longer has a copy"):
+        await move_asset(accounts, OPTS, re.id, accounts.members["alice"], now=NOW, reupload=True)
+
+    assert not re.is_trashed and not world.uploads and not world.writes
+
+
 async def test_a_duplicate_skips_the_extraction_and_settle_checks(world):
     accounts = make_accounts()
     copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", original_file_name="a.jpg"))
@@ -487,7 +547,7 @@ async def test_an_unexpected_error_on_one_asset_does_not_stop_the_others(world, 
         return await real_add(client, album_id, ids)
 
     monkeypatch.setattr("ifl.move.add_album_assets", add)
-    moves = [MoveAsset(a.id, a.checksum, alice, trip, a.original_file_name) for a in assets]
+    moves = [MoveAsset(a.id, alice, trip, a.original_file_name) for a in assets]
     in_flight: set = set()
 
     result = await move_assets(accounts, OPTS, moves, state=state, limit=0, in_flight=in_flight)
@@ -514,7 +574,7 @@ async def test_a_failed_per_owner_lookup_does_not_leave_the_asset_in_flight(
         raise ConnectionError("immich went away")
 
     monkeypatch.setattr("ifl.move.shared_link_asset_ids", down)
-    moves = [MoveAsset(a.id, a.checksum, alice, trip, a.original_file_name)]
+    moves = [MoveAsset(a.id, alice, trip, a.original_file_name)]
     in_flight: set = set()
 
     result = await move_assets(accounts, OPTS, moves, state=state, limit=0, in_flight=in_flight)
@@ -545,7 +605,6 @@ def test_reuploads_trashed_counts_per_member_and_shows_in_the_summary():
             asset_id=uuid4(),
             owner_id=owner,
             family_asset_id=uuid4(),
-            checksum="c",
             file_name="x.jpg",
             uploaded=False,
             edits=0,
@@ -558,7 +617,7 @@ def test_reuploads_trashed_counts_per_member_and_shows_in_the_summary():
         done=[done(ALICE, True), done(ALICE, True), done(BOB, True), done(BOB, False)]
     )
     assert many.reuploads_trashed() == {ALICE: 2, BOB: 1}
-    # A scan item that ended as a real move, the family's copy gone by then, is not counted.
+    # A scan item that finished an interrupted move is not counted.
     real = done(ALICE, True)
     real.duplicate = False
     assert MoveManyResult(done=[real]).reuploads_trashed() == {}
@@ -577,9 +636,7 @@ async def test_a_run_cut_short_has_tallied_what_it_trashed(world, state, monkeyp
 
     accounts = make_accounts()
     alice = accounts.members["alice"]
-    moves = [
-        MoveAsset(uuid4(), f"sha-{i}", alice, None, f"{i}.jpg", reupload=True) for i in range(2)
-    ]
+    moves = [MoveAsset(uuid4(), alice, None, f"{i}.jpg", reupload=True) for i in range(2)]
 
     async def move(accounts, opts, asset_id, owner, **kw):
         if asset_id == moves[1].asset_id:
@@ -588,7 +645,6 @@ async def test_a_run_cut_short_has_tallied_what_it_trashed(world, state, monkeyp
             asset_id=asset_id,
             owner_id=owner.user_id,
             family_asset_id=uuid4(),
-            checksum="sha-0",
             file_name="0.jpg",
             uploaded=False,
             edits=0,
@@ -620,10 +676,10 @@ def test_advance_marks_holds_a_member_at_their_oldest_unfinished_reupload(tmp_pa
     done, stuck_old, stuck_new = uuid4(), uuid4(), uuid4()
     scan = AssetScan(
         moves=[
-            MoveAsset(done, "c1", alice, None, "a.jpg", reupload=True, created_at=t2),
-            MoveAsset(stuck_new, "c2", bob, None, "b2.jpg", reupload=True, created_at=t2),
-            MoveAsset(stuck_old, "c3", bob, None, "b1.jpg", reupload=True, created_at=t1),
-            MoveAsset(uuid4(), "c4", bob, None, "plain.jpg", created_at=t1),  # not a re-upload
+            MoveAsset(done, alice, None, "a.jpg", reupload=True, created_at=t2),
+            MoveAsset(stuck_new, bob, None, "b2.jpg", reupload=True, created_at=t2),
+            MoveAsset(stuck_old, bob, None, "b1.jpg", reupload=True, created_at=t1),
+            MoveAsset(uuid4(), bob, None, "plain.jpg", created_at=t1),  # not a re-upload
         ],
         scanned_at=NOW,
     )

@@ -288,9 +288,23 @@ async def test_tag_asset_accepts_a_duplicate_and_raises_on_anything_else():
     calls = []
     client = stub_client(calls, tags={"tag_assets": [dup, denied]})
     await immich.tag_asset(client, tag_id, asset_id)  # duplicate: already tagged, fine
-    with pytest.raises(RuntimeError, match="no_permission nope"):
+    with pytest.raises(RuntimeError, match="tagging failed: no_permission: nope"):
         await immich.tag_asset(client, tag_id, asset_id)
     assert all(kw["id"] == tag_id and kw["bulk_ids_dto"].ids == [asset_id] for _, _, kw in calls)
+
+
+def test_bulk_failure_reads_an_entry_whatever_immich_left_out():
+    def entry(**kw):
+        return BulkIdResponseDto(id=uuid4(), **kw)
+
+    assert immich.bulk_failure(entry(success=True)) is None
+    dup = entry(success=False, error=BulkIdErrorReason.DUPLICATE)
+    assert immich.bulk_failure(dup) is None  # already there
+    denied = entry(success=False, error=BulkIdErrorReason.NO_PERMISSION, error_message="nope")
+    assert immich.bulk_failure(denied) == "no_permission: nope"
+    # A failure with no reason, and one with no message, still read as failures.
+    assert immich.bulk_failure(entry(success=False)) == "unknown: no detail"
+    assert immich.bulk_failure(entry(success=False, error_message="nope")) == "unknown: nope"
 
 
 async def test_find_workflow_wants_the_exact_name_and_step_matches_checks_every_field():

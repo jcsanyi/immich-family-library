@@ -1,4 +1,4 @@
-"""Stage 7: the long-running service.
+"""The long-running service.
 
 Two things in one process, sharing the accounts, the state and a set of
 in-flight asset ids:
@@ -98,8 +98,8 @@ class Daemon:
         app.router.add_post(self.cfg.webhook.path, self.handle)
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
-        host, _, port = self.cfg.webhook.listen.rpartition(":")
-        await web.TCPSite(runner, host or "0.0.0.0", int(port)).start()
+        host, port = self.cfg.webhook.bind
+        await web.TCPSite(runner, host, port).start()
         log.info("webhook listening on %s%s", self.cfg.webhook.listen, self.cfg.webhook.path)
         return runner
 

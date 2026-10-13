@@ -47,6 +47,24 @@ def test_parse_good():
         ),
         (lambda r: r.update({"serivce": {"readonly": False}}), r"unknown section \[serivce\]"),
         (lambda r: r.update({"service": 5}), r"\[service\] must be a table"),
+        # A value of the wrong type is an error, never a guess.
+        (lambda r: r["immich"].update({"url": 5}), r"\[immich\] url must be a string"),
+        (
+            lambda r: r["service"].update({"readonly": "false"}),
+            r"\[service\] readonly must be true or false",
+        ),
+        (lambda r: r["service"].update({"readonly": 0}), "readonly must be true or false"),
+        (lambda r: r["service"].update({"state_path": 5}), "state_path must be a string"),
+        (lambda r: r["service"].update({"state_path": ""}), "state_path must name a file"),
+        (lambda r: r["family"].update({"email": 5}), r"\[family\] email must be a string"),
+        (lambda r: r["family"].update({"dropbox_album": 5}), "dropbox_album must be a string"),
+        (lambda r: r["members"]["a"].update({"api_key": 5}), r"\[members.a\] api_key must be"),
+        (
+            lambda r: r.update({"limits": {"assets_per_pass": True}}),
+            "assets_per_pass must be a whole number",
+        ),
+        (lambda r: r["service"].update({"settle_seconds": False}), "settle_seconds must be"),
+        (lambda r: r.update({"tags": {"moved": 5}}), r"\[tags\] moved must be a string"),
     ],
 )
 def test_parse_errors(mutate, msg):
@@ -56,6 +74,21 @@ def test_parse_errors(mutate, msg):
     mutate(raw)
     with pytest.raises(ConfigError, match=msg):
         parse_config(raw)
+
+
+def test_the_example_file_shows_every_default():
+    import re
+    import tomllib
+
+    from ifl.config import DEFAULTS
+
+    text = (Path(__file__).parents[1] / "config.example.toml").read_text()
+    # The [webhook] section is commented out in the example; read it as written.
+    text = re.sub(r"(?m)^# (\[webhook\]|(?:url|token|listen) = )", r"\1", text)
+    example = tomllib.loads(text)
+    for section, settings in DEFAULTS.items():
+        for key, default in settings.items():
+            assert example[section][key] == default, f"[{section}] {key}"
 
 
 def test_dropbox_album_defaults():
@@ -210,7 +243,8 @@ def test_webhook_and_interval_settings():
     cfg = parse_config(raw)
     assert cfg.interval_seconds == 30
     assert cfg.webhook.url == "http://ifl:8080/hook" and cfg.webhook.listen == "0.0.0.0:8080"
-    assert cfg.webhook.path == "/webhook/asset-created"
+    # The receiver serves the path Immich is told to call, and binds what `listen` says.
+    assert cfg.webhook.path == "/hook" and cfg.webhook.bind == ("0.0.0.0", 8080)
     minimal = to_raw(cfg, minimal=True)
     assert minimal["service"] == {"interval_seconds": 30}
     assert minimal["webhook"] == {"url": "http://ifl:8080/hook", "token": "**krit"}
@@ -218,9 +252,36 @@ def test_webhook_and_interval_settings():
     for bad in (
         {"url": "http://x"},
         {"token": "t"},
-        {"url": "http://x", "token": "t", "path": "hook"},
+        {"url": "http://x", "token": "t", "path": "/hook"},  # no longer a setting
+        {"url": "http://x", "token": 5},
+        {"url": "ifl:8080/hook", "token": "t"},
+        {"url": "ftp://ifl/hook", "token": "t"},
+        {"url": "http:///hook", "token": "t"},
+        {"url": "http://[ifl/hook", "token": "t"},
     ):
         with pytest.raises(ConfigError, match="webhook"):
             parse_config({**GOOD, "webhook": bad})
+    for listen in (
+        "ifl",
+        "0.0.0.0:",
+        "0.0.0.0:http",
+        "0.0.0.0:0",
+        "0.0.0.0:65536",
+        "::1:8080",
+        "[:8080",
+        "::]:8080",
+        "9000",
+        8080,
+    ):
+        with pytest.raises(ConfigError, match=r"\[webhook\] listen must be"):
+            parse_config({**GOOD, "webhook": {"url": "http://x", "token": "t", "listen": listen}})
+    for listen, bind in (
+        ("127.0.0.1:9000", ("127.0.0.1", 9000)),
+        (":9000", ("0.0.0.0", 9000)),
+        ("[::]:9000", ("::", 9000)),
+    ):
+        raw = {**GOOD, "webhook": {"url": "http://x", "token": "t", "listen": listen}}
+        cfg = parse_config(raw)
+        assert cfg.webhook.bind == bind and cfg.webhook.path == "/"
     with pytest.raises(ConfigError, match="interval_seconds"):
         parse_config({**GOOD, "service": {"interval_seconds": 0}})

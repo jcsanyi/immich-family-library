@@ -59,7 +59,19 @@ def test_rewrite_strips_lightroom_and_dublin_core_keywords():
     assert tags_in(out.encode()) == ["from/bob"]
 
 
-def test_rewrite_without_a_sidecar_makes_a_minimal_one():
-    out = with_only_tag(None, "from/carol")
-    assert tags_in(out) == ["from/carol"]
-    assert b"x:xmpmeta" in out and b"rdf:RDF" in out
+def test_rewrite_keeps_properties_written_as_attributes():
+    # The shorthand form, as Lightroom and digiKam write it. Once the keywords
+    # are gone the block has no child elements, but it still holds the rest.
+    xmp = b"""<x:xmpmeta xmlns:x='adobe:ns:meta/'>
+<rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>
+ <rdf:Description rdf:about='' xmlns:dc='http://purl.org/dc/elements/1.1/'
+   xmlns:xmp='http://ns.adobe.com/xap/1.0/' xmlns:exif='http://ns.adobe.com/exif/1.0/'
+   xmp:Rating='4' exif:DateTimeOriginal='2024-05-01T10:00:00'>
+  <dc:subject><rdf:Bag><rdf:li>beach</rdf:li></rdf:Bag></dc:subject>
+ </rdf:Description>
+</rdf:RDF>
+</x:xmpmeta>"""
+    out = with_only_tag(xmp, "from/alice")
+    text = out.decode()
+    assert 'xmp:Rating="4"' in text and 'exif:DateTimeOriginal="2024-05-01T10:00:00"' in text
+    assert "beach" not in text and tags_in(out) == ["from/alice"]

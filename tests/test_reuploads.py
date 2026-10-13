@@ -89,7 +89,7 @@ async def test_a_member_with_no_mark_is_not_scanned_for_reuploads(
 
     assert not scan.moves and scan.scanned_at == NOW
     assert reads == [BOB]  # alice's library was never read
-    assert "alice: first re-upload scan" in caplog.text
+    assert "alice: no re-upload mark yet" in caplog.text
     assert state.get_mark(ALICE) is None  # the scan only reads; advance_marks sets it
 
 

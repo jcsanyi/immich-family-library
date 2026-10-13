@@ -14,7 +14,7 @@ There is one extra Immich user, the family account, and it owns the family libra
 
 ## Requirements
 
-- Immich 3.3 or later.
+- Immich 3.3. A later Immich version needs a matching release of this service. Until then the service starts with a warning.
 - A family Immich user with an API key, and an API key from each participating member.
 - If face detection will be on, all accounts in one cluster group, created before face detection is turned on. [docs/deployment.md](docs/deployment.md) has the order of steps.
 
@@ -25,7 +25,7 @@ The service is one container next to Immich, on the same docker network, with a 
 ## Documentation
 
 - [docs/for-members.md](docs/for-members.md): the page to hand to family members. What they see, the one phone setting, what carries over.
-- [docs/how-it-works.md](docs/how-it-works.md): the model. The one rule, the flows, the move step by step, re-uploads, state and pacing.
+- [docs/how-it-works.md](docs/how-it-works.md): the model. What the service moves, the flows, the move step by step, re-uploads, state and pacing.
 - [docs/cli.md](docs/cli.md): every command, the exit codes, a first run.
 - [docs/configuration.md](docs/configuration.md): every setting with its default, and the API key permissions.
 - [docs/deployment.md](docs/deployment.md): compose, the webhook, the state file, upgrades, what to check before production.
