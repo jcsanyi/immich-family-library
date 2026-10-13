@@ -12,7 +12,7 @@ url = "https://photos.example.com"
 admin_api_key = ""
 
 [service]
-# The state file: the re-upload marks and the daily tally. Nothing in it needs
+# The state file: the daily tally of re-uploads. Nothing in it needs
 # a backup. Relative paths are resolved against this file's directory. In the
 # container the config mount is read-only, so use the data volume:
 # "/data/state.json".

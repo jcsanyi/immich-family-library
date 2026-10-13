@@ -21,15 +21,18 @@ from ifl.daemon import Daemon
 from ifl.move import (
     MoveError,
     MoveOptions,
-    advance_marks,
     move_assets,
     pass_backlog,
     prepare_temp_dir,
 )
 from ifl.observer import (
+    AssetScan,
+    MoveAsset,
     describe_albums,
     describe_assets,
     describe_reconcile,
+    member_asset,
+    reupload_items,
     scan_albums,
     scan_assets,
     scan_reconcile,
@@ -70,16 +73,14 @@ def own_state(cfg: Config, accounts: Accounts) -> State:
 
 
 async def run_observe(config_path: Path) -> int:
-    """One pass: report what the rules would do. Never writes to Immich, and
-    reads the state file without creating it."""
+    """One pass: report what the rules would do. Never writes to Immich."""
     async with opened(config_path, writes=False) as (cfg, accounts):
-        state = State.load(cfg.state_path)
         # The same three scans `process` acts on, in the same order, reported only.
         albums = await scan_albums(accounts)
         log.info("albums: %s", "; ".join(describe_albums(albums)))
         fixes = await scan_reconcile(accounts, cfg.dropbox_album, cfg.webhook)
         log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
-        assets = await scan_assets(accounts, cfg.dropbox_album, state=state)
+        assets = await scan_assets(accounts, cfg.dropbox_album)
         log.info("assets: %s", "; ".join(describe_assets(assets)))
         for who, n in assets.reuploads_by_owner().items():
             log.info("%s has %d re-uploads waiting", who, n)
@@ -138,14 +139,16 @@ async def run_reconcile_albums(config_path: Path) -> int:
 
 async def run_move(config_path: Path, asset_id: UUID | None) -> int:
     """Move one asset by id, or every movable asset up to the configured limit.
-    Either way only what the scan would move; same decision as `observe`."""
+    `--all` moves only what the scan would; same decision as `observe`. One id
+    is looked up directly, so a re-upload older than the scan's window still
+    moves."""
     async with opened(config_path, writes=True) as (cfg, accounts):
         backlog = await pass_backlog(accounts)
         if backlog:
             log.error("not moving anything: Immich has jobs waiting: %s", backlog)
             return 1
         state = own_state(cfg, accounts)
-        scan = await scan_assets(accounts, cfg.dropbox_album, state=state)
+        scan = await scan_assets(accounts, cfg.dropbox_album, reuploads=asset_id is None)
         opts = MoveOptions.from_config(cfg)
         if asset_id is None:
             for b in scan.blocked:
@@ -155,7 +158,6 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
             many = await move_assets(
                 accounts, opts, scan.moves, state=state, limit=cfg.assets_per_pass
             )
-            advance_marks(state, scan, many, accounts)
             log.info("%s", many)
             return 1 if many.failed or state.unsaved else 0
         target = [m for m in scan.moves if m.asset_id == asset_id]
@@ -163,12 +165,32 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
             blocked = next((b for b in scan.blocked if b.asset_id == asset_id), None)
             if blocked:
                 log.error("not moving %s: %s", blocked.what, blocked.reason)
-            else:
-                log.error("asset %s is not a member-owned asset in a family-owned album", asset_id)
-            return 1
-        # No advance_marks: the marks cover a whole scan, and this moved one asset of it.
+                return 1
+            target = await _reupload_target(accounts, asset_id)
+            if not target:
+                return 1
         many = await move_assets(accounts, opts, target, state=state, limit=0)
         return 1 if not many.done or state.unsaved else 0
+
+
+async def _reupload_target(accounts: Accounts, asset_id: UUID) -> list[MoveAsset]:
+    """The move item for a member's asset that is in no family album but that
+    the family already has, or nothing, with the reason logged."""
+    found = await member_asset(accounts, asset_id)
+    if found is None:
+        log.error("asset %s is not a member's asset, or it is in the trash", asset_id)
+        return []
+    one = AssetScan()
+    await reupload_items(accounts, [(found[0], [found[1]])], one)
+    for s in one.skipped_reuploads:
+        log.error("not moving %s", s)
+    if not one.moves and not one.skipped_reuploads:
+        log.error(
+            "not moving %s from %s: it is in no family-owned album, and the family has no copy",
+            found[1].original_file_name,
+            found[0].name,
+        )
+    return one.moves
 
 
 async def run_process(config_path: Path) -> int:

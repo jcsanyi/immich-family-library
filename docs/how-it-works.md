@@ -190,16 +190,19 @@ What the service does about it:
   force-empties trash, for exactly this reason.
 - The asset scan has a second source: per member, the photos uploaded since
   the last look, with their checksums batched through the family's bulk
-  check. The last look is a per-member mark in the state file. A match goes
-  through the same move: the copy is found by checksum, nothing is uploaded,
-  the copy is re-linked into any album the duplicate sits in, the duplicate
-  is trashed, and it joins the member's daily tally.
-- A member's first scan reads nothing. Before the service has moved anything
-  of theirs, nothing they hold can be a re-upload, so the mark simply starts
-  at that pass. Photos they and the family both held from before are left
-  where they are. The same goes for a lost state file: re-uploads from the gap
-  are never looked for, and sit as harmless duplicates in the member's
-  library.
+  check. A match goes through the same move: the copy is found by checksum,
+  nothing is uploaded, the copy is re-linked into any album the duplicate
+  sits in, the duplicate is trashed, and it joins the member's daily tally.
+- The last look is a mark the daemon keeps in memory, and the scan never reads
+  further back than three days. A daemon that has just started has no mark,
+  so its first pass reads all three days, and so does every one-off `process`,
+  `move` and `observe`. A daemon that was down for longer than that leaves a
+  gap: re-uploads from the gap are never looked for, and sit as harmless
+  duplicates in the member's library.
+- The scan can't tell a phone's re-upload from a photo the family got some
+  other way. So when the service first runs, or a member first joins, a photo
+  they uploaded in the last three days that the family already holds is
+  trashed as a duplicate. Anything older that both hold is left where it is.
 - The moved tag tells a duplicate from a crashed move. The service puts that
   tag on an original before it uploads, so an original wearing it is a move
   that died partway, and the member's photo is the one to finish from. An
@@ -260,17 +263,15 @@ photo, and the service never writes into it.
 Immich is the source of truth for everything. Where a copy came from is in its
 `ifl` entry, and whether a move is finished is in what Immich holds. The
 service keeps one small JSON file, the state file, and nothing in it is needed
-for correctness. It holds each member's re-upload scan mark, each member's
-tally of trashed re-uploads since the last daily report, and when that report
-last ran. Losing it means the marks start again at the next pass and one
-report is dropped. The file never stores config labels. Immich stores a label
+for correctness. It holds each member's tally of trashed re-uploads since the
+last daily report, and when that report last ran. Losing it means one report
+is dropped. The file never stores config labels. Immich stores a label
 in one place only, the `from/<member>` tag. Apart from that tag, renaming a
 member in the config changes only how messages read.
 
 A member taken out of the config is dropped from the state file the next time
-the daemon, `process` or `move` starts. Added back later, they start as a new
-member does: their mark begins at that pass, and nothing from the gap is
-trashed. The file isn't meant to be edited by hand.
+the daemon, `process` or `move` starts. The file isn't meant to be edited by
+hand.
 
 Only one command that writes to Immich runs at a time. Two at once could each
 look for a family album, find none, and both create it, and the same goes for
@@ -286,15 +287,15 @@ writer, so the file needs no locking of its own.
 
 The daemon's pass and its webhook receiver share a set of in-flight asset ids,
 so they never work on the same photo at once. Whoever is second skips, and a
-skipped re-upload holds its member's mark back so it's found again.
+skipped re-upload holds the mark back so it's found again.
 
 Any unfinished re-upload holds the mark the same way: one that's blocked,
-failed, or left over the per-pass cap. The next pass re-reads that member's
-uploads from the oldest unfinished one onward, so a re-upload that stays
-blocked, say in one of the member's shared links, means the scan re-reads
-that stretch of their library every pass until the block clears. Nothing is
-missed, but the work grows with their uploads since then, and the pass log
-says whose mark is held and from when.
+failed, or left over the per-pass cap. The mark stays where it was, and the
+pass log says so. While a re-upload stays blocked, say in one of the member's
+shared links, every pass re-reads every member's uploads from the held mark
+onward, so the read grows until the block clears. It can't grow past three
+days: by then the scan no longer finds that re-upload, and the mark moves
+again.
 
 ## Pacing
 

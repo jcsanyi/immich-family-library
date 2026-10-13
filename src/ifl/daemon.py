@@ -29,15 +29,16 @@ import contextlib
 import hmac
 import logging
 import signal
+from datetime import datetime
 from uuid import UUID
 
 from aiohttp import web
 
 from ifl.accounts import Account, Accounts
 from ifl.config import Config
-from ifl.immich import TOKEN_HEADER, get_asset
+from ifl.immich import TOKEN_HEADER
 from ifl.move import MoveOptions, move_assets
-from ifl.observer import AssetScan, describe_assets, reupload_items
+from ifl.observer import AssetScan, describe_assets, member_asset, reupload_items
 from ifl.process import run_pass
 from ifl.state import State
 
@@ -52,6 +53,7 @@ class Daemon:
         self.cfg = cfg
         self.state = state
         self.in_flight: set[UUID] = set()
+        self.mark: datetime | None = None  # the re-upload scan's; a restart reads the whole window
         self.events: asyncio.Queue[tuple[UUID, UUID | None]] = asyncio.Queue()
         self.stopping = asyncio.Event()
 
@@ -80,8 +82,9 @@ class Daemon:
         while not self.stopping.is_set():
             try:
                 result = await run_pass(
-                    self.accounts, self.cfg, self.state, in_flight=self.in_flight
+                    self.accounts, self.cfg, self.state, in_flight=self.in_flight, mark=self.mark
                 )
+                self.mark = result.mark
                 log.info("pass done: %s", result)
             except asyncio.CancelledError:
                 raise
@@ -137,21 +140,16 @@ class Daemon:
                 log.exception("webhook batch failed; the next pass will catch anything missed")
 
     async def handle_batch(self, batch: list[tuple[UUID, UUID | None]]) -> None:
-        members = {m.user_id: m for m in self.accounts.members.values()}
-        by_member: dict[UUID, list] = {}
+        by_member: dict[UUID, tuple[Account, list]] = {}
         for asset_id, owner_id in dict.fromkeys(batch):
-            candidates = [members[owner_id]] if owner_id in members else list(members.values())
-            for member in candidates:
-                asset = await self._read(member, asset_id)
-                if asset is not None:
-                    by_member.setdefault(member.user_id, []).append(asset)
-                    break
+            found = await member_asset(self.accounts, asset_id, owner_id)
+            if found is not None:
+                member, asset = found
+                by_member.setdefault(member.user_id, (member, []))[1].append(asset)
         if not by_member:
             return
         scan = AssetScan()
-        await reupload_items(
-            self.accounts, [(members[uid], assets) for uid, assets in by_member.items()], scan
-        )
+        await reupload_items(self.accounts, list(by_member.values()), scan)
         if not scan.moves and not scan.skipped_reuploads:
             log.debug("webhook: %d new uploads, none the family has", len(batch))
             return
@@ -161,13 +159,3 @@ class Daemon:
             self.accounts, opts, scan.moves, state=self.state, limit=0, in_flight=self.in_flight
         )
         log.info("webhook: %s", result)
-
-    @staticmethod
-    async def _read(member: Account, asset_id: UUID):
-        try:
-            asset = await get_asset(member.client, asset_id)
-        except Exception:  # noqa: BLE001 - not this member's, or gone already
-            return None
-        if asset.owner_id != member.user_id or asset.is_trashed:
-            return None
-        return asset

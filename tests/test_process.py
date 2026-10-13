@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -10,6 +11,7 @@ from fakes import (
     BOB,
     EDITOR,
     FAMILY,
+    T0,
     TEMP_DIR,
     FakeAsset,
     FakeClient,
@@ -73,10 +75,9 @@ async def test_a_pass_converts_reconciles_and_moves_in_order(world, state):
     for album in (fam_beach, trip):
         live = [a for a in world.assets[album.id] if not a.is_trashed]
         assert len(live) == 1 and live[0].owner_id == FAMILY
-    # The state is saved: both marks started, the report clock started.
-    saved = State.load(state.path)
-    assert saved.get_mark(ALICE) == state.get_mark(ALICE) is not None
-    assert saved.last_report is not None
+    # Nothing was left unfinished, so the mark is set. The report clock is saved.
+    assert result.mark is not None
+    assert State.load(state.path).last_report is not None
     assert not result.failed
     assert str(result).startswith(
         "albums: converted 1, failed 0, remaining 0; family albums: created dropbox"
@@ -117,21 +118,21 @@ async def test_a_queue_backlog_skips_the_moves_but_not_the_albums(world, state):
     world.album("X", ALICE, roles={FAMILY: EDITOR}, assets=[a])
     world.queues = {"metadataExtraction": 40}
 
-    result = await run_pass(accounts, cfg, state)
+    result = await run_pass(accounts, cfg, state, mark=T0)
 
     assert len(result.converted.done) == 1
     assert result.backlog == {"metadataExtraction": 40} and result.moved is None
+    assert result.mark == T0  # no scan ran, so the mark stays
     assert not a.is_trashed and not result.failed
     assert "skipped, Immich has jobs waiting" in str(result)
 
 
-async def test_reuploads_are_handled_and_marks_advance_only_past_what_finished(world, state):
-    from datetime import UTC, datetime, timedelta
-
+async def test_reuploads_are_handled_and_the_mark_is_held_while_one_is_unfinished(world, state):
     accounts = make_accounts()
     cfg = parse_config(RAW)
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
-    old = datetime(2026, 10, 1, tzinfo=UTC)
+    start = datetime.now(UTC) - timedelta(days=2)
+    old = start + timedelta(hours=1)
     fresh = datetime.now(UTC) - timedelta(seconds=5)
     copy = world.add_asset(
         FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg")
@@ -154,25 +155,21 @@ async def test_reuploads_are_handled_and_marks_advance_only_past_what_finished(w
         FakeAsset(uuid4(), BOB, checksum="beach", original_file_name="beach.jpg", created_at=old)
     )
     world.shared_links[BOB] = {bobs.id}
-    for uid in (ALICE, BOB):
-        state.set_mark(uid, old - timedelta(days=1))  # both have been scanned before
 
-    result = await run_pass(accounts, cfg, state)
+    result = await run_pass(accounts, cfg, state, mark=start)
 
     assert [r.file_name for r in result.moved.done] == ["beach.jpg"] and result.moved.done[
         0
     ].duplicate
     assert alices.is_trashed and not bobs.is_trashed
     assert [b[1] for b in result.moved.blocked] == ["in one of the owner's shared links"]
-    # alice: everything handled, marked at the scan time. bob: held at his unfinished upload.
-    assert state.get_mark(ALICE) is not None and state.get_mark(ALICE) > fresh
-    assert state.get_mark(BOB) == old
+    assert result.mark == start  # held: past it, bob's would not be read again
     assert state.members[ALICE].reuploads == 1
-    # Bob removes it from the link: found again from the held-back mark, handled, mark released.
+    # Bob removes it from the link: found again from the held mark, handled, mark released.
     world.shared_links[BOB] = set()
-    again = await run_pass(accounts, cfg, state)
+    again = await run_pass(accounts, cfg, state, mark=result.mark)
     assert [r.file_name for r in again.moved.done] == ["beach.jpg"] and bobs.is_trashed
-    assert state.get_mark(BOB) > old and state.members[BOB].reuploads == 1
+    assert again.mark > fresh and state.members[BOB].reuploads == 1
 
 
 async def test_in_flight_assets_are_left_to_the_other_path(world, state):
@@ -184,40 +181,21 @@ async def test_in_flight_assets_are_left_to_the_other_path(world, state):
     )
     world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
     re = world.add_asset(
-        FakeAsset(uuid4(), ALICE, checksum="beach", original_file_name="beach.jpg")
+        FakeAsset(
+            uuid4(),
+            ALICE,
+            checksum="beach",
+            original_file_name="beach.jpg",
+            created_at=datetime.now(UTC) - timedelta(hours=1),
+        )
     )
     busy = {re.id}  # the receiver has it
-    from datetime import UTC, datetime
 
-    state.set_mark(ALICE, datetime(2025, 1, 1, tzinfo=UTC))
-
-    result = await run_pass(accounts, cfg, state, in_flight=busy)
+    result = await run_pass(accounts, cfg, state, in_flight=busy, mark=T0)
 
     assert result.moved.skipped_in_flight == 1 and not result.moved.done and not re.is_trashed
-    assert state.get_mark(ALICE) == re.created_at  # held back, in case the other path fails
+    assert result.mark == T0  # held back, in case the other path fails
     assert busy == {re.id}  # not ours to remove
-
-
-async def test_a_first_pass_starts_each_members_mark_at_now_without_reading_their_library(
-    world, state
-):
-    from datetime import UTC, datetime
-
-    accounts = make_accounts()
-    cfg = parse_config(RAW)
-    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
-    # A photo both the family and alice held before the service: left alone.
-    world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg"))
-    alices = world.add_asset(
-        FakeAsset(uuid4(), ALICE, checksum="beach", original_file_name="beach.jpg")
-    )
-    before = datetime.now(UTC)
-
-    result = await run_pass(accounts, cfg, state)
-
-    assert not result.moved.done and not alices.is_trashed
-    assert all(state.get_mark(m.user_id) >= before for m in accounts.members.values())
-    assert all(m.reuploads == 0 for m in state.members.values())
 
 
 async def test_reconcile_sets_up_each_members_webhook_workflow(world, state):

@@ -822,37 +822,3 @@ async def test_a_run_cut_short_has_tallied_what_it_trashed(world, state, monkeyp
         await move_assets(accounts, OPTS, moves, state=state, limit=0)
 
     assert state.members[ALICE].reuploads == 1
-
-
-def test_advance_marks_holds_a_member_at_their_oldest_unfinished_reupload(tmp_path, caplog):
-    import logging
-
-    from ifl.move import MoveManyResult, advance_marks
-    from ifl.observer import AssetScan, MoveAsset
-    from ifl.state import State
-
-    state = State(tmp_path / "state.json")
-
-    accounts = make_accounts()
-    alice, bob = accounts.members["alice"], accounts.members["bob"]
-    t1, t2 = NOW - timedelta(days=3), NOW - timedelta(days=1)
-    done, stuck_old, stuck_new = uuid4(), uuid4(), uuid4()
-    scan = AssetScan(
-        moves=[
-            MoveAsset(done, alice, None, "a.jpg", reupload=True, created_at=t2),
-            MoveAsset(stuck_new, bob, None, "b2.jpg", reupload=True, created_at=t2),
-            MoveAsset(stuck_old, bob, None, "b1.jpg", reupload=True, created_at=t1),
-            MoveAsset(uuid4(), bob, None, "plain.jpg", created_at=t1),  # not a re-upload
-        ],
-        scanned_at=NOW,
-    )
-    many = MoveManyResult(unfinished={stuck_old, stuck_new})
-
-    with caplog.at_level(logging.INFO, logger="ifl.move"):
-        advance_marks(state, scan, many, accounts)
-
-    assert state.get_mark(alice.user_id) == NOW  # everything of hers finished
-    assert state.get_mark(bob.user_id) == t1  # held at his oldest unfinished one
-    assert [r.getMessage() for r in caplog.records] == [
-        f"bob's re-upload mark held at {t1.isoformat(timespec='seconds')} by 2 unfinished re-upload(s)"
-    ]

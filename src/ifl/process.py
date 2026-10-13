@@ -10,9 +10,9 @@ scans":
 3. Queue check under the admin key, if there is one. A backlog on the sidecar or
    metadata queues means the moves wait for the next pass, and so does the
    re-upload mark.
-4. Asset scan, re-uploads included, then moves, up to `assets_per_pass`. Then
-   each member's re-upload mark advances as far as what was finished, and the
-   trashed re-uploads join their member's tally.
+4. Asset scan, re-uploads included, then moves, up to `assets_per_pass`. The
+   re-upload mark then advances, unless a re-upload was left unfinished, and
+   the trashed re-uploads join their member's tally.
 5. The daily report, once `report_at` has passed since the last one: one
    warning per member with a non-zero tally.
 
@@ -33,11 +33,11 @@ from ifl.convert import ConvertManyResult, convert_albums
 from ifl.move import (
     MoveManyResult,
     MoveOptions,
-    advance_marks,
     move_assets,
     pass_backlog,
 )
 from ifl.observer import (
+    AssetScan,
     describe_albums,
     describe_reconcile,
     scan_albums,
@@ -56,6 +56,7 @@ class PassResult:
     reconciled: ReconcileResult | None  # None when nothing needed doing
     backlog: dict[str, int] | None  # queues that stopped the moves, if any
     moved: MoveManyResult | None  # None when the backlog stopped them
+    mark: datetime | None = None  # where the next pass's re-upload scan starts
 
     @property
     def failed(self) -> bool:
@@ -84,18 +85,25 @@ async def run_pass(
     state: State,
     *,
     in_flight: set[UUID] | None = None,
+    mark: datetime | None = None,
     now: datetime | None = None,
 ) -> PassResult:
+    """`mark` is the `mark` of the last pass's result. Without one, the re-upload
+    scan reads its whole window."""
     # The report runs even when the pass raises: the webhook keeps tallying
     # while passes fail, and the report is the one signal for a looping phone.
     try:
-        return await _run_pass(accounts, cfg, state, in_flight)
+        return await _run_pass(accounts, cfg, state, in_flight, mark)
     finally:
         report_reuploads(state, cfg, accounts, now)
 
 
 async def _run_pass(
-    accounts: Accounts, cfg: Config, state: State, in_flight: set[UUID] | None
+    accounts: Accounts,
+    cfg: Config,
+    state: State,
+    in_flight: set[UUID] | None,
+    mark: datetime | None,
 ) -> PassResult:
     albums = await scan_albums(accounts)
     for b in albums.blocked:
@@ -112,7 +120,7 @@ async def _run_pass(
     if backlog:
         log.warning("not moving anything this pass: Immich has jobs waiting: %s", backlog)
     else:
-        assets = await scan_assets(accounts, cfg.dropbox_album, state=state)
+        assets = await scan_assets(accounts, cfg.dropbox_album, mark=mark)
         for b in assets.blocked:
             log.warning("not moving %s: %s", b.what, b.reason)
         for s in assets.skipped_reuploads:
@@ -126,8 +134,20 @@ async def _run_pass(
             limit=cfg.assets_per_pass,
             in_flight=in_flight,
         )
-        advance_marks(state, assets, moved, accounts)
-    return PassResult(converted, reconciled, backlog, moved)
+        mark = _advance_mark(mark, assets, moved)
+    return PassResult(converted, reconciled, backlog, moved, mark)
+
+
+def _advance_mark(mark: datetime | None, scan: AssetScan, moved: MoveManyResult) -> datetime | None:
+    """The mark moves to this scan's time only when every re-upload the scan
+    found was finished. One that is blocked, failed, skipped or over the limit
+    is no longer in the next read once the mark passes it, so the mark stays
+    where it is and the next pass finds it again."""
+    held = sum(1 for m in scan.moves if m.reupload and m.asset_id in moved.unfinished)
+    if not held:
+        return scan.scanned_at
+    log.info("re-upload mark held by %d unfinished re-upload(s)", held)
+    return mark
 
 
 STALE_REPORT = timedelta(hours=26)  # past this, the window is named rather than called a day

@@ -187,7 +187,7 @@ def test_a_writing_command_refuses_while_another_holds_the_lock(world, config, t
     assert run(path, "process") == 0
 
 
-def test_observe_reads_the_state_without_creating_it_and_process_writes_it(world, config, tmp_path):
+def test_observe_does_not_create_the_state_file_and_process_does(world, config, tmp_path):
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     assert run(path, "observe") == 0 and not (tmp_path / "state.json").exists()
@@ -201,11 +201,9 @@ def test_a_one_off_command_fails_when_the_state_cannot_be_saved(world, config, t
     (tmp_path / "state.json.tmp").mkdir()  # every save fails; the lock still opens
 
     assert run(path, "process") == 1 and not (tmp_path / "state.json").exists()
-    assert run(path, "move", "--all") == 1
 
 
 def test_move_one_tallies_a_reupload(world, config, tmp_path):
-    from datetime import UTC, datetime
 
     from ifl.state import State
 
@@ -213,12 +211,33 @@ def test_move_one_tallies_a_reupload(world, config, tmp_path):
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     copy = world.add_asset(FakeAsset(uuid4(), FAMILY, "aa", "a.jpg"))
     world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    # Uploaded long before the scan's window: one id is looked up directly.
     re = world.add_asset(FakeAsset(uuid4(), ALICE, "aa", "a.jpg"))
     state = State(tmp_path / "state.json")
-    state.set_mark(ALICE, datetime(2025, 1, 1, tzinfo=UTC))
 
     assert run(path, "move", str(re.id)) == 0 and re.is_trashed
     assert State.load(state.path).members[ALICE].reuploads == 1
+
+
+def test_move_one_says_why_an_asset_outside_the_family_albums_does_not_move(world, config, caplog):
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    world.add_asset(FakeAsset(uuid4(), FAMILY, "cc", "cat.jpg", is_trashed=True))
+    binned = world.add_asset(FakeAsset(uuid4(), ALICE, "cc", "cat.jpg"))
+    own = world.add_asset(FakeAsset(uuid4(), ALICE, "dd", "dog.jpg"))
+    gone = world.add_asset(FakeAsset(uuid4(), ALICE, "ee", "eel.jpg", is_trashed=True))
+
+    with caplog.at_level("ERROR", logger="ifl"):
+        assert run(path, "move", str(binned.id)) == 1 and not binned.is_trashed
+        assert run(path, "move", str(own.id)) == 1 and not own.is_trashed
+        assert run(path, "move", str(gone.id)) == 1
+
+    assert "not moving cat.jpg from alice: the family's copy is in the trash" in caplog.text
+    assert (
+        "not moving dog.jpg from alice: it is in no family-owned album, and the family has no copy"
+        in caplog.text
+    )
+    assert f"asset {gone.id} is not a member's asset, or it is in the trash" in caplog.text
 
 
 def test_a_lock_that_cannot_be_opened_exits_2_without_a_traceback(world, config, tmp_path):
@@ -228,7 +247,6 @@ def test_a_lock_that_cannot_be_opened_exits_2_without_a_traceback(world, config,
 
 
 def test_a_writing_command_drops_removed_members_and_observe_does_not(world, config, tmp_path):
-    from datetime import UTC, datetime
 
     from ifl.state import State
 
@@ -236,9 +254,8 @@ def test_a_writing_command_drops_removed_members_and_observe_does_not(world, con
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     gone = uuid4()
     state = State(tmp_path / "state.json")
-    state.set_mark(gone, datetime(2025, 1, 1, tzinfo=UTC))
     state.add_reuploads(gone, 4)
 
     assert run(path, "observe") == 0 and gone in State.load(state.path).members
     assert run(path, "process") == 0
-    assert set(State.load(state.path).members) == {ALICE, BOB}
+    assert gone not in State.load(state.path).members

@@ -104,12 +104,14 @@ still catches every re-upload, only later.
 
 ## The state file
 
-`/data/state.json` is the state file. It holds each member's re-upload scan
-mark, each member's tally of trashed re-uploads since the last daily report,
-and the time of that report. Nothing in it needs a backup. If it is lost, the
-re-upload marks start again at the next pass, and one daily report is
-dropped. Re-uploads from the gap are not found and stay in the member's
-library as duplicates of family photos. The record of where a family photo
+`/data/state.json` is the state file. It holds each member's tally of trashed
+re-uploads since the last daily report, and the time of that report. Nothing
+in it needs a backup. If it is lost, one daily report is dropped.
+
+The re-upload scan reads the last three days of each member's uploads when
+the daemon starts. If the daemon was stopped for longer, re-uploads from
+before those three days are not found. They stay in the member's library as
+duplicates of family photos. The record of where a family photo
 came from is on the photo itself, in its `ifl` metadata entry and its
 `from/<member>` tag.
 

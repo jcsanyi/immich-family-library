@@ -70,15 +70,25 @@ fix that fails does not stop the others. If any fix failed, it exits 1.
 
 ## `ifl move <asset-id>` and `ifl move --all`
 
-Moves one member photo that is in a family album, or that is a re-upload the
-family already has. `--all` moves every such photo up to `assets_per_pass`.
-The decision is the same as in `observe`. If the photo is blocked, the command
+`--all` moves every member photo that is in a family album, and every
+re-upload the family already has, up to `assets_per_pass`. The decision is the
+same as in `observe`. It finds only the re-uploads of the last three days. It
+reports moved, blocked, failed and remaining.
+
+With an asset id, the command moves that one photo. The asset id is in the
+address bar when the photo is open. If the photo is blocked, the command
 reports the reason and exits 1.
 
-The asset id is in the address bar when the photo is open. `--all` reports
-moved, blocked, failed and remaining. It advances the re-upload marks for what
-finished. Both forms add each trashed re-upload to its member's daily tally.
-If anything failed, or the state file could not be written, it exits 1.
+The command looks up one id directly, so the age of the photo does not matter.
+If the photo is in no family album, the command checks whether the family
+already has the same file. If the family has it, the command treats the
+member's photo as a re-upload: it adds the family's copy to the albums that
+hold the member's photo, and trashes the member's photo. This applies to any
+member photo, whether a phone re-uploaded it or not. If the family's copy is
+in the trash, or the family has no copy, the command moves nothing and exits 1.
+
+Both forms add each trashed re-upload to its member's daily tally. If anything
+failed, or the state file could not be written, it exits 1.
 
 With `admin_api_key` set, both forms refuse to start while Immich's sidecar or
 metadata queues have jobs waiting.

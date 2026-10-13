@@ -173,16 +173,18 @@ async def test_run_does_a_pass_serves_and_stops_when_told(world, state, monkeypa
     daemon = local_daemon(state)
     passes = []
 
-    async def one_pass(accounts, cfg, led, *, in_flight):
-        passes.append(in_flight)
+    async def one_pass(accounts, cfg, led, *, in_flight, mark):
+        passes.append((in_flight, mark))
         daemon.stopping.set()
-        return SimpleNamespace()
+        return SimpleNamespace(mark="next")
 
     monkeypatch.setattr("ifl.daemon.run_pass", one_pass)
 
     await asyncio.wait_for(daemon.run(), 5)
 
-    assert passes == [daemon.in_flight]  # the pass shares the receiver's in-flight set
+    # The pass shares the receiver's in-flight set. A daemon starts with no mark.
+    assert passes == [(daemon.in_flight, None)]
+    assert daemon.mark == "next"  # what the next pass is given
     left = [
         t.get_name() for t in asyncio.all_tasks() if t.get_name() in ("passes", "webhook-drain")
     ]
@@ -200,7 +202,7 @@ async def test_a_failing_pass_is_logged_and_the_next_one_still_runs(
         if len(calls) == 1:
             raise RuntimeError("immich went away")
         daemon.stopping.set()
-        return SimpleNamespace()
+        return SimpleNamespace(mark=None)
 
     monkeypatch.setattr("ifl.daemon.run_pass", flaky)
 

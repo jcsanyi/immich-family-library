@@ -72,7 +72,7 @@ from ifl.immich import (
     upload_asset,
     upsert_tag,
 )
-from ifl.observer import AssetScan, MoveAsset, unmovable
+from ifl.observer import MoveAsset, unmovable
 from ifl.sidecar import tags_in, with_only_tag
 from ifl.state import State
 
@@ -377,30 +377,6 @@ async def move_assets(
 def tally_reupload(state: State, result: MoveResult) -> None:
     if result.counts_as_reupload:
         state.add_reuploads(result.owner_id, 1)
-
-
-def advance_marks(state: State, scan: AssetScan, many: MoveManyResult, accounts: Accounts) -> None:
-    """After a pass, record how far the re-upload scan got, per member. A member
-    whose every re-upload was handled is marked at the scan time; otherwise at
-    the upload time of their oldest unfinished one, so it's found again. A mark
-    that stays held means a re-read of that stretch every pass, so say so."""
-    if scan.scanned_at is None:
-        return
-    for member in accounts.members.values():
-        pending = [
-            m.created_at
-            for m in scan.moves
-            if m.reupload and m.owner.user_id == member.user_id and m.asset_id in many.unfinished
-        ]
-        if pending:
-            held_at = min(pending)
-            log.info(
-                "%s's re-upload mark held at %s by %d unfinished re-upload(s)",
-                member.name,
-                held_at.isoformat(timespec="seconds"),
-                len(pending),
-            )
-        state.set_mark(member.user_id, held_at if pending else scan.scanned_at)
 
 
 async def move_asset(
