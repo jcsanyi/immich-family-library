@@ -427,9 +427,9 @@ async def move_asset(
     if why := unmovable(asset):
         raise MoveBlocked(why)
 
-    # The family copy, looked up first. With a live copy, the moved tag on the
-    # original decides: without it this is a duplicate, and the copy is
-    # authoritative. A duplicate needs nothing the asset's own jobs produce, so
+    # The family copy, looked up first. With a copy, live or in the trash, the
+    # moved tag on the original decides: without it this is a duplicate, and the
+    # copy is authoritative. A duplicate needs nothing the asset's own jobs produce, so
     # it skips the extraction and settle checks, which is what lets the webhook
     # trash a re-upload seconds after it lands.
     have_tag = any(t.value == opts.moved_tag for t in asset.tags or [])
@@ -453,7 +453,7 @@ async def move_asset(
         )
     family_id = owned.asset_id if owned else None
     duplicate = fixed_up = False
-    if owned and not owned.is_trashed:
+    if owned:
         duplicate, fixed_up = await copy_state()
 
     if not duplicate:
@@ -499,7 +499,6 @@ async def move_asset(
         log.info(
             "%s: restored the family copy %s from the trash", asset.original_file_name, family_id
         )
-        duplicate, fixed_up = await copy_state()
     if family_id is None:
         if asset.is_trashed:
             raise MoveError(f"{asset.original_file_name} is in the trash")

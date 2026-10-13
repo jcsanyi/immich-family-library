@@ -54,6 +54,9 @@ are listed here so that the next Immich upgrade knows what to re-check.
   API, with `asset.read` and `asset.update`. The service writes one key,
   `ifl`, on each family copy: the origin user id, the origin asset id, and
   the move time.
+- The store of a trashed asset stays readable. The move reads the `ifl` entry
+  of a family copy in the trash before it restores that copy. Confirmed on
+  dev with the family's key.
 - The key column accepts any string. Immich defines one key of its own,
   `mobile-app`, which the phone app uses for an iCloud id. No page in the web
   app or the mobile app shows the store. Read it with the API, as the owner.
