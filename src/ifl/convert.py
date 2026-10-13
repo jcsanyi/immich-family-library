@@ -1,4 +1,4 @@
-"""Stage 2: album conversion.
+"""Album conversion.
 
 A member-owned album shared with the family user becomes a family-owned album
 with the same name. The family account gets an album by that name (or already

@@ -1,4 +1,4 @@
-"""Stage 7: the long-running service.
+"""The long-running service.
 
 Two things in one process, sharing the accounts, the state and a set of
 in-flight asset ids:

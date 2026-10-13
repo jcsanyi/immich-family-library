@@ -1,4 +1,4 @@
-"""Stage 4: the per-asset move.
+"""The per-asset move.
 
 A member-owned asset in a family-owned album is re-uploaded under the family
 account with everything Immich lets us carry, re-linked into the albums it was
@@ -25,8 +25,7 @@ authoritative: edits and provenance are left alone, the copy is re-linked into
 any album the duplicate sits in, and the duplicate is trashed. The copy's `ifl`
 entry is a veto on top: if it names a different original, the copy already has
 its owner, whatever tag this asset wears. A family copy found in the trash
-while a member shares the photo again is
-restored first.
+while a member shares the photo again is restored first.
 
 Re-linking into a member-owned album runs under the album owner's key, which
 works because an owner can always add and the family partner-shares with every

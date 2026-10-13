@@ -77,6 +77,15 @@ def test_observe_reports_and_exits_0_whatever_it_finds(world, config):
     assert not a.is_trashed and not world.uploads
 
 
+def test_observe_warns_about_a_queue_backlog(world, config, monkeypatch, caplog):
+    async def waiting(accounts):
+        return {"sidecar": 3}
+
+    monkeypatch.setattr("ifl.cli.pass_backlog", waiting)
+    assert run(config(), "observe") == 0
+    assert "a pass would move nothing now: Immich has jobs waiting: {'sidecar': 3}" in caplog.text
+
+
 def test_process_exits_0_when_clean_and_1_when_a_move_fails(world, config, monkeypatch):
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})

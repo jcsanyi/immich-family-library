@@ -174,6 +174,25 @@ async def test_the_server_must_be_at_least_the_minimum_version(stub):
     assert await check_server(stub(URL, "k1")) == "3.3.0"
 
 
+async def test_a_later_minor_or_major_starts_with_a_warning(stub, caplog):
+    for later in ((3, 4, 0), (4, 0, 0)):
+        caplog.clear()
+        major, minor, patch = later
+        stub.KEYS["k1"] = {
+            "version": ServerVersionResponseDto(
+                major=major, minor=minor, patch=patch, prerelease=None
+            )
+        }
+        assert await check_server(stub(URL, "k1")) == ".".join(map(str, later))
+        assert "built for Immich 3.3 and is not tested" in caplog.text
+    caplog.clear()
+    stub.KEYS["k1"] = {
+        "version": ServerVersionResponseDto(major=3, minor=3, patch=9, prerelease=None)
+    }
+    await check_server(stub(URL, "k1"))
+    assert not caplog.text
+
+
 async def test_open_accounts_opens_every_key_and_closes_them_all_if_one_fails(stub):
     cfg = parse_config(
         {

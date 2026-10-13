@@ -1,4 +1,4 @@
-"""Stage 5: one complete pass.
+"""One complete pass.
 
 The order matters and is the one docs/how-it-works.md gives under "The three
 scans":

@@ -1,4 +1,4 @@
-"""Stage 3: family album consistency.
+"""Family album consistency.
 
 An invariant rather than a trigger: the dropbox album exists, owned by the
 family account; every configured member is an editor on every family-owned

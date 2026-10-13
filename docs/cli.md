@@ -42,6 +42,8 @@ Immich, and it reads the state file without creating it. It reports:
   `REUPLOAD` lines for members' recent uploads that the family already has.
   `SKIP` lines for re-uploads whose family copy is trashed. `BLOCKED` photos.
 - A count of re-uploads waiting per member.
+- A warning if Immich has jobs waiting on the queues that a move depends on.
+  While they wait, a pass moves nothing. This needs the admin key.
 
 Run it first on any new install. Run it again after any config change, before
 you set `readonly` to false.

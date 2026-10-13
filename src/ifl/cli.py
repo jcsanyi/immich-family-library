@@ -80,6 +80,9 @@ async def run_observe(config_path: Path) -> int:
         log.info("assets: %s", "; ".join(describe_assets(assets)))
         for who, n in assets.reuploads_by_owner().items():
             log.info("%s has %d re-uploads waiting", who, n)
+        backlog = await pass_backlog(accounts)
+        if backlog:
+            log.warning("a pass would move nothing now: Immich has jobs waiting: %s", backlog)
         return 0
 
 

@@ -267,7 +267,7 @@ async def _scan_reuploads(
         mark = state.get_mark(member.user_id)
         if mark is None:
             log.info(
-                "%s: first re-upload scan; the mark starts now, nothing earlier can be a re-upload",
+                "%s: no re-upload mark yet; a pass sets it, and nothing earlier can be a re-upload",
                 member.name,
             )
             continue

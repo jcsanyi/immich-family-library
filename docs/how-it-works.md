@@ -227,6 +227,10 @@ through the cluster group. The copy gets one tag, `from/<member>`.
 Lost: the member's own tags, on purpose; likes and comments on album photos;
 and, for now, manual face corrections and stacks (see the issues).
 
+A converted album keeps its name, description, photos and users. It loses its
+cover, its sort order and its activity setting, which go back to Immich's
+defaults (see the issues).
+
 ## Provenance
 
 Each family copy carries two marks. The `from/<member>` tag is for people,

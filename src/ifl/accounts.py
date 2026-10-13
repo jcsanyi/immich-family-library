@@ -18,6 +18,8 @@ from ifl.config import AccountConfig, Config
 
 log = logging.getLogger(__name__)
 
+# The Immich minor that the pinned client was generated from. An older server
+# is refused. A newer minor or major gets a warning, because nobody has run it.
 MIN_SERVER = (3, 3, 0)
 
 # docs/configuration.md has the table and which call needs what. No set has
@@ -133,6 +135,13 @@ async def check_server(client: AsyncClient) -> str:
     if version < MIN_SERVER:
         raise AccountError(
             f"server is {'.'.join(map(str, version))}, need {'.'.join(map(str, MIN_SERVER))}+"
+        )
+    if version[:2] > MIN_SERVER[:2]:
+        log.warning(
+            "server is %s; this release was built for Immich %d.%d and is not tested on a "
+            "later one. Look for a matching release of the service.",
+            ".".join(map(str, version)),
+            *MIN_SERVER[:2],
         )
     return ".".join(map(str, version))
 
