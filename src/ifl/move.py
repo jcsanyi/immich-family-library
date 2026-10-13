@@ -27,11 +27,13 @@ entry is a veto on top: if it names a different original, the copy already has
 its owner, whatever tag this asset wears. A family copy found in the trash
 while a member shares the photo again is restored first.
 
-Re-linking into a member-owned album runs under the album owner's key, which
-works because an owner can always add and the family partner-shares with every
-member. If the owner isn't a participant, the asset owner's key is tried, which
-works while they're still an editor there. A re-link that fails stops the move
-before the trash, so the photo never silently vanishes from an album.
+The albums an asset is in are listed with every participant's key, since the
+asset's owner can't see an album they aren't on. Re-linking into an album the
+family doesn't own runs under the key of a participant who owns it or is an
+editor on it, the album's owner first. That works because the family
+partner-shares with every member. A re-link that fails stops the move before
+the trash, so the photo never silently vanishes from an album the service can
+see.
 """
 
 from __future__ import annotations
@@ -182,19 +184,38 @@ async def _add_to_album(client, album: AlbumSummary, asset_id: UUID) -> None:
             raise RuntimeError(why)
 
 
+async def _albums_holding(accounts: Accounts, asset_id: UUID) -> list[AlbumSummary]:
+    """Every album with the asset in it that any participant can see. The
+    owner's key alone misses an album they aren't on: a partner's private
+    album, or a family album they haven't been added to yet."""
+    found: dict[UUID, AlbumSummary] = {}
+    for who in accounts.by_user_id().values():
+        for album in await albums_containing(who.client, asset_id):
+            found.setdefault(album.id, album)
+    return list(found.values())
+
+
+def _relink_keys(accounts: Accounts, album: AlbumSummary, asset_owner: Account) -> list[Account]:
+    """The participants who can add to an album the family doesn't own, in the
+    order to try them: the album's owner, the asset's owner, then anyone else,
+    each only if they own it or are an editor on it."""
+    participants = accounts.by_user_id()
+    can_add = (AlbumUserRole.OWNER, AlbumUserRole.EDITOR)
+    order = dict.fromkeys([album.owner_id, asset_owner.user_id, *participants])
+    return [
+        participants[uid]
+        for uid in order
+        if uid in participants and album.roles.get(uid) in can_add
+    ]
+
+
 async def _relink_member_album(
     accounts: Accounts, album: AlbumSummary, asset_owner: Account, family_id: UUID
 ) -> None:
-    """Add the family copy to a member-owned album: the album owner's key first,
-    then the asset owner's if they're an editor there."""
-    participants = accounts.by_user_id()
-    candidates: list[Account] = []
-    if album.owner_id in participants:
-        candidates.append(participants[album.owner_id])
-    if album.roles.get(asset_owner.user_id) == AlbumUserRole.EDITOR:
-        candidates.append(asset_owner)
+    """Add the family copy to an album the family doesn't own, with the first
+    key that Immich accepts."""
     failures = []
-    for who in candidates:
+    for who in _relink_keys(accounts, album, asset_owner):
         try:
             await _add_to_album(who.client, album, family_id)
             log.info("re-linked into %r with %s's key", album.name, who.name)
@@ -430,14 +451,21 @@ async def move_asset(
     if asset.stack is not None:
         warnings.append("in a stack; the stack loses this member")
 
-    albums = await albums_containing(owner.client, asset_id)
-    participants = accounts.by_user_id()
+    albums = await _albums_holding(accounts, asset_id)
     family_albums = [a for a in albums if a.owner_id == family.user_id]
     other_albums = [a for a in albums if a.owner_id != family.user_id]
     for a in other_albums:
-        if a.owner_id not in participants and a.roles.get(owner.user_id) != AlbumUserRole.EDITOR:
+        if not _relink_keys(accounts, a, owner):
+            # The photo's owner may not be on this album at all, so the reason
+            # has to say whose it is, who can see it, and what clears the block.
+            theirs = a.emails.get(a.owner_id, "someone unknown")
+            seen_by = " and ".join(
+                p.name for uid, p in accounts.by_user_id().items() if uid in a.user_ids
+            )
             raise MoveBlocked(
-                f"in {a.name!r}, owned by a non-participant, and {owner.name} can't re-add to it"
+                f"in {a.name!r}, owned by non-participant {theirs}, which {seen_by} can see "
+                "but nobody with a key can add to; ask its owner to make a family member an "
+                "editor there, or to take the photo out"
             )
     edits = [] if duplicate or fixed_up else await get_asset_edits(owner.client, asset_id)
 

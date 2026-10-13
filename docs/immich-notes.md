@@ -30,6 +30,13 @@ are listed here so that the next Immich upgrade knows what to re-check.
   or partner on the asset (`AssetShare`). This is why the family
   partner-shares with every member: it is what lets a member put a family
   copy into their own album. Confirmed on dev with alice's and bob's keys.
+- `GET /albums?assetId=` returns only the albums that the caller owns or is
+  on. A partner of an asset's owner can add the asset to an album that the
+  owner is not on. The owner's key then does not list that album. This is why
+  the move lists the albums with every participant's key. Confirmed on dev:
+  bob added a photo of alice, his partner, to his own unshared album. Bob's
+  key listed that album for the photo. Alice's key and the family's key did
+  not. No key got an error.
 - `POST /assets/copy` needs ownership of both assets, so it cannot copy a
   sidecar or album memberships across accounts.
 - Queue endpoints (`/queues`) are admin-only. That is why the queue check
