@@ -20,6 +20,7 @@ def test_parse_good():
     assert cfg.dropbox_album == "Drop"
     assert cfg.members["a"].name == "a"
     assert cfg.state_path == Path("/etc/ifl/data/state.json")
+    assert cfg.temp_dir == Path("/tmp/immich-family-library")
     assert cfg.report_at == time(22, 0)
     assert cfg.readonly is True
     assert cfg.albums_per_pass == 5
@@ -56,6 +57,8 @@ def test_parse_good():
         (lambda r: r["service"].update({"readonly": 0}), "readonly must be true or false"),
         (lambda r: r["service"].update({"state_path": 5}), "state_path must be a string"),
         (lambda r: r["service"].update({"state_path": ""}), "state_path must name a file"),
+        (lambda r: r["service"].update({"temp_dir": 5}), "temp_dir must be a string"),
+        (lambda r: r["service"].update({"temp_dir": ""}), "temp_dir must name a directory"),
         (lambda r: r["family"].update({"email": 5}), r"\[family\] email must be a string"),
         (lambda r: r["family"].update({"dropbox_album": 5}), "dropbox_album must be a string"),
         (lambda r: r["members"]["a"].update({"api_key": 5}), r"\[members.a\] api_key must be"),
@@ -118,6 +121,7 @@ def test_to_raw_redacts_and_resolves():
     assert raw["service"] == {
         "readonly": True,
         "state_path": "/etc/ifl/data/state.json",
+        "temp_dir": "/tmp/immich-family-library",
         "settle_seconds": 60,
         "interval_seconds": 600,
     }

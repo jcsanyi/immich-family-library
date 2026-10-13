@@ -12,12 +12,16 @@ instead of failing on the server.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import inspect
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from fakes import (
     ALICE,
     BOB,
@@ -31,6 +35,7 @@ from fakes import (
     make_user,
     make_workflow,
 )
+from immichpy.client.generated.exceptions import ApiException
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_response_dto import AlbumUserResponseDto
 from immichpy.client.generated.models.asset_bulk_upload_check_response_dto import (
@@ -44,7 +49,6 @@ from immichpy.client.generated.models.asset_edit_action_item_dto import AssetEdi
 from immichpy.client.generated.models.asset_edits_response_dto import AssetEditsResponseDto
 from immichpy.client.generated.models.asset_file_response_dto import AssetFileResponseDto
 from immichpy.client.generated.models.asset_file_type import AssetFileType
-from immichpy.client.generated.models.asset_media_response_dto import AssetMediaResponseDto
 from immichpy.client.generated.models.asset_media_status import AssetMediaStatus
 from immichpy.client.generated.models.asset_metadata_response_dto import AssetMetadataResponseDto
 from immichpy.client.generated.models.asset_reject_reason import AssetRejectReason
@@ -243,19 +247,74 @@ async def test_owned_checksums_batches_and_keeps_only_duplicate_rejects():
     assert calls == [250, 53]  # 303 distinct checksums, the repeated one sent once
 
 
+@pytest.fixture
+async def server():
+    """A stand-in for the two Immich calls that carry an original, on a real
+    socket: these helpers go under the generated methods to the request
+    builders, so only a request that is really sent proves they still work."""
+    seen = SimpleNamespace(uploads=[], body=b"", status=AssetMediaStatus.CREATED)
+
+    async def original(request):
+        if request.match_info["id"] == str(MISSING):
+            return web.json_response({"message": "Not found"}, status=404)
+        res = web.StreamResponse()
+        await res.prepare(request)
+        for i in range(0, len(seen.body), 70_000):
+            await res.write(seen.body[i : i + 70_000])
+        return res
+
+    async def upload(request):
+        parts = {}
+        async for part in await request.multipart():
+            parts[part.name] = (part.filename, bytes(await part.read()))
+        seen.uploads.append((dict(request.headers), parts))
+        return web.json_response({"id": str(NEW_ID), "status": seen.status.value}, status=201)
+
+    app = web.Application(client_max_size=1 << 26)
+    app.router.add_get("/api/assets/{id}/original", original)
+    app.router.add_post("/api/assets", upload)
+    async with TestServer(app) as srv:
+        client = AsyncClient(base_url=str(srv.make_url("")), api_key="the-key")
+        try:
+            yield client, seen
+        finally:
+            await client.close()
+
+
+MISSING, NEW_ID = uuid4(), uuid4()
+BODY = bytes(range(256)) * 12_000  # 3 MB, so it arrives and leaves in several chunks
+BODY_SHA1 = base64.b64encode(hashlib.sha1(BODY).digest()).decode()
+
+
+async def test_download_streams_the_original_to_a_file_and_checks_it(server, tmp_path):
+    client, seen = server
+    seen.body = BODY
+    dest = tmp_path / "original"
+
+    await immich.download_original(client, uuid4(), dest, checksum=BODY_SHA1)
+    assert dest.read_bytes() == BODY
+
+    # Bytes that are not the asset's stop the move before anything is uploaded.
+    seen.body = BODY[:-1]
+    with pytest.raises(immich.DownloadMismatch, match=f"expected {BODY_SHA1}"):
+        await immich.download_original(client, uuid4(), dest, checksum=BODY_SHA1)
+
+    with pytest.raises(ApiException) as refused:
+        await immich.download_original(client, MISSING, dest, checksum=BODY_SHA1)
+    assert refused.value.status == 404
+
+
 @pytest.mark.parametrize("sidecar", [b"<xmp/>", None])
-async def test_upload_names_each_part_itself_and_reports_whether_it_was_created(sidecar):
-    calls = []
-    new_id = uuid4()
-    status = AssetMediaStatus.CREATED if sidecar else AssetMediaStatus.DUPLICATE
-    client = stub_client(
-        calls, assets={"upload_asset": [AssetMediaResponseDto(id=new_id, status=status)]}
-    )
+async def test_upload_streams_the_file_and_names_each_part_itself(server, tmp_path, sidecar):
+    client, seen = server
+    seen.status = AssetMediaStatus.CREATED if sidecar else AssetMediaStatus.DUPLICATE
+    path = tmp_path / "ifl-original"
+    path.write_bytes(BODY)
     taken = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
 
     asset_id, created = await immich.upload_asset(
         client,
-        data=b"jpeg-bytes",
+        path=path,
         filename="a.jpg",
         checksum="sha",
         file_created_at=taken,
@@ -263,18 +322,25 @@ async def test_upload_names_each_part_itself_and_reports_whether_it_was_created(
         is_favorite=True,
         visibility=AssetVisibility.ARCHIVE,
         sidecar=sidecar,
-        duration=None,
+        duration=2000,
     )
 
-    assert asset_id == new_id and created is bool(sidecar)
-    (_, _, kw) = calls[0]
+    assert asset_id == NEW_ID and created is bool(sidecar)
+    ((headers, parts),) = seen.uploads
+    assert headers["x-api-key"] == "the-key" and headers["x-immich-checksum"] == "sha"
+    assert parts["assetData"] == ("a.jpg", BODY)
     # The server applies a `filename` form field to every part, so the sidecar
     # would be checked as a .jpg. Each part carries its own name instead.
-    assert "filename" not in kw
-    assert kw["asset_data"] == ("a.jpg", b"jpeg-bytes") and kw["x_immich_checksum"] == "sha"
-    assert kw["sidecar_data"] == (("a.jpg.xmp", sidecar) if sidecar else None)
-    assert kw["is_favorite"] is True and kw["visibility"] == AssetVisibility.ARCHIVE
-    assert kw["file_created_at"] == taken and kw["duration"] is None
+    assert "filename" not in parts
+    assert parts.get("sidecarData") == (("a.jpg.xmp", sidecar) if sidecar else None)
+    fields = {k: v.decode() for k, (_, v) in parts.items() if not k.endswith("Data")}
+    assert fields == {
+        "duration": "2000",
+        "fileCreatedAt": "2025-06-01T12:00:00+00:00",
+        "fileModifiedAt": "2025-06-01T12:00:00+00:00",
+        "isFavorite": "true",
+        "visibility": "archive",
+    }
 
 
 async def test_tag_asset_accepts_a_duplicate_and_raises_on_anything_else():
@@ -514,7 +580,6 @@ async def test_asset_writes_send_what_the_client_takes():
         calls,
         assets={
             "get_asset_info": [asset],
-            "download_asset": [b"jpeg"],
             "delete_assets": [None],
             "edit_asset": [None],
             "update_asset_metadata": [None],
@@ -527,7 +592,6 @@ async def test_asset_writes_send_what_the_client_takes():
     edits = [AssetEditActionItemDto.from_dict({"action": "rotate", "parameters": {"angle": 90}})]
 
     assert await immich.get_asset(client, asset_id) is asset
-    assert await immich.download_original(client, asset_id) == b"jpeg"
     assert await immich.download_asset_file(client, file_id) == b"<xmp/>"
     await immich.trash_assets(client, [asset_id, other])
     await immich.set_asset_edits(client, asset_id, edits)
@@ -538,7 +602,6 @@ async def test_asset_writes_send_what_the_client_takes():
 
     by_name = {name: (args, kw) for name, args, kw in calls}
     assert by_name["get_asset_info"] == ((), {"id": asset_id})
-    assert by_name["download_asset"] == ((), {"id": asset_id})
     assert by_name["download_asset_file"] == ((), {"id": file_id})
     (delete,) = by_name["delete_assets"][0]
     assert delete.ids == [asset_id, other] and delete.force is False  # trash, never delete

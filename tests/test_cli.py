@@ -18,6 +18,7 @@ url = "https://x.example"
 [service]
 readonly = {readonly}
 state_path = "state.json"
+temp_dir = "tmp"
 settle_seconds = 0
 [family]
 email = "f@x"

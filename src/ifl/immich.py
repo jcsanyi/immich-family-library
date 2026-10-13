@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import hashlib
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+import aiohttp
 from immichpy.client.generated.models.add_users_dto import AddUsersDto
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_add_dto import AlbumUserAddDto
@@ -227,8 +232,62 @@ async def download_asset_file(client: AsyncClient, file_id: UUID) -> bytes:
     return await client.asset_files.download_asset_file(id=file_id)
 
 
-async def download_original(client: AsyncClient, asset_id: UUID) -> bytes:
-    return await client.assets.download_asset(id=asset_id)
+# An original can be a video of several gigabytes, so the two calls that carry
+# one never hold it in memory and never run under the client's five-minute
+# total timeout. The generated `download_asset` and `upload_asset` take and
+# return bytes only. The request builders beneath them don't care, so these two
+# helpers call the builders and hand aiohttp a stream.
+CHUNK = 1 << 20
+# A download is cut off when the server sends nothing for this long.
+DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=300)
+# aiohttp's read timeout would fire while a long upload is still being sent, so
+# an upload gets a total instead: five minutes, plus its size at this rate.
+SLOWEST_UPLOAD = 125_000  # bytes a second
+
+
+class DownloadMismatch(Exception):
+    """The bytes that arrived are not the asset Immich says it has."""
+
+
+async def download_original(
+    client: AsyncClient, asset_id: UUID, dest: Path, *, checksum: str
+) -> None:
+    """Write the asset's original file to `dest`, and make sure it arrived whole:
+    the upload that follows is what the original gets trashed for."""
+    api = client.assets
+    request = api._download_asset_serialize(
+        id=asset_id,
+        edited=None,
+        key=None,
+        slug=None,
+        _request_auth=None,
+        _content_type=None,
+        _headers=None,
+        _host_index=0,
+    )
+    res = await api.api_client.call_api(*request, _request_timeout=DOWNLOAD_TIMEOUT)
+    try:
+        if res.status != 200:
+            await res.read()
+            api.api_client.response_deserialize(res, {"200": "bytes"})  # raises for the status
+        digest = hashlib.sha1(usedforsecurity=False)
+
+        def keep(chunk: bytes) -> None:
+            f.write(chunk)
+            digest.update(chunk)
+
+        with dest.open("wb") as f:
+            async for chunk in res.response.content.iter_chunked(CHUNK):
+                await asyncio.to_thread(keep, chunk)
+    finally:
+        res.response.release()
+    # Immich reports a checksum as the base64 of the SHA-1.
+    got = base64.b64encode(digest.digest()).decode()
+    if got != checksum:
+        raise DownloadMismatch(
+            f"downloaded {dest.stat().st_size} bytes of {asset_id} with checksum {got}, "
+            f"expected {checksum}"
+        )
 
 
 async def shared_link_asset_ids(client: AsyncClient) -> set[UUID]:
@@ -278,7 +337,7 @@ async def tag_asset(client: AsyncClient, tag_id: UUID, asset_id: UUID) -> None:
 async def upload_asset(
     client: AsyncClient,
     *,
-    data: bytes,
+    path: Path,
     filename: str,
     checksum: str,
     file_created_at: datetime,
@@ -288,21 +347,38 @@ async def upload_asset(
     sidecar: bytes | None,
     duration: int | None = None,  # milliseconds, videos only
 ) -> tuple[UUID, bool]:
-    """Upload bytes plus sidecar. Returns (asset id, created). A duplicate of
-    something this account already has returns that asset's id and False."""
-    # No `filename` form field: the server applies it to every part, so the
-    # sidecar would be checked as a .jpg and rejected. Each part names itself.
-    res = await client.assets.upload_asset(
-        asset_data=(filename, data),
-        x_immich_checksum=checksum,
-        file_created_at=file_created_at,
-        file_modified_at=file_modified_at,
-        is_favorite=is_favorite,
-        visibility=visibility,
-        sidecar_data=(filename + ".xmp", sidecar) if sidecar else None,
-        duration=duration,
-    )
-    return res.id, res.status.value == "created"
+    """Upload the file at `path` plus sidecar. Returns (asset id, created). A
+    duplicate of something this account already has returns that asset's id and
+    False."""
+    api = client.assets
+    timeout = aiohttp.ClientTimeout(total=300 + path.stat().st_size / SLOWEST_UPLOAD)
+    with path.open("rb") as f:
+        # No `filename` form field: the server applies it to every part, so the
+        # sidecar would be checked as a .jpg and rejected. Each part names itself.
+        request = api._upload_asset_serialize(
+            asset_data=(filename, f),
+            file_created_at=file_created_at,
+            file_modified_at=file_modified_at,
+            key=None,
+            slug=None,
+            x_immich_checksum=checksum,
+            duration=duration,
+            filename=None,
+            is_favorite=is_favorite,
+            live_photo_video_id=None,
+            metadata=None,
+            sidecar_data=(filename + ".xmp", sidecar) if sidecar else None,
+            visibility=visibility,
+            _request_auth=None,
+            _content_type=None,
+            _headers=None,
+            _host_index=0,
+        )
+        res = await api.api_client.call_api(*request, _request_timeout=timeout)
+        await res.read()
+    types = {"200": "AssetMediaResponseDto", "201": "AssetMediaResponseDto"}
+    made = api.api_client.response_deserialize(res, types).data
+    return made.id, made.status.value == "created"
 
 
 async def set_asset_edits(

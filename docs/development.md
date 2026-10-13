@@ -73,10 +73,14 @@ request is the prompt to upgrade. Do these steps together:
 Patch and minor releases of `immichpy` keep the same minimum server. Merge
 those when the tests pass.
 
-For moves, use the generated `upload_asset`. Do not use the path-based
-`assets.upload()` helper, which is a bulk uploader. If the immichpy project
-goes quiet, the fallback is to regenerate the client from the spec with the
-same generator.
+The generated `download_asset` and `upload_asset` hold the whole file in
+memory, so the move does not use them. `download_original` and `upload_asset`
+in `immich.py` call the request builders beneath those methods
+(`_download_asset_serialize`, `_upload_asset_serialize`) and give aiohttp a
+stream. Do not use the path-based `assets.upload()` helper, which is a bulk
+uploader. If the immichpy project goes quiet, the fallback is to regenerate
+the client from the spec with the same generator. The builders are part of
+what the generator makes for every call.
 
 The service is async throughout. The webhook receiver uses the aiohttp
 server, so that there is one HTTP stack.
@@ -122,6 +126,10 @@ codes. Two files test the layers the
 fake replaces, against stub clients that return real models: `test_immich`
 covers every adapter helper, and `test_accounts` covers the startup checks on
 each key.
+
+The two transfer helpers are the exception. They go beneath the generated
+methods, so no signature covers them. Their tests in `test_immich` send real
+requests to an aiohttp server on a local socket, and examine what arrives.
 
 Each stub method in `test_immich` carries the signature of the installed
 client's real method, and pydantic validates every call against it. The stub
@@ -207,6 +215,7 @@ service was verified against, one subcommand each. Its docstring lists them:
 - a re-share after the family trashed its copy
 - a live photo, and a locked, a hidden and an archived photo, in a family
   album
+- a video of 2 GB or more in a family album
 
 Most scenarios assume that the seed has run and the photos have not moved
 yet. After a full cycle, run `seed_dev.py --reset` and then the seed to get

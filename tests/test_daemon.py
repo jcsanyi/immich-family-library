@@ -11,7 +11,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
-from fakes import ALICE, BOB, FAMILY, FakeAsset, make_accounts, patch_world
+from fakes import ALICE, BOB, FAMILY, TEMP_DIR, FakeAsset, make_accounts, patch_world
 
 from ifl.config import parse_config
 from ifl.daemon import Daemon
@@ -20,7 +20,7 @@ from ifl.state import State
 
 RAW = {
     "immich": {"url": "https://x.example"},
-    "service": {"readonly": False},
+    "service": {"readonly": False, "temp_dir": str(TEMP_DIR)},
     "family": {"email": "f@x", "api_key": "k", "dropbox_album": "Drop"},
     "members": {
         "alice": {"email": "alice@x", "api_key": "k"},

@@ -124,6 +124,13 @@ has the checksum. If not, the original bytes go up with the rewritten sidecar,
 the original's dates, its favourite flag and its visibility. Extraction on the
 copy reads the sidecar on its first pass, so there's nothing to fix afterwards.
 
+The bytes travel by way of a file, never through memory, so a long video costs
+disk space and not RAM. The service downloads the original into its temp
+directory, checks the file against the checksum Immich holds for the photo,
+and uploads from the file. A download that doesn't match stops the move there,
+because the original is about to be trashed on the strength of that upload.
+The file is deleted as soon as the upload ends, whether it worked or not.
+
 **Fix-ups.** The original's crop, rotate and mirror edits are applied to the
 copy verbatim. The bytes are identical, so the coordinates hold. This is the
 one step that waits on an Immich job: the edits endpoint needs the copy's
