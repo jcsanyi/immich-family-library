@@ -573,6 +573,47 @@ async def test_two_members_with_the_same_bytes_keep_the_first_movers_provenance(
     assert world.metadata[copy.id]["ifl"]["origin_asset_id"] == str(bobs_orig)
 
 
+async def test_a_reshare_of_a_trashed_copy_does_not_wait_or_read_edits(world, monkeypatch):
+    accounts = make_accounts()
+    copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", is_trashed=True))
+    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    # Seconds after the phone uploaded it again: not extracted, not settled.
+    re = alice_asset(world, exif_info=None, updated_at=NOW - timedelta(seconds=5))
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[re])
+
+    async def no_edits(client, asset_id):
+        raise AssertionError("a duplicate's edits are never used")
+
+    monkeypatch.setattr("ifl.move.get_asset_edits", no_edits)
+
+    result = await move_asset(accounts, OPTS, re.id, accounts.members["alice"], now=NOW)
+
+    assert result.restored and result.duplicate and not result.uploaded
+    assert not copy.is_trashed and re.is_trashed
+
+
+async def test_an_interrupted_move_with_a_trashed_copy_still_waits_and_carries_edits(world):
+    accounts = make_accounts()
+    # The move died after the upload, before the fix-ups, and the family then
+    # trashed the copy. The original wears the moved tag, so it is no duplicate.
+    a = alice_asset(world, updated_at=NOW - timedelta(seconds=5))
+    a.tags = [make_tag("family")]
+    world.edits[a.id] = ["crop"]
+    copy = world.add_asset(FakeAsset(uuid4(), FAMILY, checksum="sha-1", is_trashed=True))
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+
+    with pytest.raises(MoveBlocked, match="settling"):
+        await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+    assert copy.is_trashed and world.writes == []
+
+    a.updated_at = NOW - timedelta(minutes=5)
+    result = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+
+    assert result.restored and not result.duplicate and result.edits == 1
+    assert world.edits[copy.id] == ["crop"] and not copy.is_trashed and a.is_trashed
+    assert world.metadata[copy.id]["ifl"]["origin_asset_id"] == str(a.id)
+
+
 async def test_a_trashed_family_copy_is_restored_when_shared_again(world):
     accounts = make_accounts()
     copy = world.add_asset(
