@@ -26,8 +26,10 @@ uses. If it is missing, ask the user for it before you touch the dev instance.
 
 ## Commits and branches
 
-Do not add AI agent attribution to commits (no `Co-Authored-By` lines). The
-user owns all code in this repository.
+Do not add AI agent attribution to anything. This applies to commits (no
+`Co-Authored-By` lines and no session trailers), pull request titles and
+descriptions, issues, comments, and docs. The user owns all code in this
+repository.
 
 `main` is reviewed code and accepts changes only through a pull request.
 Every change happens on its own feature branch, cut from `main`. Name the
