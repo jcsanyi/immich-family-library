@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -12,11 +12,12 @@ from urllib.parse import urlsplit
 # The one place in the code that holds a default. `parse_config` fills every
 # field of `Config` from the file or from here, so the dataclasses carry none.
 # config.example.toml shows the same values, and a test holds it to them,
-# all but `lock_path`, where the example has the container's value.
+# all but `lock_path`, where the example has the container's value: the default
+# is beside the config file, and the container mounts that directory read-only.
 DEFAULTS = {
     "service": {
         "readonly": True,
-        "lock_path": "/tmp/immich-family-library/run.lock",
+        "lock_path": "run.lock",
         "temp_dir": "/tmp/immich-family-library",
         "settle_seconds": 60,
         "interval_seconds": 600,
@@ -102,6 +103,7 @@ class Config:
     from_prefix: str  # the family copy is tagged "<from_prefix>/<member>"
     admin_api_key: str | None  # any admin user's key; only for the queue check
     report_at: time  # local time of day for the daily re-upload report
+    config_dir: Path = field(compare=False)
 
 
 KINDS = {str: "a string", bool: "true or false", int: "a whole number"}
@@ -255,6 +257,7 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
         from_prefix=from_prefix,
         admin_api_key=admin_api_key,
         report_at=report_at,
+        config_dir=config_dir,
     )
 
 
@@ -328,7 +331,10 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
             "listen": cfg.webhook.listen,
         }
     if minimal:
-        for section, settings in DEFAULTS.items():
+        # The one default that is not a constant: it is relative to the config file.
+        default_lock = str(cfg.config_dir / DEFAULTS["service"]["lock_path"])
+        defaults = {**DEFAULTS, "service": {**DEFAULTS["service"], "lock_path": default_lock}}
+        for section, settings in defaults.items():
             for key, default in settings.items():
                 if section in out and key in out[section] and out[section][key] == default:
                     del out[section][key]

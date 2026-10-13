@@ -7,7 +7,8 @@ its own length. `observe` only reads and never takes it.
 
 The lock is a file, so it only works between processes that see the same
 file. A command in a second container needs the lock on a volume that both
-containers mount.
+containers mount. The default is beside the config file, which is one lock per
+config and which a read-only config mount refuses loudly.
 """
 
 from __future__ import annotations

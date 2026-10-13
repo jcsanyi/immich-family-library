@@ -19,7 +19,7 @@ def test_parse_good():
     assert cfg.family.email == "f@x"
     assert cfg.dropbox_album == "Drop"
     assert cfg.members["a"].name == "a"
-    assert cfg.lock_path == Path("/tmp/immich-family-library/run.lock")
+    assert cfg.lock_path == Path("/etc/ifl/run.lock")
     assert cfg.temp_dir == Path("/tmp/immich-family-library")
     assert cfg.report_at == time(22, 0)
     assert cfg.readonly is True
@@ -90,7 +90,7 @@ def test_the_example_file_shows_every_default_but_the_lock_path():
     text = re.sub(r"(?m)^# (\[webhook\]|(?:url|token|listen) = )", r"\1", text)
     example = tomllib.loads(text)
     # The one value that is not the default: the example is the container's
-    # config, and the default lock is in a /tmp that containers do not share.
+    # config, and the default lock is beside the config, which is mounted read-only.
     assert example["service"].pop("lock_path") == "/data/run.lock"
     for section, settings in DEFAULTS.items():
         for key, default in settings.items():
@@ -124,7 +124,7 @@ def test_to_raw_redacts_and_resolves():
     assert raw["members"]["a"]["api_key"] == "*********mber"
     assert raw["service"] == {
         "readonly": True,
-        "lock_path": "/tmp/immich-family-library/run.lock",
+        "lock_path": "/etc/ifl/run.lock",
         "temp_dir": "/tmp/immich-family-library",
         "settle_seconds": 60,
         "interval_seconds": 600,

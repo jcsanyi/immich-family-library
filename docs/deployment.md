@@ -125,16 +125,20 @@ report. A restart has these effects:
 The one file that the service writes is the run lock, at `lock_path`. It
 stops two commands that write to Immich from running at the same time.
 
-The run lock works only between commands that open the same file. The default
-`lock_path` is in `/tmp`. Each container has its own `/tmp`, so with the
-default, a command from `docker compose run` does not see the lock of the
-daemon. The two can then write to Immich at the same time, and nothing warns
-you. Keep `lock_path = "/data/run.lock"` from the example config. The data
-volume is there for this file only.
+The run lock works only between commands that open the same file. A command
+from `docker compose run` is in a second container, and the data volume is
+the one writable place that it shares with the daemon. Keep
+`lock_path = "/data/run.lock"` from the example config. The data volume is
+there for this file only.
 
-If you never use `docker compose run` beside the daemon, you can keep the
-default and remove the volume. `docker compose exec ifl ifl <command>` runs
-in the container of the daemon and uses its `/tmp`.
+The default `lock_path` is `run.lock` beside the config file. In the
+container that directory is mounted read-only, so a config without the
+setting fails at startup with a message that names the run lock.
+
+Do not put the run lock in the `/tmp` of the container to remove the volume.
+Each container has its own `/tmp`. A command from `docker compose run` then
+does not see the lock of the daemon, the two write to Immich at the same
+time, and nothing warns you.
 
 The run lock uses flock. On an NFS volume, flock is not reliable. Keep the
 volume on a local disk.

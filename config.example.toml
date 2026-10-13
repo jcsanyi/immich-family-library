@@ -16,8 +16,8 @@ admin_api_key = ""
 # It only works between commands that see the same file. This value is for the
 # container, where the data volume is the one place a second container
 # (`docker compose run`) shares with the daemon. Outside a container, delete
-# the line to get the default, "/tmp/immich-family-library/run.lock". Relative
-# paths are resolved against this file's directory.
+# the line to get the default, "run.lock" beside this file. Relative paths
+# are resolved against this file's directory.
 lock_path = "/data/run.lock"
 # Where a move keeps a photo's file between the download and the upload. One
 # file at a time, deleted when the move ends, so it needs room for the largest
