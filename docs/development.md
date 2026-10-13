@@ -101,7 +101,7 @@ facial recognition reset is needed. Do not rely on faces or on people sharing.
 - `src/ifl/observer.py`: the three scans, read-only. `observe` reports them. `process` acts on them.
 - `src/ifl/convert.py`, `reconcile.py`, `move.py`: the three actions. `sidecar.py` is the XMP tag rewrite.
 - `src/ifl/process.py`: one pass. `daemon.py`: the pass on an interval, plus the webhook receiver.
-- `src/ifl/state.py`: the state file, and the run lock that sits beside it.
+- `src/ifl/state.py`: the run lock.
 - `src/ifl/cli.py`: argument parsing and the commands.
 
 ## Tests

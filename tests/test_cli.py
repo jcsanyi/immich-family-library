@@ -187,36 +187,15 @@ def test_a_writing_command_refuses_while_another_holds_the_lock(world, config, t
     assert run(path, "process") == 0
 
 
-def test_observe_does_not_create_the_state_file_and_process_does(world, config, tmp_path):
-    path = config()
-    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
-    assert run(path, "observe") == 0 and not (tmp_path / "state.json").exists()
-    assert run(path, "process") == 0 and (tmp_path / "state.json").exists()
-    assert run(path, "observe") == 0
-
-
-def test_a_one_off_command_fails_when_the_state_cannot_be_saved(world, config, tmp_path):
-    path = config()
-    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
-    (tmp_path / "state.json.tmp").mkdir()  # every save fails; the lock still opens
-
-    assert run(path, "process") == 1 and not (tmp_path / "state.json").exists()
-
-
-def test_move_one_tallies_a_reupload(world, config, tmp_path):
-
-    from ifl.state import State
-
+def test_move_one_moves_a_reupload_of_any_age(world, config):
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     copy = world.add_asset(FakeAsset(uuid4(), FAMILY, "aa", "a.jpg"))
     world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
     # Uploaded long before the scan's window: one id is looked up directly.
     re = world.add_asset(FakeAsset(uuid4(), ALICE, "aa", "a.jpg"))
-    state = State(tmp_path / "state.json")
 
     assert run(path, "move", str(re.id)) == 0 and re.is_trashed
-    assert State.load(state.path).members[ALICE].reuploads == 1
 
 
 def test_move_one_says_why_an_asset_outside_the_family_albums_does_not_move(world, config, caplog):
@@ -244,18 +223,3 @@ def test_a_lock_that_cannot_be_opened_exits_2_without_a_traceback(world, config,
     (tmp_path / "state.json.lock").mkdir()
     assert run(config(), "reconcile-albums") == 2
     assert run(config(), "observe") == 0
-
-
-def test_a_writing_command_drops_removed_members_and_observe_does_not(world, config, tmp_path):
-
-    from ifl.state import State
-
-    path = config()
-    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
-    gone = uuid4()
-    state = State(tmp_path / "state.json")
-    state.add_reuploads(gone, 4)
-
-    assert run(path, "observe") == 0 and gone in State.load(state.path).members
-    assert run(path, "process") == 0
-    assert gone not in State.load(state.path).members

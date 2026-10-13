@@ -1,7 +1,7 @@
 """The long-running service.
 
-Two things in one process, sharing the accounts, the state and a set of
-in-flight asset ids:
+Two things in one process, sharing the accounts, the re-upload tally and a set
+of in-flight asset ids:
 
 - the pass, run every `interval_seconds`: conversions, reconcile, moves, under
   the limits. This is the only path that does paced work.
@@ -17,9 +17,12 @@ The receiver never wakes the pass: the interval and the limits are the pacing
 for real moves, and nothing the receiver handles is metered by them.
 
 The daemon holds the run lock for as long as it runs, so no other command
-writes to Immich beside it, and it is the state file's only writer: the file
-is loaded once, at start. Both halves
-share one in-memory state, which saves itself on every change.
+writes to Immich beside it.
+
+What the daemon remembers, it remembers in memory only: the re-upload scan's
+mark, each member's tally of trashed re-uploads, and when it last reported
+them. A restart reads the scan's whole window once, drops the tally, and
+reports next at `report_at`.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ import contextlib
 import hmac
 import logging
 import signal
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from aiohttp import web
@@ -37,10 +40,9 @@ from aiohttp import web
 from ifl.accounts import Account, Accounts
 from ifl.config import Config
 from ifl.immich import TOKEN_HEADER
-from ifl.move import MoveOptions, move_assets
+from ifl.move import MoveManyResult, MoveOptions, move_assets
 from ifl.observer import AssetScan, describe_assets, member_asset, reupload_items
 from ifl.process import run_pass
-from ifl.state import State
 
 log = logging.getLogger(__name__)
 
@@ -48,10 +50,11 @@ BATCH_WAIT = 1.0  # seconds to collect more events after the first, so a backup 
 
 
 class Daemon:
-    def __init__(self, accounts: Accounts, cfg: Config, state: State):
+    def __init__(self, accounts: Accounts, cfg: Config, now: datetime | None = None):
         self.accounts = accounts
         self.cfg = cfg
-        self.state = state
+        self.tally: dict[UUID, int] = {}  # trashed re-uploads per member since the last report
+        self.reported_at = now or datetime.now().astimezone()
         self.in_flight: set[UUID] = set()
         self.mark: datetime | None = None  # the re-upload scan's; a restart reads the whole window
         self.events: asyncio.Queue[tuple[UUID, UUID | None]] = asyncio.Queue()
@@ -82,16 +85,50 @@ class Daemon:
         while not self.stopping.is_set():
             try:
                 result = await run_pass(
-                    self.accounts, self.cfg, self.state, in_flight=self.in_flight, mark=self.mark
+                    self.accounts, self.cfg, in_flight=self.in_flight, mark=self.mark
                 )
                 self.mark = result.mark
+                if result.moved:
+                    self.count(result.moved)
                 log.info("pass done: %s", result)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("pass failed; next one in %ds", self.cfg.interval_seconds)
+            # Outside the try: the webhook keeps counting while passes fail, and
+            # the report is the one signal for a looping phone.
+            self.report()
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self.stopping.wait(), timeout=self.cfg.interval_seconds)
+
+    # ---- the daily report
+
+    def count(self, moved: MoveManyResult) -> None:
+        for uid, n in moved.reuploads_trashed().items():
+            self.tally[uid] = self.tally.get(uid, 0) + n
+
+    def report(self, now: datetime | None = None) -> None:
+        """Once `report_at` has passed since the last report, or since the daemon
+        started: one warning per member whose re-uploads were trashed since then."""
+        now = now or datetime.now().astimezone()
+        at = self.cfg.report_at
+        scheduled = now.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
+        if scheduled > now:
+            scheduled -= timedelta(days=1)
+        if self.reported_at >= scheduled:
+            return
+        since = self.reported_at.astimezone(now.tzinfo).isoformat(timespec="minutes")
+        names = {uid: a.name for uid, a in self.accounts.by_user_id().items()}
+        for uid, n in self.tally.items():
+            log.warning(
+                "%s re-uploaded %d photo%s the family already has since %s; trashed",
+                names[uid],
+                n,
+                "" if n == 1 else "s",
+                since,
+            )
+        self.tally = {}
+        self.reported_at = now
 
     # ---- webhook
 
@@ -156,6 +193,7 @@ class Daemon:
         log.info("webhook: %s", "; ".join(describe_assets(scan)))
         opts = MoveOptions.from_config(self.cfg)
         result = await move_assets(
-            self.accounts, opts, scan.moves, state=self.state, limit=0, in_flight=self.in_flight
+            self.accounts, opts, scan.moves, limit=0, in_flight=self.in_flight
         )
+        self.count(result)
         log.info("webhook: %s", result)

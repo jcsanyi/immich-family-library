@@ -1,7 +1,7 @@
 # Deployment
 
 The service is one container, on the same docker network as Immich, with a
-volume for its state file. It is not an Immich plugin: the plugin sandbox cannot
+volume for its run lock. It is not an Immich plugin: the plugin sandbox cannot
 hold other users' keys, keep state, or poll. The only pieces on the Immich
 side are things the service creates itself through the API: albums, partner
 shares, and one workflow per member.
@@ -34,7 +34,7 @@ shares, and one workflow per member.
   project is named differently, set `IMMICH_NETWORK` (`docker network ls`
   shows the name).
 - It mounts `./config` read-only at `/config`. It mounts a named volume,
-  `ifl-data`, at `/data` for the state file.
+  `ifl-data`, at `/data` for the run lock.
 - It mounts nothing for the temp directory. A move keeps one file at a time in
   `/tmp/immich-family-library`, in the writable layer of the container. The
   disk that holds docker's data needs free space for the largest photo or
@@ -102,32 +102,31 @@ core plugin allows any host. If a later Immich tightens that, the symptom is
 an error in Immich's log and a receiver that never hears anything. The pass
 still catches every re-upload, only later.
 
-## The state file
+## What the service keeps
 
-`/data/state.json` is the state file. It holds each member's tally of trashed
-re-uploads since the last daily report, and the time of that report. Nothing
-in it needs a backup. If it is lost, one daily report is dropped.
+The service keeps no data on disk. The record of where a family photo came
+from is on the photo itself, in its `ifl` metadata entry and its
+`from/<member>` tag. Nothing needs a backup.
 
-The re-upload scan reads the last three days of each member's uploads when
-the daemon starts. If the daemon was stopped for longer, re-uploads from
-before those three days are not found. They stay in the member's library as
-duplicates of family photos. The record of where a family photo
-came from is on the photo itself, in its `ifl` metadata entry and its
-`from/<member>` tag.
+The daemon keeps three things in memory: the mark of the re-upload scan, the
+count of trashed re-uploads for each member, and the time of the last daily
+report. A restart has these effects:
 
-The file beside it, `state.json.lock`, is the run lock. It is not a lock on
-the state file. It stops two commands that write to Immich from running at the
-same time, and all of them take it, including the commands that do not use
-the state file. It is in this directory because the service can write here.
-The run lock uses flock. On an NFS volume, flock is not reliable. Keep the
-state volume on a local disk.
+- The re-upload scan reads the last three days of each member's uploads one
+  time. If the daemon was stopped for longer, re-uploads from before those
+  three days are not found. They stay in the member's library as duplicates of
+  family photos.
+- The count starts again at zero. The next daily report covers only the time
+  since the restart.
 
-If you remove a member from the config, the service removes that member from
-the state file at its next start.
+## The run lock
 
-Do not edit the file. The daemon loads it one time, when it starts, and
-writes it from memory after that. If the file does not parse at start, the
-service moves it to `state.json.bad` and starts with an empty state.
+The one file that the service writes is the run lock. It is `state_path` with
+`.lock` added: `/data/state.json.lock`. It stops two commands that write to
+Immich from running at the same time. It is on the volume so that the daemon
+and a command in a second container use the same file. The run lock uses
+flock. On an NFS volume, flock is not reliable. Keep the volume on a local
+disk.
 
 ## Upgrading
 

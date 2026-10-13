@@ -28,7 +28,7 @@ start.
 | Setting | Default | What it is |
 |---|---|---|
 | `readonly` | `true` | While true, every command that writes to Immich refuses to run. Set it to false once `observe` reports what you expect. |
-| `state_path` | `data/state.json` | The state file: the daily tally of re-uploads. Nothing in it needs a backup. In the container the config mount is read-only, so use the data volume: `/data/state.json`. |
+| `state_path` | `data/state.json` | Where the run lock goes: the lock file is this path with `.lock` added. The service writes no file at the path itself. In the container the config mount is read-only, so use the data volume: `/data/state.json`. |
 | `temp_dir` | `/tmp/immich-family-library` | The directory where a move keeps a file between the download and the upload. It holds one file at a time, and the move deletes the file when it ends. The directory needs space for the largest photo or video that a member has. If the `/tmp` of the container is too small, mount a volume and set this path to it. Two instances of the service must not share one directory. |
 | `settle_seconds` | `60` | A photo changed more recently than this is not moved yet, because its jobs can still be running. Re-uploads do not wait for it. |
 | `interval_seconds` | `600` | The daemon's pause between passes. |
@@ -61,7 +61,7 @@ and that does not occur as a keyword in their files.
 
 | Setting | Default | What it is |
 |---|---|---|
-| `report_at` | `"22:00"` | The local time of day for the daily re-upload report. One warning per member whose re-uploads were trashed in the last day. The compose file gives the container the host's timezone. |
+| `report_at` | `"22:00"` | The local time of day for the daily re-upload report. One warning per member whose re-uploads the daemon trashed since the last report. The compose file gives the container the host's timezone. |
 
 ## `[family]`
 

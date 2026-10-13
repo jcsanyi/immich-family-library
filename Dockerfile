@@ -16,7 +16,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 # host user, which is what lets it read a 0600 config. Under rootful docker,
 # set `user:` in compose to match the owner of ./config.
 # A fresh volume copies this directory's mode, so any `user:` can write the
-# state file there.
+# run lock there.
 RUN mkdir -p /data && chmod 0777 /data
 VOLUME ["/data"]
 EXPOSE 8080

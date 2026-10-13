@@ -221,15 +221,18 @@ What the service does about it:
   left alone too. With no copy it's the member's own photo again, and only a
   family album makes a photo the family's. The scan stops matching it at the
   next pass.
-- The service tallies trashed re-uploads per member, from the pass and from
+- The daemon tallies trashed re-uploads per member, from the pass and from
   the webhook alike. A re-upload here means what the re-upload scan or the
   webhook found: an upload a phone made on its own. A photo a member puts
   into a family album by hand is a move or a re-share, never a loop, so it
   isn't counted even when the family already has it. A member with the
   setting on produces none. Once a day, at `report_at`, one warning per member
-  says how many of their photos were re-uploaded and trashed in the last day.
-  A member with none gets no line. The tally is what a nudge to the member
-  will one day be built on; a loop needs a nudge, not a pager.
+  says how many of their photos were re-uploaded and trashed since the last
+  report. A member with none gets no line. The tally lives in the daemon's
+  memory, so a restart drops what it had counted, and the next report covers
+  only the time since the restart. A one-off `process` or `move` keeps no
+  tally: its summary line gives the count. The tally is what a nudge to the
+  member will one day be built on; a loop needs a nudge, not a pager.
 
 Trashing a re-upload quickly saves Immich no work, since every job already
 queued for it runs regardless. What it does is restart the 30-day clock and
@@ -262,28 +265,22 @@ photo, and the service never writes into it.
 
 Immich is the source of truth for everything. Where a copy came from is in its
 `ifl` entry, and whether a move is finished is in what Immich holds. The
-service keeps one small JSON file, the state file, and nothing in it is needed
-for correctness. It holds each member's tally of trashed re-uploads since the
-last daily report, and when that report last ran. Losing it means one report
-is dropped. The file never stores config labels. Immich stores a label
-in one place only, the `from/<member>` tag. Apart from that tag, renaming a
-member in the config changes only how messages read.
+service keeps nothing on disk between runs.
 
-A member taken out of the config is dropped from the state file the next time
-the daemon, `process` or `move` starts. The file isn't meant to be edited by
-hand.
+The daemon remembers three things, in memory only: the re-upload scan's mark,
+each member's tally of trashed re-uploads, and when it last reported them.
+None of them is needed for correctness. A restart costs one read of the
+scan's three days, and the part of a day's tally it had counted. Immich
+stores a config label in one place only, the `from/<member>` tag. Apart from
+that tag, renaming a member in the config changes only how messages read.
 
 Only one command that writes to Immich runs at a time. Two at once could each
 look for a family album, find none, and both create it, and the same goes for
 the dropbox and the members' workflows. They could also both work on one
 photo. So every writing command takes the run lock first: the daemon for as
 long as it runs, a one-off command for its own length. A second one is refused
-before it touches anything. `observe` writes nothing and never takes it.
-
-The run lock is a file, and it sits beside the state file only because that
-directory is the one place the service can write. It isn't a lock on the state
-file. But it has that effect: whoever holds it is the state file's only
-writer, so the file needs no locking of its own.
+before it touches anything. `observe` writes nothing and never takes it. The
+run lock is a file, and the only one the service keeps.
 
 The daemon's pass and its webhook receiver share a set of in-flight asset ids,
 so they never work on the same photo at once. Whoever is second skips, and a

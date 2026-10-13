@@ -25,13 +25,12 @@ Only one command that writes to Immich can run at a time. Two at the same
 time can create an album or a workflow twice. So each such command takes the
 run lock before it starts. If the daemon or another such command holds the
 run lock, the command exits with code 3 before it touches anything. The run
-lock is a file beside the state file. [deployment.md](deployment.md) says
-more.
+lock is a file. [deployment.md](deployment.md) says more.
 
 ## `ifl observe`
 
 One pass of the three scans, reported and nothing more. It never writes to
-Immich, and it reads the state file without creating it. It reports:
+Immich. It reports:
 
 - `CONVERT` for each album that a pass converts, and `BLOCKED` with the
   reason for each one it does not.
@@ -87,8 +86,9 @@ hold the member's photo, and trashes the member's photo. This applies to any
 member photo, whether a phone re-uploaded it or not. If the family's copy is
 in the trash, or the family has no copy, the command moves nothing and exits 1.
 
-Both forms add each trashed re-upload to its member's daily tally. If anything
-failed, or the state file could not be written, it exits 1.
+The summary line of `--all` counts the re-uploads it trashed. The command adds
+nothing to the daily report, which only the daemon keeps. If anything failed,
+it exits 1.
 
 With `admin_api_key` set, both forms refuse to start while Immich's sidecar or
 metadata queues have jobs waiting.
@@ -102,11 +102,9 @@ One complete pass: the album scan and conversions under `albums_per_pass`,
 reconcile, the queue check if an admin key is configured, then the asset scan
 and moves under `assets_per_pass`, re-uploads included. A just-converted
 album's photos move in the same pass. A queue backlog skips the moves for this
-pass, not the album work. It ends with one summary line. Once a day, when
-`report_at` has passed since the last report, it also logs one warning per
-member whose re-uploads were trashed in the last day. If any conversion,
-reconcile fix or move failed, or the state file could not be written, it
-exits 1.
+pass, not the album work. It ends with one summary line, which counts the
+re-uploads it trashed. It does not make the daily report, which only the
+daemon keeps. If any conversion, reconcile fix or move failed, it exits 1.
 
 Run it by hand, or from cron, as an alternative to the daemon.
 
@@ -119,9 +117,15 @@ seconds. Nothing else the receiver sees is acted on, so the interval and the
 limits remain the only pacing for real moves. It stops cleanly on SIGINT or
 SIGTERM. If a pass fails, the failure is logged and the next pass runs on
 schedule. If a webhook batch fails, the failure is logged and the next pass
-picks up what it missed. It holds the run lock for as long as it runs, and it
-loads the state file one time, when it starts. This is the container's
-default command.
+picks up what it missed. It holds the run lock for as long as it runs.
+
+The daemon counts the re-uploads it trashes, for each member. Once a day,
+when `report_at` passes, it logs one warning for each member with a count
+above zero, and starts the count again. The count is in memory. After a
+restart, the next report covers only the time since the restart, and the
+warning gives that time.
+
+This is the container's default command.
 
 ## `ifl show-config [--minimal]`
 
@@ -134,10 +138,9 @@ do.
 
 - `0`: everything asked for was done.
 - `1`: something was blocked or failed. The log says what. For `--all`,
-  `reconcile-albums` and `process`, only failures count, not blocks. A state
-  file that `move` or `process` could not write is a failure.
+  `reconcile-albums` and `process`, only failures count, not blocks.
 - `2`: the config or a key is wrong, or `readonly` refused the command, or
-  the state file or the run lock cannot be opened.
+  the run lock cannot be opened.
 - `3`: the daemon or another writing command holds the run lock. Wait for
   it, or stop the daemon.
 

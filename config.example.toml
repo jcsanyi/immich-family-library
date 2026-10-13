@@ -12,7 +12,8 @@ url = "https://photos.example.com"
 admin_api_key = ""
 
 [service]
-# The state file: the daily tally of re-uploads. Nothing in it needs
+# Where the run lock goes: the lock file is this path with ".lock" added.
+# The service writes no file at the path itself. Nothing here needs
 # a backup. Relative paths are resolved against this file's directory. In the
 # container the config mount is read-only, so use the data volume:
 # "/data/state.json".
@@ -51,7 +52,7 @@ from_prefix = "from"
 
 # A phone that hasn't synced a deletion re-uploads moved photos once the trash
 # purges. They're trashed again automatically. Once a day, at this local time,
-# a warning names each member whose re-uploads were trashed in the last day.
+# the daemon names each member whose re-uploads it trashed since the last report.
 # The compose file gives the container the host's timezone.
 [warnings]
 report_at = "22:00"

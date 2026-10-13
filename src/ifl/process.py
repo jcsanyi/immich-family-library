@@ -11,20 +11,17 @@ scans":
    metadata queues means the moves wait for the next pass, and so does the
    re-upload mark.
 4. Asset scan, re-uploads included, then moves, up to `assets_per_pass`. The
-   re-upload mark then advances, unless a re-upload was left unfinished, and
-   the trashed re-uploads join their member's tally.
-5. The daily report, once `report_at` has passed since the last one: one
-   warning per member with a non-zero tally.
+   re-upload mark then advances, unless a re-upload was left unfinished.
 
-Nothing here is a loop. The long-running service (stage 7) calls this once per
-interval; `ifl process` calls it once.
+Nothing here is a loop, and nothing is kept between passes: the caller holds
+the mark. The daemon calls this once per interval; `ifl process` calls it once.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from uuid import UUID
 
 from ifl.accounts import Accounts
@@ -45,7 +42,6 @@ from ifl.observer import (
     scan_reconcile,
 )
 from ifl.reconcile import ReconcileResult, reconcile
-from ifl.state import State
 
 log = logging.getLogger(__name__)
 
@@ -82,29 +78,12 @@ class PassResult:
 async def run_pass(
     accounts: Accounts,
     cfg: Config,
-    state: State,
     *,
     in_flight: set[UUID] | None = None,
     mark: datetime | None = None,
-    now: datetime | None = None,
 ) -> PassResult:
     """`mark` is the `mark` of the last pass's result. Without one, the re-upload
     scan reads its whole window."""
-    # The report runs even when the pass raises: the webhook keeps tallying
-    # while passes fail, and the report is the one signal for a looping phone.
-    try:
-        return await _run_pass(accounts, cfg, state, in_flight, mark)
-    finally:
-        report_reuploads(state, cfg, accounts, now)
-
-
-async def _run_pass(
-    accounts: Accounts,
-    cfg: Config,
-    state: State,
-    in_flight: set[UUID] | None,
-    mark: datetime | None,
-) -> PassResult:
     albums = await scan_albums(accounts)
     for b in albums.blocked:
         log.warning("not converting %s: %s", b.what, b.reason)
@@ -130,7 +109,6 @@ async def _run_pass(
             accounts,
             opts,
             assets.moves,
-            state=state,
             limit=cfg.assets_per_pass,
             in_flight=in_flight,
         )
@@ -148,34 +126,3 @@ def _advance_mark(mark: datetime | None, scan: AssetScan, moved: MoveManyResult)
         return scan.scanned_at
     log.info("re-upload mark held by %d unfinished re-upload(s)", held)
     return mark
-
-
-STALE_REPORT = timedelta(hours=26)  # past this, the window is named rather than called a day
-
-
-def report_reuploads(
-    state: State, cfg: Config, accounts: Accounts, now: datetime | None = None
-) -> None:
-    """Once a day, when `report_at` has passed since the last report: one warning
-    per member whose re-uploads were trashed since then. The first call starts
-    the clock and says nothing, so the first report comes at the next
-    `report_at`."""
-    now = now or datetime.now().astimezone()
-    if state.last_report is None:
-        state.start_clock(now)
-        return
-    if not state.report_due(now, cfg.report_at):
-        return
-    since = state.last_report
-    window = "in the last day"
-    if now - since > STALE_REPORT:
-        window = f"since {since.astimezone(now.tzinfo).isoformat(timespec='minutes')}"
-    names = {uid: a.name for uid, a in accounts.by_user_id().items()}
-    for uid, n in state.take_report(now).items():
-        log.warning(
-            "%s re-uploaded %d photo%s the family already has %s; trashed",
-            names[uid],
-            n,
-            "" if n == 1 else "s",
-            window,
-        )
