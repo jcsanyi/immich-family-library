@@ -46,17 +46,12 @@ def tags_in(xmp: bytes) -> list[str]:
     ]
 
 
-def with_only_tag(xmp: bytes | None, tag: str) -> bytes:
-    """The sidecar with every tag element removed and one TagsList holding `tag`.
-    With no sidecar to start from, a minimal one."""
-    if xmp:
-        root = ET.fromstring(xmp)
-        rdf = root.find(_q("rdf:RDF"))
-        if rdf is None:
-            raise ValueError("sidecar has no rdf:RDF element")
-    else:
-        root = ET.Element(_q("x:xmpmeta"))
-        rdf = ET.SubElement(root, _q("rdf:RDF"))
+def with_only_tag(xmp: bytes, tag: str) -> bytes:
+    """The sidecar with every tag element removed and one TagsList holding `tag`."""
+    root = ET.fromstring(xmp)
+    rdf = root.find(_q("rdf:RDF"))
+    if rdf is None:
+        raise ValueError("sidecar has no rdf:RDF element")
 
     for desc in list(rdf.findall(_q("rdf:Description"))):
         for name in TAG_ELEMENTS:

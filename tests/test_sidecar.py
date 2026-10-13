@@ -75,9 +75,3 @@ def test_rewrite_keeps_properties_written_as_attributes():
     text = out.decode()
     assert 'xmp:Rating="4"' in text and 'exif:DateTimeOriginal="2024-05-01T10:00:00"' in text
     assert "beach" not in text and tags_in(out) == ["from/alice"]
-
-
-def test_rewrite_without_a_sidecar_makes_a_minimal_one():
-    out = with_only_tag(None, "from/carol")
-    assert tags_in(out) == ["from/carol"]
-    assert b"x:xmpmeta" in out and b"rdf:RDF" in out
