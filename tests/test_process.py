@@ -129,7 +129,9 @@ async def test_reuploads_are_handled_and_the_mark_is_held_while_one_is_unfinishe
     copy = world.add_asset(
         FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg")
     )
-    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(ALICE), "origin_asset_id": str(uuid4())}
+    }
     # A re-upload needs no settling: seconds old and not yet extracted, it still goes.
     alices = world.add_asset(
         FakeAsset(
@@ -143,8 +145,12 @@ async def test_reuploads_are_handled_and_the_mark_is_held_while_one_is_unfinishe
         )
     )
     # Bob's is in one of his shared links, so it's blocked this pass.
+    hike = world.add_asset(
+        FakeAsset(uuid4(), FAMILY, checksum="hike", original_file_name="hike.jpg")
+    )
+    world.metadata[hike.id] = {"ifl": {"origin_user_id": str(BOB), "origin_asset_id": str(uuid4())}}
     bobs = world.add_asset(
-        FakeAsset(uuid4(), BOB, checksum="beach", original_file_name="beach.jpg", created_at=old)
+        FakeAsset(uuid4(), BOB, checksum="hike", original_file_name="hike.jpg", created_at=old)
     )
     world.shared_links[BOB] = {bobs.id}
 
@@ -160,7 +166,7 @@ async def test_reuploads_are_handled_and_the_mark_is_held_while_one_is_unfinishe
     # Bob removes it from the link: found again from the held mark, handled, mark released.
     world.shared_links[BOB] = set()
     again = await run_pass(accounts, cfg, mark=result.mark)
-    assert [r.file_name for r in again.moved.done] == ["beach.jpg"] and bobs.is_trashed
+    assert [r.file_name for r in again.moved.done] == ["hike.jpg"] and bobs.is_trashed
     assert again.mark > fresh and again.moved.reuploads_trashed() == {BOB: 1}
 
 
@@ -171,7 +177,9 @@ async def test_in_flight_assets_are_left_to_the_other_path(world):
     copy = world.add_asset(
         FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg")
     )
-    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(ALICE), "origin_asset_id": str(uuid4())}
+    }
     re = world.add_asset(
         FakeAsset(
             uuid4(),

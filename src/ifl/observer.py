@@ -28,10 +28,12 @@ from immichpy.client.generated.models.asset_visibility import AssetVisibility
 from ifl.accounts import Account, Accounts
 from ifl.config import WebhookConfig
 from ifl.immich import (
+    PROVENANCE_KEY,
     AlbumSummary,
     UserNames,
     find_workflow,
     get_asset_if_readable,
+    get_asset_metadata_value,
     iter_album_assets,
     iter_assets_created_after,
     list_albums,
@@ -108,7 +110,7 @@ class AssetScan:
     blocked: list[Blocked] = field(default_factory=list)
     dropbox: AlbumSummary | None = None
     scanned_at: datetime | None = None  # when the re-upload scan looked
-    skipped_reuploads: list[str] = field(default_factory=list)  # family copy in the trash
+    skipped_reuploads: list[str] = field(default_factory=list)  # matches left alone, with why
 
     def reuploads_by_owner(self) -> dict[str, int]:
         out: dict[str, int] = {}
@@ -321,9 +323,15 @@ async def member_asset(
 async def reupload_items(
     accounts: Accounts, candidates: list[tuple[Account, list[AssetResponseDto]]], scan: AssetScan
 ) -> None:
-    """Of these member-owned assets, the ones the family already owns become
-    re-upload move items on `scan`; those whose family copy is trashed are
-    listed as skipped. Shared by the pass, the webhook receiver and `move`."""
+    """Of these member-owned assets, the re-uploads become move items on `scan`.
+    Shared by the pass, the webhook receiver and `move`.
+
+    A re-upload is a member's asset whose checksum the family holds in a copy
+    that came from that same member: the copy's provenance entry names them.
+    A copy the family got some other way, by a direct upload or from another
+    member, makes no claim on this member's photo. Only a family album does.
+    Those, and the ones whose family copy is in the trash, are listed as
+    skipped."""
     family = accounts.family
     for member, assets in candidates:
         recent = {a.checksum: a for a in assets if a.owner_id == member.user_id}
@@ -335,6 +343,15 @@ async def reupload_items(
             if copy.is_trashed:
                 scan.skipped_reuploads.append(
                     f"{a.original_file_name} from {member.name}: the family's copy is in the trash"
+                )
+                continue
+            provenance = await get_asset_metadata_value(
+                family.client, copy.asset_id, PROVENANCE_KEY
+            )
+            if not provenance or provenance.get("origin_user_id") != str(member.user_id):
+                scan.skipped_reuploads.append(
+                    f"{a.original_file_name} from {member.name}: "
+                    "the family's copy did not come from them"
                 )
                 continue
             scan.moves.append(

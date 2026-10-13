@@ -191,7 +191,9 @@ def test_move_one_moves_a_reupload_of_any_age(world, config):
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     copy = world.add_asset(FakeAsset(uuid4(), FAMILY, "aa", "a.jpg"))
-    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(ALICE), "origin_asset_id": str(uuid4())}
+    }
     # Uploaded long before the scan's window: one id is looked up directly.
     re = world.add_asset(FakeAsset(uuid4(), ALICE, "aa", "a.jpg"))
 
@@ -204,11 +206,15 @@ def test_move_one_says_why_an_asset_outside_the_family_albums_does_not_move(worl
     world.add_asset(FakeAsset(uuid4(), FAMILY, "cc", "cat.jpg", is_trashed=True))
     binned = world.add_asset(FakeAsset(uuid4(), ALICE, "cc", "cat.jpg"))
     own = world.add_asset(FakeAsset(uuid4(), ALICE, "dd", "dog.jpg"))
+    # The family uploaded this one itself, so its copy names nobody.
+    world.add_asset(FakeAsset(uuid4(), FAMILY, "ff", "fox.jpg"))
+    both = world.add_asset(FakeAsset(uuid4(), ALICE, "ff", "fox.jpg"))
     gone = world.add_asset(FakeAsset(uuid4(), ALICE, "ee", "eel.jpg", is_trashed=True))
 
     with caplog.at_level("ERROR", logger="ifl"):
         assert run(path, "move", str(binned.id)) == 1 and not binned.is_trashed
         assert run(path, "move", str(own.id)) == 1 and not own.is_trashed
+        assert run(path, "move", str(both.id)) == 1 and not both.is_trashed
         assert run(path, "move", str(gone.id)) == 1
 
     assert "not moving cat.jpg from alice: the family's copy is in the trash" in caplog.text
@@ -216,6 +222,7 @@ def test_move_one_says_why_an_asset_outside_the_family_albums_does_not_move(worl
         "not moving dog.jpg from alice: it is in no family-owned album, and the family has no copy"
         in caplog.text
     )
+    assert "not moving fox.jpg from alice: the family's copy did not come from them" in caplog.text
     assert f"asset {gone.id} is not a member's asset, or it is in the trash" in caplog.text
 
 

@@ -80,12 +80,13 @@ address bar when the photo is open. If the photo is blocked, the command
 reports the reason and exits 1.
 
 The command looks up one id directly, so the age of the photo does not matter.
-If the photo is in no family album, the command checks whether the family
-already has the same file. If the family has it, the command treats the
-member's photo as a re-upload: it adds the family's copy to the albums that
-hold the member's photo, and trashes the member's photo. This applies to any
-member photo, whether a phone re-uploaded it or not. If the family's copy is
-in the trash, or the family has no copy, the command moves nothing and exits 1.
+If the photo is in no family album, the command checks whether it is a
+re-upload: the family has the same file, in a copy that the service moved from
+this member. If it is, the command adds the family's copy to the albums that
+hold the member's photo, and trashes the member's photo. In every other case
+the command moves nothing, gives the reason and exits 1. The cases are: the
+family has no copy, the family's copy is in the trash, and the family's copy
+came from somewhere else.
 
 The summary line of `--all` counts the re-uploads it trashed. The command adds
 nothing to the daily report, which only the daemon keeps. If anything failed,

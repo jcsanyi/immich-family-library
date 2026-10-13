@@ -77,7 +77,9 @@ async def test_a_batch_trashes_reuploads_and_ignores_the_rest(world, daemon):
     copy = world.add_asset(
         FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg")
     )
-    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(ALICE), "origin_asset_id": str(uuid4())}
+    }
     # Fresh uploads, as the webhook sees them: no exif yet, seconds old.
     from datetime import UTC, datetime
 
@@ -315,7 +317,9 @@ async def test_a_wrong_owner_hint_only_changes_who_is_asked_first(world, daemon)
     copy = world.add_asset(
         FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg")
     )
-    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(ALICE), "origin_asset_id": str(uuid4())}
+    }
     re = world.add_asset(
         FakeAsset(uuid4(), ALICE, checksum="beach", original_file_name="beach.jpg")
     )

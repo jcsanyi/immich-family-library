@@ -39,9 +39,9 @@ Subcommands:
                   the daemon first, or the webhook trashes the re-upload before the link
                   exists. --remove deletes every shared link of MEMBER instead.
   family-copy     Upload the seed photo FILE straight into the family account: a photo
-                  the family got some other way while a member still holds theirs. A
-                  running daemon leaves the member's alone; the first pass after a restart
-                  trashes it, if the member uploaded it in the last three days.
+                  the family got some other way while a member still holds theirs. The
+                  copy names no origin, so the member's photo is no re-upload: every pass
+                  leaves it alone, a restart included, and `observe` lists it as skipped.
   big-video       As alice, upload a video of --gb gigabytes (2 by default) into the
                   family's "Family Trip": the move must carry it without holding it in
                   memory. The file is the seed clip with padding, built in --workdir.

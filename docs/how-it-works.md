@@ -190,24 +190,29 @@ What the service does about it:
   force-empties trash, for exactly this reason.
 - The asset scan has a second source: per member, the photos uploaded since
   the last look, with their checksums batched through the family's bulk
-  check. A match goes through the same move: the copy is found by checksum,
-  nothing is uploaded, the copy is re-linked into any album the duplicate
-  sits in, the duplicate is trashed, and it joins the member's daily tally.
+  check. A match is a re-upload only when the family's copy came from that
+  same member, which the copy's `ifl` entry says. It then goes through the
+  same move: the copy is found by checksum, nothing is uploaded, the copy is
+  re-linked into any album the duplicate sits in, the duplicate is trashed,
+  and it joins the member's daily tally.
+- A family copy that came from somewhere else makes no claim on a member's
+  photo. The family may have uploaded the file itself, or got it from another
+  member who also had it. Either way the member's photo stays where it is,
+  and the scan says it skipped it. Only a family album makes a photo the
+  family's: if the member puts theirs into one, it's moved like any other,
+  and the family's existing copy stands in for it.
 - The last look is a mark the daemon keeps in memory, and the scan never reads
   further back than three days. A daemon that has just started has no mark,
   so its first pass reads all three days, and so does every one-off `process`,
   `move` and `observe`. A daemon that was down for longer than that leaves a
   gap: re-uploads from the gap are never looked for, and sit as harmless
   duplicates in the member's library.
-- The scan can't tell a phone's re-upload from a photo the family got some
-  other way. So when the service first runs, or a member first joins, a photo
-  they uploaded in the last three days that the family already holds is
-  trashed as a duplicate. Anything older that both hold is left where it is.
 - The moved tag tells a duplicate from a crashed move. The service puts that
   tag on an original before it uploads, so an original wearing it is a move
   that died partway, and the member's photo is the one to finish from. An
   original without it is a re-upload, or a photo the family got some other
-  way, and the family's copy is the one that counts: its edits and provenance
+  way that has now been put into a family album, and the family's copy is the
+  one that counts: its edits and provenance
   are left alone, and the move skips the extraction and settle checks, since
   it needs nothing the new upload's jobs produce. The copy's `ifl` entry has
   the last word: if it names a different original, the copy already has its

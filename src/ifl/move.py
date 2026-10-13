@@ -50,6 +50,7 @@ from immichpy.client.generated.models.album_user_role import AlbumUserRole
 from ifl.accounts import Account, Accounts
 from ifl.config import Config, ConfigError
 from ifl.immich import (
+    PROVENANCE_KEY,
     AlbumSummary,
     add_album_assets,
     albums_containing,
@@ -78,7 +79,6 @@ from ifl.sidecar import tags_in, with_only_tag
 log = logging.getLogger(__name__)
 
 WATCHED_QUEUES = ("sidecar", "metadataExtraction")
-PROVENANCE_KEY = "ifl"
 TEMP_PREFIX = "ifl-"  # the only files the service removes from the temp directory
 
 

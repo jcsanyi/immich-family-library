@@ -449,6 +449,7 @@ async def owned_checksums(
 
 WEBHOOK_METHOD = "immich-plugin-core#webhook"
 TOKEN_HEADER = "X-IFL-Token"
+PROVENANCE_KEY = "ifl"  # the metadata entry on a family copy that says where it came from
 
 
 def webhook_step(url: str, token: str) -> WorkflowStepDto:
