@@ -322,7 +322,7 @@ async def test_edits_wait_for_the_copy_to_have_dimensions(world, monkeypatch):
     assert world.edits[result.family_asset_id] == ["crop"] and polls["n"] >= 2
 
 
-async def test_move_all_honours_the_limit_and_continues_past_blocks_and_failures(world, state):
+async def test_move_all_spends_the_limit_on_moves_and_failures_but_not_on_blocks(world, state):
     from ifl.move import move_assets
     from ifl.observer import MoveAsset
 
@@ -336,25 +336,51 @@ async def test_move_all_honours_the_limit_and_continues_past_blocks_and_failures
         )
         world.assets[trip.id].append(a)
         assets.append(a)
-    assets[1].exif_info = None  # blocked
+    assets[0].exif_info = None  # blocked
+    world.shared_links[ALICE] = {assets[1].id}  # blocked, via the once-per-owner lookup
     # 2.jpg fails: it's in bob's album, alice is only a viewer, and bob isn't partnered yet.
     world.album("Bobs", BOB, roles={ALICE: VIEWER}, assets=[assets[2]])
     world.partners[FAMILY] = {ALICE}
-    world.shared_links[ALICE] = {assets[3].id}  # blocked, via the once-per-owner lookup
     moves = [MoveAsset(a.id, alice, trip, a.original_file_name) for a in assets]
 
-    result = await move_assets(accounts, OPTS, moves, state=state, limit=4)
+    result = await move_assets(accounts, OPTS, moves, state=state, limit=2)
 
-    assert [r.file_name for r in result.done] == ["0.jpg"]
-    assert [b[0] for b in result.blocked] == ["1.jpg", "3.jpg"]
+    # The two blocks at the head are free; the failure and the move fill the limit.
+    assert [b[0] for b in result.blocked] == ["0.jpg", "1.jpg"]
     assert [f[0] for f in result.failed] == ["2.jpg"]
+    assert [r.file_name for r in result.done] == ["3.jpg"]
     assert result.remaining == 1
-    assert assets[0].is_trashed and not any(a.is_trashed for a in assets[1:])
+    assert result.unfinished == {a.id for a in assets} - {assets[3].id}
+    assert assets[3].is_trashed and not any(a.is_trashed for a in assets if a is not assets[3])
     assert str(result) == "moved 1, blocked 2, failed 1, remaining 1"
 
     world.partners[FAMILY] = {ALICE, BOB}  # the share arrives; the rerun finishes 2.jpg
     again = await move_assets(accounts, OPTS, moves[2:3] + moves[4:], state=state, limit=0)
     assert [r.file_name for r in again.done] == ["2.jpg", "4.jpg"] and again.remaining == 0
+
+
+async def test_move_all_spends_the_limit_on_sidecar_timeouts(world, state):
+    from ifl.move import move_assets
+    from ifl.observer import MoveAsset
+
+    accounts = make_accounts()
+    alice = accounts.members["alice"]
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR})
+    assets = []
+    for i in range(3):
+        a = world.add_asset(
+            FakeAsset(uuid4(), ALICE, checksum=f"sha-{i}", original_file_name=f"{i}.jpg")
+        )
+        world.assets[trip.id].append(a)
+        assets.append(a)
+    world.sidecar_writes = False
+    moves = [MoveAsset(a.id, alice, trip, a.original_file_name) for a in assets]
+
+    result = await move_assets(accounts, OPTS, moves, state=state, limit=2)
+
+    # Each timeout kept the pass waiting, so the third photo is not tried.
+    assert [b[0] for b in result.blocked] == ["0.jpg", "1.jpg"]
+    assert result.remaining == 1 and assets[2].tags == []
 
 
 async def test_a_reupload_is_trashed_and_counted_without_touching_the_copy(world):

@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from fakes import ALICE, BOB, EDITOR, FAMILY, STRANGER, FakeAsset, make_accounts, patch_world
+from immichpy.client.generated.models.asset_visibility import AssetVisibility
 
 from ifl.observer import (
     describe_albums,
@@ -58,6 +59,26 @@ async def test_non_participant_asset_is_blocked(world):
     assert not scan.moves
     assert len(scan.blocked) == 1 and "not a participant" in scan.blocked[0].reason
     assert "owner stranger@x" in scan.blocked[0].reason
+
+
+async def test_live_and_hidden_photos_are_blocked_in_the_scan(world):
+    world.album("Drop", FAMILY)
+    world.album(
+        "Trip",
+        FAMILY,
+        roles={ALICE: EDITOR},
+        assets=[
+            FakeAsset(uuid4(), ALICE, "l", "live.jpg", live_photo_video_id=str(uuid4())),
+            FakeAsset(uuid4(), ALICE, "h", "hidden.jpg", visibility=AssetVisibility.HIDDEN),
+            FakeAsset(uuid4(), ALICE, "a", "archived.jpg", visibility=AssetVisibility.ARCHIVE),
+        ],
+    )
+    scan = await scan_assets(make_accounts(), "Drop")
+    assert [m.file_name for m in scan.moves] == ["archived.jpg"]
+    assert [(b.what, b.reason) for b in scan.blocked] == [
+        ("photo live.jpg from alice, in 'Trip'", "live photo; not handled yet"),
+        ("photo hidden.jpg from alice, in 'Trip'", "visibility is hidden"),
+    ]
 
 
 async def test_member_album_shared_with_family_is_a_conversion(world):

@@ -204,6 +204,8 @@ service was verified against, one subcommand each. Its docstring lists them:
 - a fully edited photo
 - re-uploads after a purge
 - a re-share after the family trashed its copy
+- a live photo, and a locked, a hidden and an archived photo, in a family
+  album
 
 Most scenarios assume that the seed has run and the photos have not moved
 yet. After a full cycle, run `seed_dev.py --reset` and then the seed to get

@@ -23,6 +23,7 @@ from uuid import UUID
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
 from immichpy.client.generated.models.asset_response_dto import AssetResponseDto
+from immichpy.client.generated.models.asset_visibility import AssetVisibility
 
 from ifl.accounts import Account, Accounts
 from ifl.config import WebhookConfig
@@ -116,6 +117,17 @@ class AssetScan:
             if m.reupload:
                 out[m.owner.name] = out.get(m.owner.name, 0) + 1
         return out
+
+
+def unmovable(asset: AssetResponseDto) -> str | None:
+    """Why the move can't take this asset until someone changes it, or None.
+    The search response carries both fields, so the scan asks before it lists
+    the asset as a move, and the move asks again of the asset it reads."""
+    if asset.visibility in (AssetVisibility.LOCKED, AssetVisibility.HIDDEN):
+        return f"visibility is {asset.visibility.value}"
+    if asset.live_photo_video_id is not None:
+        return "live photo; not handled yet"
+    return None
 
 
 def _names(accounts: Accounts) -> UserNames:
@@ -235,6 +247,15 @@ async def scan_assets(
                     Blocked(
                         f"photo {asset.original_file_name} in {album.name!r}",
                         f"owner {who} is not a participant (no API key)",
+                        asset_id=asset.id,
+                    )
+                )
+                continue
+            if why := unmovable(asset):
+                scan.blocked.append(
+                    Blocked(
+                        f"photo {asset.original_file_name} from {owner.name}, in {album.name!r}",
+                        why,
                         asset_id=asset.id,
                     )
                 )

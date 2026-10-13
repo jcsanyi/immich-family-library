@@ -292,6 +292,11 @@ trash holds a rolling month of new family photos. With an admin key
 configured, a pass skips its moves while Immich's sidecar or metadata queues
 have a backlog, since the sidecar step would wait behind them.
 
+A photo that is blocked before the move starts work on it doesn't count
+toward `assets_per_pass`, so photos that are blocked on every pass, live
+photos say, never hold up the ones behind them. A move that fails does count,
+and so does one that gives up waiting for Immich to write the sidecar.
+
 The webhook never wakes the pass. It handles re-uploads alone, which move no
 bytes and so aren't what the caps meter. Everything else waits for the
 interval.
