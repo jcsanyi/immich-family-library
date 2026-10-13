@@ -341,7 +341,7 @@ async def test_move_all_honours_the_limit_and_continues_past_blocks_and_failures
     world.album("Bobs", BOB, roles={ALICE: VIEWER}, assets=[assets[2]])
     world.partners[FAMILY] = {ALICE}
     world.shared_links[ALICE] = {assets[3].id}  # blocked, via the once-per-owner lookup
-    moves = [MoveAsset(a.id, a.checksum, alice, trip, a.original_file_name) for a in assets]
+    moves = [MoveAsset(a.id, alice, trip, a.original_file_name) for a in assets]
 
     result = await move_assets(accounts, OPTS, moves, state=state, limit=4)
 
@@ -393,7 +393,7 @@ async def test_a_reupload_the_webhook_already_trashed_is_not_trashed_or_counted_
     re = alice_asset(world)
     # The pass scanned this item while the original was live. The webhook
     # finished with it before the pass reached it.
-    item = MoveAsset(re.id, re.checksum, accounts.members["alice"], None, "a.jpg", reupload=True)
+    item = MoveAsset(re.id, accounts.members["alice"], None, "a.jpg", reupload=True)
 
     by_webhook = await move_assets(accounts, OPTS, [item], state=state, limit=0, in_flight=set())
     by_pass = await move_assets(accounts, OPTS, [item], state=state, limit=0, in_flight=set())
@@ -547,7 +547,7 @@ async def test_an_unexpected_error_on_one_asset_does_not_stop_the_others(world, 
         return await real_add(client, album_id, ids)
 
     monkeypatch.setattr("ifl.move.add_album_assets", add)
-    moves = [MoveAsset(a.id, a.checksum, alice, trip, a.original_file_name) for a in assets]
+    moves = [MoveAsset(a.id, alice, trip, a.original_file_name) for a in assets]
     in_flight: set = set()
 
     result = await move_assets(accounts, OPTS, moves, state=state, limit=0, in_flight=in_flight)
@@ -574,7 +574,7 @@ async def test_a_failed_per_owner_lookup_does_not_leave_the_asset_in_flight(
         raise ConnectionError("immich went away")
 
     monkeypatch.setattr("ifl.move.shared_link_asset_ids", down)
-    moves = [MoveAsset(a.id, a.checksum, alice, trip, a.original_file_name)]
+    moves = [MoveAsset(a.id, alice, trip, a.original_file_name)]
     in_flight: set = set()
 
     result = await move_assets(accounts, OPTS, moves, state=state, limit=0, in_flight=in_flight)
@@ -605,7 +605,6 @@ def test_reuploads_trashed_counts_per_member_and_shows_in_the_summary():
             asset_id=uuid4(),
             owner_id=owner,
             family_asset_id=uuid4(),
-            checksum="c",
             file_name="x.jpg",
             uploaded=False,
             edits=0,
@@ -637,9 +636,7 @@ async def test_a_run_cut_short_has_tallied_what_it_trashed(world, state, monkeyp
 
     accounts = make_accounts()
     alice = accounts.members["alice"]
-    moves = [
-        MoveAsset(uuid4(), f"sha-{i}", alice, None, f"{i}.jpg", reupload=True) for i in range(2)
-    ]
+    moves = [MoveAsset(uuid4(), alice, None, f"{i}.jpg", reupload=True) for i in range(2)]
 
     async def move(accounts, opts, asset_id, owner, **kw):
         if asset_id == moves[1].asset_id:
@@ -648,7 +645,6 @@ async def test_a_run_cut_short_has_tallied_what_it_trashed(world, state, monkeyp
             asset_id=asset_id,
             owner_id=owner.user_id,
             family_asset_id=uuid4(),
-            checksum="sha-0",
             file_name="0.jpg",
             uploaded=False,
             edits=0,
@@ -680,10 +676,10 @@ def test_advance_marks_holds_a_member_at_their_oldest_unfinished_reupload(tmp_pa
     done, stuck_old, stuck_new = uuid4(), uuid4(), uuid4()
     scan = AssetScan(
         moves=[
-            MoveAsset(done, "c1", alice, None, "a.jpg", reupload=True, created_at=t2),
-            MoveAsset(stuck_new, "c2", bob, None, "b2.jpg", reupload=True, created_at=t2),
-            MoveAsset(stuck_old, "c3", bob, None, "b1.jpg", reupload=True, created_at=t1),
-            MoveAsset(uuid4(), "c4", bob, None, "plain.jpg", created_at=t1),  # not a re-upload
+            MoveAsset(done, alice, None, "a.jpg", reupload=True, created_at=t2),
+            MoveAsset(stuck_new, bob, None, "b2.jpg", reupload=True, created_at=t2),
+            MoveAsset(stuck_old, bob, None, "b1.jpg", reupload=True, created_at=t1),
+            MoveAsset(uuid4(), bob, None, "plain.jpg", created_at=t1),  # not a re-upload
         ],
         scanned_at=NOW,
     )

@@ -113,7 +113,6 @@ class MoveResult:
     asset_id: UUID
     owner_id: UUID
     family_asset_id: UUID
-    checksum: str
     file_name: str
     uploaded: bool  # False when the family already had the checksum
     edits: int
@@ -510,7 +509,6 @@ async def move_asset(
     return MoveResult(
         asset_id=asset_id,
         family_asset_id=family_id,
-        checksum=asset.checksum,
         file_name=asset.original_file_name,
         uploaded=uploaded,
         edits=applied,

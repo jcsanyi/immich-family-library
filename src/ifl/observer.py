@@ -95,7 +95,6 @@ class ReconcileScan:
 @dataclass(frozen=True)
 class MoveAsset:
     asset_id: UUID
-    checksum: str
     owner: Account
     album: AlbumSummary | None  # the family album it was found in; None for a re-upload
     file_name: str
@@ -243,7 +242,6 @@ async def scan_assets(
             scan.moves.append(
                 MoveAsset(
                     asset_id=asset.id,
-                    checksum=asset.checksum,
                     owner=owner,
                     album=album,
                     file_name=asset.original_file_name,
@@ -304,7 +302,6 @@ async def reupload_items(
             scan.moves.append(
                 MoveAsset(
                     asset_id=a.id,
-                    checksum=checksum,
                     owner=member,
                     album=None,
                     file_name=a.original_file_name,
