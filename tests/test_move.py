@@ -124,7 +124,7 @@ async def test_rerun_after_upload_finishes_without_uploading_again(world):
         (lambda w, a: w.shared_links.__setitem__(ALICE, {a.id}), "shared links"),
         (
             lambda w, a: w.album("Theirs", STRANGER, roles={ALICE: VIEWER}, assets=[a]),
-            "owned by a non-participant",
+            "in 'Theirs', owned by non-participant stranger@x, which alice can see",
         ),
     ],
 )
@@ -178,6 +178,58 @@ async def test_relink_picks_the_album_owner_then_the_editor(world):
     assert (bobs.id, BOB) in adds  # album owner first
     assert (theirs.id, ALICE) in adds  # non-participant owner: the editor's key
     assert (bobs.id, ALICE) not in adds
+
+
+async def test_relink_reaches_albums_the_asset_owner_is_not_on(world):
+    accounts = make_accounts()
+    a = alice_asset(world)
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    # None of these has alice on it, so her key lists none of them.
+    handmade = world.album("Handmade", FAMILY, assets=[a])
+    private = world.album("Bobs Private", BOB, assets=[a])
+    theirs = world.album("Theirs", STRANGER, roles={BOB: EDITOR}, assets=[a])
+    world.partners[FAMILY] = {ALICE, BOB}
+
+    result = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+
+    copy = world.library[result.family_asset_id]
+    assert set(result.relinked) == {"Trip", "Handmade"}
+    assert set(result.relinked_member) == {"Bobs Private", "Theirs"}
+    assert all(copy in world.assets[al.id] for al in (handmade, private, theirs))
+    adds = {(w[2], w[1]) for w in world.writes if w[0] == "add" and copy.id in w[3]}
+    assert {(handmade.id, FAMILY), (private.id, BOB), (theirs.id, BOB)} <= adds
+    assert a.is_trashed
+
+
+async def test_an_outsiders_album_that_only_a_viewer_sees_blocks_and_says_who_sees_it(world):
+    accounts = make_accounts()
+    a = alice_asset(world)
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    # Alice isn't on this album. Bob is, as a viewer, so his key lists it.
+    world.album("Theirs", STRANGER, roles={BOB: VIEWER}, assets=[a])
+
+    with pytest.raises(MoveBlocked) as blocked:
+        await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+
+    assert str(blocked.value) == (
+        "in 'Theirs', owned by non-participant stranger@x, which bob can see but nobody "
+        "with a key can add to; ask its owner to make a family member an editor there, "
+        "or to take the photo out"
+    )
+    assert world.writes == [] and not a.is_trashed
+
+
+async def test_relink_tries_a_key_once_when_the_asset_owner_owns_the_album(world):
+    accounts = make_accounts()
+    a = alice_asset(world)
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    private = world.album("Private", ALICE, assets=[a])
+    world.partners[FAMILY] = set()  # so alice's add is refused
+
+    with pytest.raises(MoveError, match=r"into 'Private' \(alice: [^;]*\); original left"):
+        await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+
+    assert [w[1] for w in world.writes if w[0] == "add" and w[2] == private.id] == [ALICE]
 
 
 async def test_relink_falls_back_to_the_editor_when_the_owner_cannot(world):

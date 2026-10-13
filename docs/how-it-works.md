@@ -98,7 +98,7 @@ sidecar are owner-only in Immich. Everything is written with the family's.
 **Before touching it.** The photo has to have finished metadata extraction and
 sat unchanged for `settle_seconds`. It can't be locked or hidden, a live photo
 (not handled yet), in one of the owner's public shared links, or in an album
-owned by someone outside the family that the owner can no longer edit. Any of
+owned by someone outside the family that nobody with a key can add to. Any of
 those blocks it for this pass, with a reason, and the next pass finds it
 again. Two things only warn: a photo in a stack (the stack loses it), and an owner
 who partner-shares with someone outside the family (that person stops seeing
@@ -130,12 +130,19 @@ one step that waits on an Immich job: the edits endpoint needs the copy's
 dimensions, and extraction sets those within seconds. An `ifl` entry in the
 copy's metadata store records who it came from and from which asset.
 
-**Re-linking.** The copy goes into every album the original was in. Family
-albums get it with the family key, except the dropbox. Member-owned albums get
-it with the album owner's key, which works because the family partner-shares
-with them. If that owner has no configured key, or the call fails, the asset
-owner's key is tried where they're an editor. If every eligible key fails, the
-move stops before the trash. A photo never quietly vanishes from an album.
+**Re-linking.** The copy goes into every album the original was in. The
+service asks for those albums with every key it holds, because the photo's
+owner can't see them all: a partner can put the photo into a private album of
+their own. Family albums get the copy with the family key, except the dropbox.
+Any other album gets it with the key of someone who owns that album or is an
+editor on it: the album's owner first, then the photo's owner, then anyone
+else with a key. That works because the family partner-shares with every
+member. If every eligible key fails, the move stops before the trash. A photo
+never quietly vanishes from an album the service can see.
+
+One kind of album is out of reach: one that only people outside the family
+are on. No key lists it, so the service can't know the photo is there, and
+the photo leaves that album when the original goes to the trash.
 
 **The trash.** The original is trashed with the owner's key, never deleted
 outright.

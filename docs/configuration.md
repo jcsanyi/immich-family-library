@@ -132,7 +132,7 @@ Which keys each operation uses:
 | Operation | Keys |
 |---|---|
 | Convert an album | the owner's, and every contributor's |
-| Move a photo | the owner's to read and trash, the family's to upload and fix up, album owners' to re-link into their albums |
+| Move a photo | the owner's to read and trash, the family's to upload and fix up, every key to list the photo's albums, an owner's or editor's to re-link into each album |
 | Re-upload | the owner's to trash, the family's to look up and re-link |
 | Reconcile | the family's, and each member's for their workflow |
 | Queue check | the admin's |

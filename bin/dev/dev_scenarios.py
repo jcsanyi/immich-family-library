@@ -23,6 +23,10 @@ Subcommands:
                   to viewer on "Hikes": three things `reconcile-albums` must fix.
   bobs-picks      bob's album with alice as editor holding alice-garden.jpg: the move
                   re-links it with bob's key (album owner first).
+  private-album   alice partner-shares her library with bob, and bob puts her
+                  alice-trip-1.jpg, which the seed has in the family's "Family Trip", into
+                  an album of his own that he shares with nobody: an album the move must
+                  re-link although alice's key can't see it.
   edit            Give alice-beach-1.jpg every kind of edit the move carries: description,
                   rating, favourite, GPS, date, a crop, a rotate, a tag.
   reupload        Empty the named members' trash and re-upload their seed photos with no
@@ -64,6 +68,7 @@ from immichpy.client.generated.models.create_album_dto import CreateAlbumDto
 from immichpy.client.generated.models.crop_parameters import CropParameters
 from immichpy.client.generated.models.login_credential_dto import LoginCredentialDto
 from immichpy.client.generated.models.metadata_search_dto import MetadataSearchDto
+from immichpy.client.generated.models.partner_direction import PartnerDirection
 from immichpy.client.generated.models.permission import Permission
 from immichpy.client.generated.models.rotate_parameters import RotateParameters
 from immichpy.client.generated.models.tag_upsert_dto import TagUpsertDto
@@ -84,7 +89,7 @@ from seed_dev import (  # noqa: E402
 )
 
 from ifl.accounts import ADMIN_PERMISSIONS, MEMBER_PERMISSIONS, Account, Accounts  # noqa: E402
-from ifl.immich import list_albums  # noqa: E402
+from ifl.immich import create_partner, list_albums  # noqa: E402
 
 log = logging.getLogger("scenarios")
 KEY_NAME = "immich-family-library"
@@ -218,6 +223,25 @@ async def bobs_picks(accounts: Accounts, args, *_) -> None:
     log.info("Bob's Picks %s holds alice-garden.jpg", picks)
 
 
+async def private_album(accounts: Accounts, args, *_) -> None:
+    alice, bob = accounts.members["alice"], accounts.members["bob"]
+    partners = await alice.client.partners.get_partners(direction=PartnerDirection.SHARED_MINUS_BY)
+    if bob.user_id not in {p.id for p in partners}:
+        await create_partner(alice.client, bob.user_id)
+        log.info("alice partner-shares her library with bob")
+    private = await ensure_album(bob, "Bob's Private", share={})
+    photo = await own_asset(alice, "alice-trip-1.jpg")
+    res = await bob.client.albums.add_assets_to_album(
+        id=private, bulk_ids_dto=BulkIdsDto(ids=[photo])
+    )
+    log.info(
+        "bob: add alice-trip-1.jpg %s to Bob's Private %s: %s",
+        photo,
+        private,
+        [(r.success, r.error) for r in res],
+    )
+
+
 async def edit(accounts: Accounts, args, *_) -> None:
     alice = accounts.members["alice"]
     aid = await own_asset(alice, "alice-beach-1.jpg")
@@ -337,6 +361,7 @@ COMMANDS = {
     "more-albums": more_albums,
     "break-reconcile": break_reconcile,
     "bobs-picks": bobs_picks,
+    "private-album": private_album,
     "edit": edit,
     "reupload": reupload,
     "reshare": reshare,
@@ -378,6 +403,7 @@ if __name__ == "__main__":
         "more-albums",
         "break-reconcile",
         "bobs-picks",
+        "private-album",
         "edit",
         "reshare",
         "blocked-photos",

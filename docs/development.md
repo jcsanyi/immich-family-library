@@ -201,6 +201,7 @@ service was verified against, one subcommand each. Its docstring lists them:
   an existing family album, and several at once for the limit
 - a broken reconcile state
 - a bob-owned album that holds alice's photo
+- a private album of bob's, which alice is not on, that holds alice's photo
 - a fully edited photo
 - re-uploads after a purge
 - a re-share after the family trashed its copy
