@@ -329,15 +329,34 @@ async def test_a_wrong_owner_hint_only_changes_who_is_asked_first(world, daemon)
     assert re.is_trashed and daemon.tally == {ALICE: 1}
 
 
-async def test_a_batch_fails_when_immich_does_not_answer(world, daemon, monkeypatch):
-    async def down(client, asset_id):
-        raise RuntimeError("immich went away")
+async def test_one_asset_that_cannot_be_read_does_not_cost_the_batch(
+    world, daemon, monkeypatch, caplog
+):
+    copy = world.add_asset(
+        FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg")
+    )
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(ALICE), "origin_asset_id": str(uuid4())}
+    }
+    re = world.add_asset(
+        FakeAsset(uuid4(), ALICE, checksum="beach", original_file_name="beach.jpg")
+    )
+    lost = uuid4()
+    real = world.get_asset_if_readable
 
-    monkeypatch.setattr("ifl.observer.get_asset_if_readable", down)
+    async def flaky(client, asset_id):
+        if asset_id == lost:
+            raise RuntimeError("immich went away")
+        return await real(client, asset_id)
 
-    # Not "no member has it": the drain logs the failure and the next pass looks again.
-    with pytest.raises(RuntimeError, match="immich went away"):
-        await daemon.handle_batch([(uuid4(), ALICE)])
+    monkeypatch.setattr("ifl.observer.get_asset_if_readable", flaky)
+
+    with caplog.at_level("WARNING", logger="ifl.daemon"):
+        await daemon.handle_batch([(lost, ALICE), (re.id, ALICE)])
+
+    # Not "no member has it": the failure is said, and the rest of the batch goes on.
+    assert f"could not read asset {lost} (RuntimeError: immich went away)" in caplog.text
+    assert re.is_trashed and daemon.tally == {ALICE: 1}
 
 
 async def test_a_clean_stop_reports_the_tally_it_would_otherwise_lose(world, monkeypatch, caplog):

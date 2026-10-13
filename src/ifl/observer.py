@@ -275,8 +275,8 @@ async def scan_assets(
             )
     if reuploads:
         await _scan_reuploads(accounts, mark, scan, seen, now or datetime.now(UTC))
-        # Re-uploads go first. They are outside the per-pass limit, and behind
-        # the album moves a limit that is always reached would never let them run.
+        # Re-uploads go first: each takes a moment, and behind the album moves
+        # they would wait on every download and upload of the pass.
         scan.moves.sort(key=lambda m: not m.reupload)
     return scan
 
@@ -320,11 +320,25 @@ async def member_asset(
     return None
 
 
+async def reuploads_among(
+    accounts: Accounts, found: list[tuple[Account, AssetResponseDto]]
+) -> AssetScan:
+    """A scan of just these assets, each with the member who owns it: the
+    re-uploads among them as move items, and the matches left alone as skipped.
+    For a caller that has asset ids in hand, not a window to read."""
+    by_member: dict[UUID, tuple[Account, list[AssetResponseDto]]] = {}
+    for member, asset in found:
+        by_member.setdefault(member.user_id, (member, []))[1].append(asset)
+    scan = AssetScan()
+    await reupload_items(accounts, list(by_member.values()), scan)
+    return scan
+
+
 async def reupload_items(
     accounts: Accounts, candidates: list[tuple[Account, list[AssetResponseDto]]], scan: AssetScan
 ) -> None:
     """Of these member-owned assets, the re-uploads become move items on `scan`.
-    Shared by the pass, the webhook receiver and `move`.
+    Shared by the pass and, through `reuploads_among`, the webhook receiver and `move`.
 
     A re-upload is a member's asset whose checksum the family holds in a copy
     that came from that same member: the copy's provenance entry names them.

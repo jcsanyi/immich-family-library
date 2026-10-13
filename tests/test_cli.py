@@ -230,3 +230,19 @@ def test_a_lock_that_cannot_be_opened_exits_2_without_a_traceback(world, config,
     (tmp_path / "run.lock").mkdir()
     assert run(config(), "reconcile-albums") == 2
     assert run(config(), "observe") == 0
+
+
+def test_move_one_reports_an_immich_failure_in_one_line(world, config, monkeypatch, caplog):
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+
+    async def down(client, asset_id):
+        raise RuntimeError("immich went away")
+
+    monkeypatch.setattr("ifl.observer.get_asset_if_readable", down)
+    asset_id = uuid4()
+
+    with caplog.at_level("ERROR", logger="ifl"):
+        assert run(path, "move", str(asset_id)) == 1
+
+    assert f"could not look up asset {asset_id}: RuntimeError: immich went away" in caplog.text

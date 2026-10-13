@@ -38,11 +38,11 @@ from uuid import UUID
 
 from aiohttp import web
 
-from ifl.accounts import Account, Accounts
+from ifl.accounts import Accounts
 from ifl.config import Config
 from ifl.immich import TOKEN_HEADER
 from ifl.move import MoveManyResult, MoveOptions, move_assets
-from ifl.observer import AssetScan, describe_assets, member_asset, reupload_items
+from ifl.observer import describe_assets, member_asset, reuploads_among
 from ifl.process import run_pass
 
 log = logging.getLogger(__name__)
@@ -181,16 +181,23 @@ class Daemon:
                 log.exception("webhook batch failed; the next pass will catch anything missed")
 
     async def handle_batch(self, batch: list[tuple[UUID, UUID | None]]) -> None:
-        by_member: dict[UUID, tuple[Account, list]] = {}
+        found = []
         for asset_id, owner_id in dict.fromkeys(batch):
-            found = await member_asset(self.accounts, asset_id, owner_id)
-            if found is not None:
-                member, asset = found
-                by_member.setdefault(member.user_id, (member, []))[1].append(asset)
-        if not by_member:
+            try:
+                one = await member_asset(self.accounts, asset_id, owner_id)
+            except Exception as e:  # noqa: BLE001 - one unreadable asset must not cost the batch
+                log.warning(
+                    "webhook: could not read asset %s (%s: %s); the next pass looks again",
+                    asset_id,
+                    type(e).__name__,
+                    e,
+                )
+                continue
+            if one is not None:
+                found.append(one)
+        if not found:
             return
-        scan = AssetScan()
-        await reupload_items(self.accounts, list(by_member.values()), scan)
+        scan = await reuploads_among(self.accounts, found)
         if not scan.moves and not scan.skipped_reuploads:
             log.debug("webhook: %d new uploads, none the family has", len(batch))
             return

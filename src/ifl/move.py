@@ -296,15 +296,15 @@ async def move_assets(
     limit: int,
     in_flight: set[UUID] | None = None,
 ) -> MoveManyResult:
-    """Move assets in scan order until `limit` of them have used a slot (0 for no
-    limit). A move uses a slot, and so does a failure or a timeout, because each
-    may have uploaded bytes or kept the pass waiting. A block that the first
-    reads settle is free: a photo that is blocked on every pass, a live photo
-    say, must not hold a slot on every pass and starve the photos behind it.
+    """Move assets in scan order. Once `limit` of them have used a slot (0 for no
+    limit), the rest that would use one are left for the next pass. A move uses
+    a slot, and so does a failure or a timeout, because each may have uploaded
+    bytes or kept the pass waiting. A block that the first reads settle is
+    free: a photo that is blocked on every pass, a live photo say, must not
+    hold a slot on every pass and starve the photos behind it.
 
-    A re-upload never uses a slot, whatever becomes of it. It has nothing to
-    upload, and the limit is the brake on bytes. The scan lists re-uploads
-    first, so all of them are tried before the limit can end the loop.
+    A re-upload never uses a slot, whatever becomes of it, and the limit never
+    stops one. It has nothing to upload, and the limit is the brake on bytes.
 
     Each item is a MoveAsset from the scan. One asset blocking or failing doesn't
     stop the others, whatever the exception. Per-owner lookups happen once.
@@ -315,12 +315,12 @@ async def move_assets(
     out = MoveManyResult()
     shared_links: dict[UUID, set[UUID]] = {}
     slots_used = 0
-    for i, m in enumerate(moves):
+    for m in moves:
         slot = 0 if m.reupload else 1
-        if limit and slots_used >= limit:
-            out.remaining = len(moves) - i
-            out.unfinished.update(rest.asset_id for rest in moves[i:])
-            break
+        if limit and slot and slots_used >= limit:
+            out.remaining += 1
+            out.unfinished.add(m.asset_id)
+            continue
         owner = m.owner
         if in_flight is not None:
             if m.asset_id in in_flight:

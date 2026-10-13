@@ -118,9 +118,12 @@ async def run_pass(
 
 def _advance_mark(mark: datetime | None, scan: AssetScan, moved: MoveManyResult) -> datetime | None:
     """The mark moves to this scan's time only when every re-upload the scan
-    found was finished. One that is blocked, failed, skipped or over the limit
-    is no longer in the next read once the mark passes it, so the mark stays
-    where it is and the next pass finds it again."""
+    listed as a move was finished. One that is blocked, that failed, or that
+    the webhook has in hand is no longer in the next read once the mark passes
+    it, so the mark stays where it is and the next pass finds it again.
+
+    A match the scan left alone does not hold the mark: the family's copy is in
+    the trash, or came from somewhere else. Neither clears by waiting."""
     held = sum(1 for m in scan.moves if m.reupload and m.asset_id in moved.unfinished)
     if not held:
         return scan.scanned_at

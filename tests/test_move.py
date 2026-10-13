@@ -806,12 +806,14 @@ async def test_reuploads_never_use_the_limit(world, monkeypatch):
 
     monkeypatch.setattr("ifl.move.move_asset", move)
 
-    result = await move_assets(accounts, OPTS, reuploads + plain, limit=1)
+    # The re-uploads come last here: the limit must not depend on the order.
+    result = await move_assets(accounts, OPTS, plain + reuploads, limit=1)
 
-    # Every re-upload was tried, the failed one included, and one real move fitted the limit.
+    # One real move fitted the limit. Every re-upload was still tried, the failed one included.
     assert [r.asset_id for r in result.done] == [
+        plain[0].asset_id,
         reuploads[0].asset_id,
         reuploads[2].asset_id,
-        plain[0].asset_id,
     ]
     assert [f[0] for f in result.failed] == ["re1.jpg"] and result.remaining == 1
+    assert result.unfinished == {plain[1].asset_id, reuploads[1].asset_id}

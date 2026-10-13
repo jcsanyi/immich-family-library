@@ -27,13 +27,12 @@ from ifl.move import (
     prepare_temp_dir,
 )
 from ifl.observer import (
-    AssetScan,
     MoveAsset,
     describe_albums,
     describe_assets,
     describe_reconcile,
     member_asset,
-    reupload_items,
+    reuploads_among,
     scan_albums,
     scan_assets,
     scan_reconcile,
@@ -165,12 +164,15 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
 async def _reupload_target(accounts: Accounts, asset_id: UUID) -> list[MoveAsset]:
     """The move item for a member's asset that is in no family album but that
     the family already has, or nothing, with the reason logged."""
-    found = await member_asset(accounts, asset_id)
-    if found is None:
-        log.error("asset %s is not a member's asset, or it is in the trash", asset_id)
+    try:
+        found = await member_asset(accounts, asset_id)
+        if found is None:
+            log.error("asset %s is not a member's asset, or it is in the trash", asset_id)
+            return []
+        one = await reuploads_among(accounts, [found])
+    except Exception as e:  # noqa: BLE001 - whatever Immich did, say it in one line
+        log.error("could not look up asset %s: %s: %s", asset_id, type(e).__name__, e)
         return []
-    one = AssetScan()
-    await reupload_items(accounts, [(found[0], [found[1]])], one)
     for s in one.skipped_reuploads:
         log.error("not moving %s", s)
     if not one.moves and not one.skipped_reuploads:
