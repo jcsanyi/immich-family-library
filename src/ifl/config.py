@@ -316,7 +316,7 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
         defaults = {**DEFAULTS, "service": {**DEFAULTS["service"], "state_path": default_state}}
         for section, settings in defaults.items():
             for key, default in settings.items():
-                if section in out and out[section][key] == default:
+                if section in out and key in out[section] and out[section][key] == default:
                     del out[section][key]
         out = {section: settings for section, settings in out.items() if settings}
     return out
