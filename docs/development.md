@@ -215,6 +215,8 @@ service was verified against, one subcommand each. Its docstring lists them:
 - a re-share after the family trashed its copy
 - a live photo, and a locked, a hidden and an archived photo, in a family
   album
+- a member's photo in one of their own shared links, which blocks its move
+- a photo that the family got by a direct upload while a member still holds it
 - a video of 2 GB or more in a family album
 
 Most scenarios assume that the seed has run and the photos have not moved
