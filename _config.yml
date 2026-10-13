@@ -2,6 +2,13 @@ title: immich-family-library
 description: A shared family photo library for self-hosted Immich. Members keep their own accounts and choose what to contribute.
 theme: jekyll-theme-cayman
 
+# Only the home page mirrors the repo, so only it names the repo as canonical.
+defaults:
+  - scope:
+      path: "README.md"
+    values:
+      canonical_url: "https://github.com/jcsanyi/immich-family-library"
+
 # Jekyll publishes every file not named here, so a new top-level file that is
 # not part of the site needs an entry.
 exclude:
