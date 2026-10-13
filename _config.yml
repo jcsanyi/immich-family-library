@@ -2,9 +2,16 @@ title: immich-family-library
 description: A shared family photo library for self-hosted Immich. Members keep their own accounts and choose what to contribute.
 theme: jekyll-theme-cayman
 
-# Jekyll has no allowlist, but `include` wins over `exclude`, so this
-# publishes the README and the docs and nothing else.
-exclude: ["*"]
-include:
-  - README.md
-  - docs
+# Jekyll publishes every file not named here, so a new top-level file that is
+# not part of the site needs an entry.
+exclude:
+  - AGENTS.md
+  - Dockerfile
+  - LICENSE
+  - bin
+  - compose.yml
+  - config.example.toml
+  - pyproject.toml
+  - src
+  - tests
+  - uv.lock
