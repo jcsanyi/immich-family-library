@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -183,12 +184,27 @@ async def add_album_assets(
     return await client.albums.add_assets_to_album(id=album_id, bulk_ids_dto=BulkIdsDto(ids=ids))
 
 
+class Failure(Exception):
+    """Something the service found wrong and can say in its own words: a refusal
+    from Immich that it checked for, or a condition it tested. The text is the
+    whole report, so it needs no traceback. The move and the conversion have
+    their own kinds."""
+
+
+# Immich answered with an error, or could not be reached. Like a `Failure`,
+# this says nothing about the service's own code.
+IMMICH_ERRORS = (ApiException, aiohttp.ClientError, TimeoutError)
+
+
 def describe_error(e: BaseException) -> str:
     """Any error as one line, for a log line or a result.
 
     The client's own text for an Immich answer runs to four lines and carries
     every response header, so an answer is cut down to its status and the
-    message Immich sent. Anything else is its type and its text."""
+    message Immich sent. A `Failure` is its own text. Anything else is its type
+    and its text."""
+    if isinstance(e, Failure):
+        return " ".join(str(e).split())
     if isinstance(e, ApiException):
         try:
             message = json.loads(e.body or "").get("message")
@@ -199,6 +215,19 @@ def describe_error(e: BaseException) -> str:
         return f"Immich answered {e.status}: {message or e.reason or 'no detail'}"
     text = " ".join(str(e).split())
     return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
+def log_failure(log: logging.Logger, what: str, e: Exception) -> str:
+    """Log one piece of work that failed, and return the reason as one line.
+
+    A `Failure` or an Immich error is one error line: the reason is all there
+    is to know. Anything else is a fault in the service, and its traceback
+    goes with it."""
+    why = describe_error(e)
+    # stacklevel: the record names the caller's line, not this one.
+    expected = isinstance(e, (Failure, *IMMICH_ERRORS))
+    log.error("%s: %s", what, why, exc_info=not expected, stacklevel=2)
+    return why
 
 
 def bulk_failure(r: BulkIdResponseDto) -> str | None:
@@ -275,7 +304,7 @@ DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=
 SLOWEST_UPLOAD = 125_000  # bytes a second
 
 
-class DownloadMismatch(Exception):
+class DownloadMismatch(Failure):
     """The bytes that arrived are not the asset Immich says it has."""
 
 
@@ -361,7 +390,7 @@ async def tag_asset(client: AsyncClient, tag_id: UUID, asset_id: UUID) -> None:
     results = await client.tags.tag_assets(id=tag_id, bulk_ids_dto=BulkIdsDto(ids=[asset_id]))
     for r in results:
         if why := bulk_failure(r):
-            raise RuntimeError(f"tagging failed: {why}")
+            raise Failure(f"tagging failed: {why}")
 
 
 async def upload_asset(

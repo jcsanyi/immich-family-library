@@ -12,6 +12,7 @@ the family is a manual job.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
@@ -24,7 +25,7 @@ from ifl.immich import (
     create_album,
     create_partner,
     create_workflow,
-    describe_error,
+    log_failure,
     set_album_user_role,
     update_workflow,
 )
@@ -55,13 +56,6 @@ class ReconcileResult:
         return "; ".join(parts)
 
 
-def _failed(result: ReconcileResult, what: str, e: Exception) -> None:
-    """One fix raised. Log it, list it, and let the others run; the scan finds
-    this one again next pass."""
-    log.exception("could not %s", what)
-    result.failed.append(f"{what}: {describe_error(e)}")
-
-
 async def reconcile(
     accounts: Accounts, scan: ReconcileScan, webhook: WebhookConfig | None = None
 ) -> ReconcileResult:
@@ -72,59 +66,60 @@ async def reconcile(
     names = {m.user_id: m.name for m in accounts.members.values()}
     result = ReconcileResult(created_dropbox=None, shared=0, promoted=0)
 
-    if scan.create_dropbox:
+    async def fixed(what: str, step: Awaitable[None]) -> bool:
+        """Run one fix. If it raises, list it and let the others run: the scan
+        finds it again next pass."""
         try:
-            album = await create_album(family.client, scan.create_dropbox)
-            result.created_dropbox = album
-            await add_album_users(family.client, album.id, editors)
-            result.shared += len(editors)
-            log.info(
-                "created dropbox %r (%s), shared with %d members",
-                album.name,
-                album.id,
-                len(editors),
-            )
+            await step
         except Exception as e:  # noqa: BLE001 - every fix is independent and idempotent
-            _failed(result, f"create dropbox {scan.create_dropbox!r}", e)
+            result.failed.append(f"{what}: {log_failure(log, f'could not {what}', e)}")
+            return False
+        return True
+
+    async def create_dropbox(name: str) -> None:
+        result.created_dropbox = album = await create_album(family.client, name)
+        await add_album_users(family.client, album.id, editors)
+
+    if scan.create_dropbox and await fixed(
+        f"create dropbox {scan.create_dropbox!r}", create_dropbox(scan.create_dropbox)
+    ):
+        album = result.created_dropbox
+        result.shared += len(editors)
+        log.info(
+            "created dropbox %r (%s), shared with %d members", album.name, album.id, len(editors)
+        )
 
     for fix in scan.fixes:
-        if fix.add:
-            try:
-                await add_album_users(family.client, fix.album.id, {u: editors[u] for u in fix.add})
-                result.shared += len(fix.add)
-                log.info("shared %r with %d more members", fix.album.name, len(fix.add))
-            except Exception as e:  # noqa: BLE001
-                _failed(result, f"share {fix.album.name!r}", e)
+        if fix.add and await fixed(
+            f"share {fix.album.name!r}",
+            add_album_users(family.client, fix.album.id, {u: editors[u] for u in fix.add}),
+        ):
+            result.shared += len(fix.add)
+            log.info("shared %r with %d more members", fix.album.name, len(fix.add))
         for u in fix.promote:
-            try:
-                await set_album_user_role(family.client, fix.album.id, u, AlbumUserRole.EDITOR)
+            who = names.get(u, u)
+            if await fixed(
+                f"promote {who} on {fix.album.name!r}",
+                set_album_user_role(family.client, fix.album.id, u, AlbumUserRole.EDITOR),
+            ):
                 result.promoted += 1
-                log.info("promoted %s to editor on %r", names.get(u, u), fix.album.name)
-            except Exception as e:  # noqa: BLE001
-                _failed(result, f"promote {names.get(u, u)} on {fix.album.name!r}", e)
+                log.info("promoted %s to editor on %r", who, fix.album.name)
 
     for uid in scan.partner_with:
-        try:
-            await create_partner(family.client, uid)
+        who = names.get(uid, uid)
+        if await fixed(f"partner-share with {who}", create_partner(family.client, uid)):
             result.partnered += 1
-            log.info("partner-shared the family library with %s", names.get(uid, uid))
-        except Exception as e:  # noqa: BLE001
-            _failed(result, f"partner-share with {names.get(uid, uid)}", e)
+            log.info("partner-shared the family library with %s", who)
 
     if webhook is not None:
         for fix in scan.workflows:
-            try:
-                if fix.existing is None:
-                    await create_workflow(
-                        fix.member.client, WORKFLOW_NAME, webhook.url, webhook.token
-                    )
-                    log.info("created the webhook workflow for %s", fix.member.name)
-                else:
-                    await update_workflow(
-                        fix.member.client, fix.existing, webhook.url, webhook.token
-                    )
-                    log.info("fixed the webhook workflow for %s", fix.member.name)
+            client, what = fix.member.client, f"set up the webhook workflow for {fix.member.name}"
+            if fix.existing is None:
+                step = create_workflow(client, WORKFLOW_NAME, webhook.url, webhook.token)
+            else:
+                step = update_workflow(client, fix.existing, webhook.url, webhook.token)
+            if await fixed(what, step):
                 result.workflows += 1
-            except Exception as e:  # noqa: BLE001
-                _failed(result, f"set up the webhook workflow for {fix.member.name}", e)
+                verb = "created" if fix.existing is None else "fixed"
+                log.info("%s the webhook workflow for %s", verb, fix.member.name)
     return result

@@ -354,7 +354,7 @@ async def test_tag_asset_accepts_a_duplicate_and_raises_on_anything_else():
     calls = []
     client = stub_client(calls, tags={"tag_assets": [dup, denied]})
     await immich.tag_asset(client, tag_id, asset_id)  # duplicate: already tagged, fine
-    with pytest.raises(RuntimeError, match="tagging failed: no_permission: nope"):
+    with pytest.raises(immich.Failure, match="tagging failed: no_permission: nope"):
         await immich.tag_asset(client, tag_id, asset_id)
     assert all(kw["id"] == tag_id and kw["bulk_ids_dto"].ids == [asset_id] for _, _, kw in calls)
 
@@ -724,3 +724,32 @@ def test_describe_error_gives_one_line_for_any_error():
 
     assert immich.describe_error(RuntimeError("went\naway")) == "RuntimeError: went away"
     assert immich.describe_error(TimeoutError()) == "TimeoutError"
+
+
+def test_log_failure_keeps_the_traceback_for_faults_in_the_service(caplog):
+    import logging
+
+    import aiohttp
+    from immichpy.client.generated.exceptions import ServiceException
+
+    log = logging.getLogger("ifl.test")
+    cases = [
+        (immich.Failure("the copy is in the trash"), "the copy is in the trash", False),
+        (immich.DownloadMismatch("got 3 bytes"), "got 3 bytes", False),
+        (
+            ServiceException(status=502, reason="Bad Gateway"),
+            "Immich answered 502: Bad Gateway",
+            False,
+        ),
+        (aiohttp.ClientConnectionError("refused"), "ClientConnectionError: refused", False),
+        (TimeoutError(), "TimeoutError", False),
+        (KeyError("owner"), "KeyError: 'owner'", True),
+    ]
+    for error, why, traceback in cases:
+        caplog.clear()
+        with caplog.at_level(logging.ERROR, logger="ifl.test"):
+            assert immich.log_failure(log, "a.jpg not moved", error) == why
+        (record,) = caplog.records
+        assert record.getMessage() == f"a.jpg not moved: {why}"
+        assert bool(record.exc_info) is traceback
+        assert record.funcName == "test_log_failure_keeps_the_traceback_for_faults_in_the_service"

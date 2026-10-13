@@ -52,6 +52,7 @@ from ifl.config import Config, ConfigError
 from ifl.immich import (
     PROVENANCE_KEY,
     AlbumSummary,
+    Failure,
     add_album_assets,
     albums_containing,
     bulk_failure,
@@ -64,6 +65,7 @@ from ifl.immich import (
     get_asset_edits,
     get_asset_metadata_value,
     list_partner_ids,
+    log_failure,
     queue_backlog,
     restore_assets,
     set_asset_edits,
@@ -91,7 +93,7 @@ class MoveTimedOut(MoveBlocked):
     """Blocked after a wait on Immich, so the try cost the pass real time."""
 
 
-class MoveError(Exception):
+class MoveError(Failure):
     """Something failed partway. Running the move again resumes it."""
 
 
@@ -201,7 +203,7 @@ async def _fresh_sidecar(owner: Account, asset_id: UUID, tag: str, timeout: floa
 async def _add_to_album(client, album: AlbumSummary, asset_id: UUID) -> None:
     for r in await add_album_assets(client, album.id, [asset_id]):
         if why := bulk_failure(r):
-            raise RuntimeError(why)
+            raise MoveError(f"could not add the copy to {album.name!r}: {why}")
 
 
 async def _albums_holding(accounts: Accounts, asset_id: UUID) -> list[AlbumSummary]:
@@ -350,15 +352,8 @@ async def move_assets(
             out.unfinished.add(m.asset_id)
             slots_used += slot * isinstance(e, MoveTimedOut)
             continue
-        except MoveError as e:
-            log.error("%s not moved: %s", m.file_name, e)
-            out.failed.append((m.file_name, str(e)))
-            out.unfinished.add(m.asset_id)
-            slots_used += slot
-            continue
         except Exception as e:  # noqa: BLE001 - the move stops before the trash; the rest go on
-            log.exception("%s not moved", m.file_name)
-            out.failed.append((m.file_name, describe_error(e)))
+            out.failed.append((m.file_name, log_failure(log, f"{m.file_name} not moved", e)))
             out.unfinished.add(m.asset_id)
             slots_used += slot
             continue

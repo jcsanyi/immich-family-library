@@ -40,7 +40,7 @@ from aiohttp import web
 
 from ifl.accounts import Accounts
 from ifl.config import Config
-from ifl.immich import TOKEN_HEADER, describe_error
+from ifl.immich import TOKEN_HEADER, log_failure
 from ifl.move import MoveManyResult, MoveOptions, move_assets
 from ifl.observer import describe_assets, member_asset, reuploads_among
 from ifl.process import run_pass
@@ -96,8 +96,8 @@ class Daemon:
                 log.info("pass done: %s", result)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                log.exception("pass failed; next one in %ds", self.cfg.interval_seconds)
+            except Exception as e:  # noqa: BLE001 - the daemon outlives any one pass
+                log_failure(log, f"pass failed; next one in {self.cfg.interval_seconds}s", e)
             # Outside the try: the webhook keeps counting while passes fail, and
             # the report is the one signal for a looping phone.
             self.report()
@@ -177,8 +177,8 @@ class Daemon:
                 await self.handle_batch(batch)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                log.exception("webhook batch failed; the next pass will catch anything missed")
+            except Exception as e:  # noqa: BLE001 - the receiver outlives any one batch
+                log_failure(log, "webhook batch failed, left for the next pass", e)
 
     async def handle_batch(self, batch: list[tuple[UUID, UUID | None]]) -> None:
         found = []
@@ -186,11 +186,7 @@ class Daemon:
             try:
                 one = await member_asset(self.accounts, asset_id, owner_id)
             except Exception as e:  # noqa: BLE001 - one unreadable asset must not cost the batch
-                log.warning(
-                    "webhook: could not read asset %s (%s); the next pass looks again",
-                    asset_id,
-                    describe_error(e),
-                )
+                log_failure(log, f"webhook: asset {asset_id} not read, left for the next pass", e)
                 continue
             if one is not None:
                 found.append(one)

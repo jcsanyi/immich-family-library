@@ -346,7 +346,7 @@ async def test_one_asset_that_cannot_be_read_does_not_cost_the_batch(
 
     async def flaky(client, asset_id):
         if asset_id == lost:
-            raise RuntimeError("immich went away")
+            raise aiohttp.ClientConnectionError("immich went away")
         return await real(client, asset_id)
 
     monkeypatch.setattr("ifl.observer.get_asset_if_readable", flaky)
@@ -355,7 +355,11 @@ async def test_one_asset_that_cannot_be_read_does_not_cost_the_batch(
         await daemon.handle_batch([(lost, ALICE), (re.id, ALICE)])
 
     # Not "no member has it": the failure is said, and the rest of the batch goes on.
-    assert f"could not read asset {lost} (RuntimeError: immich went away)" in caplog.text
+    assert (
+        f"webhook: asset {lost} not read, left for the next pass: "
+        "ClientConnectionError: immich went away"
+    ) in caplog.text
+    assert "Traceback" not in caplog.text  # Immich failing is no fault of the service
     assert re.is_trashed and daemon.tally == {ALICE: 1}
 
 
