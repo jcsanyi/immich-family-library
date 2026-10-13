@@ -17,6 +17,12 @@ admin_api_key = ""
 # container the config mount is read-only, so use the data volume:
 # "/data/state.json".
 state_path = "data/state.json"
+# Where a move keeps a photo's file between the download and the upload. One
+# file at a time, deleted when the move ends, so it needs room for the largest
+# photo or video a member has. Relative paths are resolved against this file's
+# directory. Point it at a mounted volume if the container's own /tmp is too
+# small.
+temp_dir = "/tmp/immich-family-library"
 # While true, every command that would write to Immich refuses to run; only
 # `observe` and `show-config` work. Defaults to true when absent. Flip it once
 # `observe` reports what you expect.

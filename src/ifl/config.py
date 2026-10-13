@@ -16,6 +16,7 @@ DEFAULTS = {
     "service": {
         "readonly": True,
         "state_path": "data/state.json",
+        "temp_dir": "/tmp/immich-family-library",
         "settle_seconds": 60,
         "interval_seconds": 600,
     },
@@ -31,7 +32,7 @@ DEFAULTS = {
 # typo or an old name fails at startup instead of silently taking the default.
 SCHEMA = {
     "immich": {"url", "admin_api_key"},
-    "service": {"readonly", "state_path", "settle_seconds", "interval_seconds"},
+    "service": {"readonly", "state_path", "temp_dir", "settle_seconds", "interval_seconds"},
     "webhook": {"url", "token", "listen"},
     "family": {"email", "api_key", "dropbox_album"},
     "members": {"email", "api_key"},  # per [members.<name>] table
@@ -89,6 +90,7 @@ class Config:
     dropbox_album: str
     members: dict[str, AccountConfig]
     state_path: Path
+    temp_dir: Path  # holds one original at a time, between its download and its upload
     readonly: bool
     settle_seconds: int  # leave an asset alone this long after its last change
     interval_seconds: int  # the daemon's pause between passes
@@ -185,6 +187,12 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
     state_path = Path(state_path_raw)
     if not state_path.is_absolute():
         state_path = config_dir / state_path
+    temp_dir_raw = _typed("service", service, "temp_dir", str)
+    if not temp_dir_raw:
+        raise ConfigError("[service] temp_dir must name a directory")
+    temp_dir = Path(temp_dir_raw)
+    if not temp_dir.is_absolute():
+        temp_dir = config_dir / temp_dir
 
     limits = raw.get("limits") or {}
     albums_per_pass = _typed("limits", limits, "albums_per_pass", int)
@@ -236,6 +244,7 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
         dropbox_album=dropbox_album,
         members=members,
         state_path=state_path,
+        temp_dir=temp_dir,
         readonly=readonly,
         settle_seconds=settle,
         interval_seconds=interval,
@@ -301,6 +310,7 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
         "service": {
             "readonly": cfg.readonly,
             "state_path": str(cfg.state_path),
+            "temp_dir": str(cfg.temp_dir),
             "settle_seconds": cfg.settle_seconds,
             "interval_seconds": cfg.interval_seconds,
         },

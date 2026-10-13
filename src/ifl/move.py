@@ -42,12 +42,13 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
 
 from ifl.accounts import Account, Accounts
-from ifl.config import Config
+from ifl.config import Config, ConfigError
 from ifl.immich import (
     AlbumSummary,
     add_album_assets,
@@ -79,6 +80,7 @@ log = logging.getLogger(__name__)
 
 WATCHED_QUEUES = ("sidecar", "metadataExtraction")
 PROVENANCE_KEY = "ifl"
+TEMP_PREFIX = "ifl-"  # the only files the service removes from the temp directory
 
 
 class MoveBlocked(Exception):
@@ -99,6 +101,7 @@ class MoveOptions:
     settle_seconds: int
     moved_tag: str
     from_prefix: str
+    temp_dir: Path
     sidecar_timeout: float = 15.0
     extraction_timeout: float = 30.0  # edits need the copy's dimensions, which extraction sets
 
@@ -109,7 +112,24 @@ class MoveOptions:
             settle_seconds=cfg.settle_seconds,
             moved_tag=cfg.moved_tag,
             from_prefix=cfg.from_prefix,
+            temp_dir=cfg.temp_dir,
         )
+
+
+def prepare_temp_dir(temp_dir: Path) -> None:
+    """Make the temp directory, prove it can be written, and clear what a killed
+    move left in it. Only for the holder of the run lock: nobody else is
+    mid-move, so every file of ours in there is a leftover."""
+    try:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        for leftover in temp_dir.glob(f"{TEMP_PREFIX}*"):
+            leftover.unlink()
+            log.info("removed leftover %s", leftover)
+        probe = temp_dir / f"{TEMP_PREFIX}probe"
+        probe.touch()
+        probe.unlink()
+    except OSError as e:
+        raise ConfigError(f"[service] temp_dir {temp_dir} is not usable: {e}") from e
 
 
 @dataclass
@@ -491,19 +511,26 @@ async def move_asset(
             await tag_asset(owner.client, await upsert_tag(owner.client, opts.moved_tag), asset_id)
         xmp = await _fresh_sidecar(owner, asset_id, opts.moved_tag, opts.sidecar_timeout)
         sidecar = with_only_tag(xmp, f"{opts.from_prefix}/{owner.name}")
-        data = await download_original(owner.client, asset_id)
-        family_id, uploaded = await upload_asset(
-            family.client,
-            data=data,
-            filename=asset.original_file_name,
-            checksum=asset.checksum,
-            file_created_at=asset.file_created_at,
-            file_modified_at=asset.file_modified_at,
-            is_favorite=asset.is_favorite,
-            visibility=asset.visibility,
-            sidecar=sidecar,
-            duration=asset.duration or None,  # milliseconds; None or 0 for a still image
-        )
+        # The directory is made here as well as at startup: a cleaner of /tmp
+        # can take it away from under a daemon that has run for weeks.
+        opts.temp_dir.mkdir(parents=True, exist_ok=True)
+        original = opts.temp_dir / f"{TEMP_PREFIX}{asset_id}"
+        try:
+            await download_original(owner.client, asset_id, original, checksum=asset.checksum)
+            family_id, uploaded = await upload_asset(
+                family.client,
+                path=original,
+                filename=asset.original_file_name,
+                checksum=asset.checksum,
+                file_created_at=asset.file_created_at,
+                file_modified_at=asset.file_modified_at,
+                is_favorite=asset.is_favorite,
+                visibility=asset.visibility,
+                sidecar=sidecar,
+                duration=asset.duration or None,  # milliseconds; None or 0 for a still image
+            )
+        finally:
+            original.unlink(missing_ok=True)
         how = "uploaded" if uploaded else "duplicate of"
         log.info("%s: %s as %s", asset.original_file_name, how, family_id)
     else:

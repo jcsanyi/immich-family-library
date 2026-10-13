@@ -35,6 +35,18 @@ shares, and one workflow per member.
   shows the name).
 - It mounts `./config` read-only at `/config`. It mounts a named volume,
   `ifl-data`, at `/data` for the state file.
+- It mounts nothing for the temp directory. A move keeps one file at a time in
+  `/tmp/immich-family-library`, in the writable layer of the container. The
+  disk that holds docker's data needs free space for the largest photo or
+  video that a member has. If that disk is too small, mount a volume and set
+  `temp_dir` in `[service]` to its path.
+- If you run the service outside a container, examine `temp_dir` first. On
+  many hosts `/tmp` is a RAM disk (tmpfs), and a file there uses memory. Set
+  `temp_dir` to a directory on a disk.
+- Give each instance of the service its own `temp_dir`. A command that writes
+  to Immich removes the `ifl-` files in that directory when it starts. If two
+  instances share the directory, one can remove a file that the other uses.
+  Each container has its own `/tmp`, so the default is safe there.
 - It mounts the host's `/etc/localtime` read-only, so the container uses the
   host's timezone. `report_at` and the log times are in that timezone. Without
   the mount, they are in UTC.

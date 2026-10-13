@@ -24,6 +24,7 @@ from ifl.move import (
     advance_marks,
     move_assets,
     pass_backlog,
+    prepare_temp_dir,
 )
 from ifl.observer import (
     describe_albums,
@@ -52,6 +53,8 @@ async def opened(config_path: Path, *, writes: bool) -> AsyncIterator[tuple[Conf
             "config is readonly; set readonly = false under [service] to allow this command"
         )
     with hold_lock(cfg.state_path) if writes else contextlib.nullcontext():
+        if writes:
+            prepare_temp_dir(cfg.temp_dir)
         accounts = await open_accounts(cfg)
         try:
             yield cfg, accounts

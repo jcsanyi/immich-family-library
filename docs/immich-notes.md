@@ -102,6 +102,9 @@ are listed here so that the next Immich upgrade knows what to re-check.
   sidecar attached, the sidecar part was checked as a `.jpg` and rejected
   ("Unsupported file type"). The service sends no `filename` field. Each part
   names itself.
+- The `checksum` of an asset is the SHA-1 of its original file, in base64. The
+  move makes the same checksum from the file that it downloaded, and compares
+  the two before the upload. Confirmed on dev with three photos.
 - The duplicate check is per owner, and trashed assets count. Re-uploading a
   moved photo is a no-op until the member's trash is emptied.
 - `POST /assets/bulk-upload-check` answers whether an account has a checksum,

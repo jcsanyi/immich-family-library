@@ -5,7 +5,17 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from fakes import ALICE, BOB, EDITOR, FAMILY, FakeAsset, FakeClient, make_accounts, patch_world
+from fakes import (
+    ALICE,
+    BOB,
+    EDITOR,
+    FAMILY,
+    TEMP_DIR,
+    FakeAsset,
+    FakeClient,
+    make_accounts,
+    patch_world,
+)
 
 from ifl.accounts import Account
 from ifl.config import parse_config
@@ -14,7 +24,7 @@ from ifl.state import State
 
 RAW = {
     "immich": {"url": "https://x.example"},
-    "service": {"readonly": False, "settle_seconds": 0},
+    "service": {"readonly": False, "settle_seconds": 0, "temp_dir": str(TEMP_DIR)},
     "family": {"email": "f@x", "api_key": "k", "dropbox_album": "Drop"},
     "members": {
         "alice": {"email": "alice@x", "api_key": "k"},

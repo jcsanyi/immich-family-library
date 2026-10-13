@@ -12,6 +12,7 @@ from fakes import (
     EDITOR,
     FAMILY,
     STRANGER,
+    TEMP_DIR,
     VIEWER,
     FakeAsset,
     make_accounts,
@@ -22,7 +23,15 @@ from immichpy.client.generated.models.asset_visibility import AssetVisibility
 from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 from immichpy.client.generated.models.bulk_id_response_dto import BulkIdResponseDto
 
-from ifl.move import MoveBlocked, MoveError, MoveOptions, move_asset, pass_backlog
+from ifl.config import ConfigError
+from ifl.move import (
+    MoveBlocked,
+    MoveError,
+    MoveOptions,
+    move_asset,
+    pass_backlog,
+    prepare_temp_dir,
+)
 from ifl.sidecar import tags_in
 
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
@@ -31,6 +40,7 @@ OPTS = MoveOptions(
     settle_seconds=60,
     moved_tag="family",
     from_prefix="from",
+    temp_dir=TEMP_DIR,
     sidecar_timeout=0.2,
     extraction_timeout=0.2,
 )
@@ -78,6 +88,7 @@ async def test_move_carries_everything_and_trashes_the_original(world):
     # The sidecar that went up: Immich's, with only our tag.
     (up,) = world.uploads
     assert up["data"] == b"bytes-of-sha-1" and up["duration"] is None
+    assert not list(TEMP_DIR.iterdir())  # the downloaded original is gone again
     assert tags_in(up["sidecar"]) == ["from/alice"] and b"Ferry" in up["sidecar"]
     # Albums: family albums except the dropbox, and alice's own album with her key.
     assert result.relinked == ["Trip"] and result.relinked_member == ["Private"]
@@ -160,6 +171,39 @@ async def test_a_sidecar_that_never_arrives_blocks_with_only_the_tag_written(wor
     with pytest.raises(MoveBlocked, match="sidecar not written"):
         await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
     assert world.writes == []
+
+
+async def test_a_failed_upload_leaves_no_file_behind(world, monkeypatch):
+    accounts = make_accounts()
+    a = alice_asset(world)
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+
+    async def refuse(client, *, path, **kw):
+        assert path.read_bytes() == b"bytes-of-sha-1"
+        raise RuntimeError("413 too large")
+
+    monkeypatch.setattr("ifl.move.upload_asset", refuse)
+
+    with pytest.raises(RuntimeError, match="too large"):
+        await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+
+    assert not list(TEMP_DIR.iterdir()) and not a.is_trashed
+
+
+def test_prepare_temp_dir_makes_it_and_clears_only_our_leftovers(tmp_path):
+    temp = tmp_path / "a" / "b"
+    prepare_temp_dir(temp)
+    assert temp.is_dir()
+
+    (temp / "ifl-0123").write_bytes(b"half a video")
+    (temp / "notes.txt").write_text("someone else's")
+    prepare_temp_dir(temp)
+    assert [p.name for p in temp.iterdir()] == ["notes.txt"]
+
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    with pytest.raises(ConfigError, match="temp_dir .* is not usable"):
+        prepare_temp_dir(blocker / "under-a-file")
 
 
 async def test_relink_picks_the_album_owner_then_the_editor(world):

@@ -34,6 +34,9 @@ Subcommands:
                   the family's copy of FILE, for the "family deleted it" case.
   reshare         As carol, add her re-uploaded cat to the family's "Cat" album: the
                   re-share that restores the family's trashed copy.
+  big-video       As alice, upload a video of --gb gigabytes (2 by default) into the
+                  family's "Family Trip": the move must carry it without holding it in
+                  memory. The file is the seed clip with padding, built in --workdir.
   blocked-photos  As alice, put a live photo and a locked, a hidden and an archived photo
                   into the family's "Family Trip" album: what the asset scan and the move
                   must leave alone, with the archived photo as the one that does move.
@@ -45,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import logging
 import os
 import sys
@@ -89,7 +93,7 @@ from seed_dev import (  # noqa: E402
 )
 
 from ifl.accounts import ADMIN_PERMISSIONS, MEMBER_PERMISSIONS, Account, Accounts  # noqa: E402
-from ifl.immich import create_partner, list_albums  # noqa: E402
+from ifl.immich import create_partner, list_albums, upload_asset  # noqa: E402
 
 log = logging.getLogger("scenarios")
 KEY_NAME = "immich-family-library"
@@ -355,6 +359,46 @@ async def blocked_photos(accounts: Accounts, args, *_) -> None:
             log.warning("alice: could not make %s %s: %s", aid, visibility.value, e)
 
 
+async def big_video(accounts: Accounts, args, *_) -> None:
+    fam, alice = accounts.family, accounts.members["alice"]
+    album = await family_album(fam, "Family Trip")
+    taken = BASE - timedelta(days=1)
+    # A `free` box is padding that every MP4 reader skips, so the clip stays a
+    # valid two-second video at any size. Its length field is 32 bits.
+    padding = int(args.gb * (1 << 30))
+    if padding + 8 >= 1 << 32:
+        raise SystemExit("--gb must be less than 4")
+    name = f"alice-big-{args.gb:g}gb.mp4"
+    path = args.workdir / name
+    digest = hashlib.sha1(usedforsecurity=False)
+    with path.open("wb") as f:
+        for part in (CLIP.read_bytes(), (padding + 8).to_bytes(4, "big") + b"free"):
+            f.write(part)
+            digest.update(part)
+        for _ in range(padding >> 20):
+            block = os.urandom(1 << 20)
+            f.write(block)
+            digest.update(block)
+    try:
+        log.info("alice: uploading %s, %d bytes", name, path.stat().st_size)
+        asset_id, created = await upload_asset(
+            alice.client,
+            path=path,
+            filename=name,
+            checksum=digest.hexdigest(),
+            file_created_at=taken,
+            file_modified_at=taken,
+            is_favorite=False,
+            visibility=AssetVisibility.TIMELINE,
+            sidecar=None,
+        )
+    finally:
+        path.unlink()
+    log.info("alice: %s -> %s %s", name, "created" if created else "duplicate", asset_id)
+    await add_to_album(alice, album.id, [asset_id])
+    log.info("alice: added it to %r", album.name)
+
+
 COMMANDS = {
     "keys": keys,
     "convert-cases": convert_cases,
@@ -366,6 +410,7 @@ COMMANDS = {
     "reupload": reupload,
     "reshare": reshare,
     "blocked-photos": blocked_photos,
+    "big-video": big_video,
 }
 
 
@@ -409,6 +454,9 @@ if __name__ == "__main__":
         "blocked-photos",
     ):
         sub.add_parser(name)
+    b = sub.add_parser("big-video")
+    b.add_argument("--gb", type=float, default=2.0, help="size of the padding, in gigabytes")
+    b.add_argument("--workdir", type=Path, default=Path("/tmp"), help="where to build the file")
     r = sub.add_parser("reupload")
     r.add_argument(
         "members",

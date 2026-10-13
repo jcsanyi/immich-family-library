@@ -8,8 +8,10 @@ every field is validated on construction and on assignment. Albums go through
 
 from __future__ import annotations
 
+import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
@@ -35,6 +37,7 @@ FAMILY, ALICE, BOB, STRANGER = (uuid4() for _ in range(4))
 EDITOR, VIEWER, OWNER = AlbumUserRole.EDITOR, AlbumUserRole.VIEWER, AlbumUserRole.OWNER
 EMAILS = {FAMILY: "family@x", ALICE: "alice@x", BOB: "bob@x", STRANGER: "stranger@x"}
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
+TEMP_DIR = Path(tempfile.gettempdir()) / "ifl-tests"  # every move empties it again
 TAKEN = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
 
 
@@ -331,9 +334,10 @@ class FakeWorld:
     async def download_asset_file(self, client, file_id):
         return self.sidecars[file_id]
 
-    async def download_original(self, client, asset_id):
+    async def download_original(self, client, asset_id, dest, *, checksum):
         self.writes.append(("download", client.user_id, asset_id))
-        return b"bytes-of-" + self.find_asset(asset_id).checksum.encode()
+        assert checksum == self.find_asset(asset_id).checksum
+        dest.write_bytes(b"bytes-of-" + checksum.encode())
 
     async def shared_link_asset_ids(self, client):
         return set(self.shared_links.get(client.user_id, set()))
@@ -388,7 +392,7 @@ class FakeWorld:
         self,
         client,
         *,
-        data,
+        path,
         filename,
         checksum,
         file_created_at,
@@ -417,7 +421,7 @@ class FakeWorld:
         self.uploads.append(
             {
                 "id": new.id,
-                "data": data,
+                "data": path.read_bytes(),
                 "sidecar": sidecar,
                 "visibility": visibility,
                 "is_favorite": is_favorite,
