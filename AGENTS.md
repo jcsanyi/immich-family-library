@@ -5,20 +5,8 @@
 Read `README.md` first. It says what the system does, in user-facing terms, and
 defines the vocabulary: member, family account, dropbox, reclaim.
 
-`docs/` is the design and the documentation in one. Read `docs/how-it-works.md`
-in full before you do anything. It covers the flows, the state model, the
-metadata that travels with an asset, the mobile re-upload problem and how we
-handle it, and pacing. The other docs:
-
-- `docs/configuration.md`: the config reference and the API key permissions.
-- `docs/immich-notes.md`: what we have verified about Immich, where to look
-  things up, and the upstream references.
-- `docs/development.md`: the tooling, the target Immich version, the tests,
-  the dev instance and its scripts, the branch model, and the writing style.
-- `docs/cli.md` and `docs/deployment.md`: the operator side.
-- `docs/for-members.md`: the hand-out for family members.
-
-Work still to do lives in the GitHub issues, not in a document.
+`docs/` is the design and the documentation in one. `README.md` lists the docs.
+Read `docs/how-it-works.md` in full before you do anything.
 
 Any part of the design can change through conversation with the user. When it
 does, update the relevant doc in the same change, so that the docs never
@@ -28,15 +16,6 @@ record of a decision, ask. Do not assume that either one is right.
 When you write or change a doc, follow the style that "Writing style" in
 `docs/development.md` assigns to it, and invoke the matching skill from the
 plain-english plugin if it is installed.
-
-Two terms that the docs use and `README.md` does not:
-
-- The one rule: the service moves a member-owned asset found in a family-owned
-  album to the family account. Every flow is a way to get an asset into that
-  position.
-- State file: the local JSON file that holds each member's re-upload scan
-  mark and daily re-upload tally. Nothing in it is necessary for correctness.
-  The move path derives its state from Immich.
 
 ## How to work on this
 
@@ -70,7 +49,6 @@ user owns all code in this repository.
 
 `main` is reviewed code. Every change happens on its own feature branch, cut
 from `main`. Name the branch for the change, for example `webhook-retries`.
-The old `dev` branch is retired. Do not commit to it.
 
 Never commit without an explicit instruction in the current message.
 Completing a task is not that instruction. The user approving a plan is not
@@ -81,14 +59,11 @@ When the user says to commit, do all of this:
 1. Commit on the feature branch. Keep commits small and messages plain.
 2. Push the feature branch.
 3. If the change needs a test on the dev instance, deploy the branch to the
-   dev host with the command in `AGENTS.local.md`. It checks out the branch,
-   pulls it, rebuilds the container, and restarts the daemon. A change to
-   docs or scripts alone does not need a deploy.
+   dev host with the command in `AGENTS.local.md`. A change to docs or scripts
+   alone does not need a deploy.
 
 Code reaches the dev host only through git. Do not `rsync` or `scp` files to
-it. The checkout there uses a read-only deploy key, so it can pull but never
-push. Its config is untracked and survives pulls. Its state file is in a
-docker volume.
+it.
 
 Keep instance-specific values (hostnames, emails, network names) out of
 tracked files. This is a public project. Examples use example.com.
