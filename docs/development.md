@@ -233,8 +233,8 @@ those runs established. Keep that habit for anything that deletes.
 
 `main` is reviewed code. Each change lives on its own feature branch, which is
 what the dev container deploys for testing. A branch squash-merges into
-`main` once it has been reviewed and run on the dev instance. Commits carry no
-tool attribution.
+`main` once it has been reviewed and run on the dev instance. Commits, pull
+requests, issues and comments carry no tool attribution.
 
 ## Writing style
 
