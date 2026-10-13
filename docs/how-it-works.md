@@ -15,7 +15,7 @@ The family account and every participating member give the service an API
 key. A member without a key can still share an album with the family user,
 but the service converts and moves nothing of theirs, and says so.
 
-## The one rule
+## What the service moves
 
 The service moves any member-owned photo it finds in a family-owned album to
 the family account. Album conversion, the dropbox, and adding to a family
@@ -59,7 +59,7 @@ For a member album with the family user on it:
    key. Editors can add their own photos, and that's all it takes.
 5. The original album is deleted, once Immich has accepted every photo. Only
    the album: the photos are still the member's, now sitting in a family
-   album, which is exactly what the one rule acts on.
+   album, which is exactly what the service moves.
 
 Every step is idempotent. A conversion that died partway finishes on the next
 run.

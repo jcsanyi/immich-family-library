@@ -8,8 +8,8 @@ Each pass is three scans, in this order:
 2. Family albums. The invariant: the dropbox exists, every configured member
    is an editor on every family-owned album, and the family partner-shares
    with every member (reconcile).
-3. Assets. The one rule: a member-owned asset sitting in a family-owned album
-   gets moved to the family account. Plus re-uploads: a member-owned asset,
+3. Assets. A member-owned asset sitting in a family-owned album gets moved to
+   the family account. Plus re-uploads: a member-owned asset,
    uploaded since the last look, whose checksum the family already owns. The
    same move handles both; a re-upload just has nothing to upload.
 """

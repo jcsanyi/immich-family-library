@@ -5,7 +5,7 @@ with the same name. The family account gets an album by that name (or already
 has one), everyone who should be on it is added, each contributor adds their
 own photos to it with their own key, and the original is deleted. No photo
 moves here: afterwards they're member-owned assets in a family-owned album,
-which is exactly what the one rule acts on.
+which is exactly what the service moves.
 
 Every step is derived from what Immich has, so a run that died halfway is
 finished by running it again: the family album is found by name, users and
