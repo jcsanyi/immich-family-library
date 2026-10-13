@@ -40,7 +40,7 @@ from aiohttp import web
 
 from ifl.accounts import Accounts
 from ifl.config import Config
-from ifl.immich import TOKEN_HEADER
+from ifl.immich import TOKEN_HEADER, describe_error
 from ifl.move import MoveManyResult, MoveOptions, move_assets
 from ifl.observer import describe_assets, member_asset, reuploads_among
 from ifl.process import run_pass
@@ -187,10 +187,9 @@ class Daemon:
                 one = await member_asset(self.accounts, asset_id, owner_id)
             except Exception as e:  # noqa: BLE001 - one unreadable asset must not cost the batch
                 log.warning(
-                    "webhook: could not read asset %s (%s: %s); the next pass looks again",
+                    "webhook: could not read asset %s (%s); the next pass looks again",
                     asset_id,
-                    type(e).__name__,
-                    e,
+                    describe_error(e),
                 )
                 continue
             if one is not None:

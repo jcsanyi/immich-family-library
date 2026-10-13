@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,7 +14,7 @@ from typing import Any
 from uuid import UUID
 
 import aiohttp
-from immichpy.client.generated.exceptions import BadRequestException
+from immichpy.client.generated.exceptions import ApiException, BadRequestException
 from immichpy.client.generated.models.add_users_dto import AddUsersDto
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_add_dto import AlbumUserAddDto
@@ -180,6 +181,24 @@ async def add_album_assets(
     if not ids:
         return []
     return await client.albums.add_assets_to_album(id=album_id, bulk_ids_dto=BulkIdsDto(ids=ids))
+
+
+def describe_error(e: BaseException) -> str:
+    """Any error as one line, for a log line or a result.
+
+    The client's own text for an Immich answer runs to four lines and carries
+    every response header, so an answer is cut down to its status and the
+    message Immich sent. Anything else is its type and its text."""
+    if isinstance(e, ApiException):
+        try:
+            message = json.loads(e.body or "").get("message")
+        except (ValueError, AttributeError, TypeError):
+            message = None
+        if isinstance(message, list):
+            message = "; ".join(str(m) for m in message)
+        return f"Immich answered {e.status}: {message or e.reason or 'no detail'}"
+    text = " ".join(str(e).split())
+    return f"{type(e).__name__}: {text}" if text else type(e).__name__
 
 
 def bulk_failure(r: BulkIdResponseDto) -> str | None:

@@ -157,7 +157,9 @@ async def test_missing_permissions_are_named_and_all_covers_everything(stub):
 
 async def test_a_failing_call_becomes_an_account_error_and_closes_the_client(stub):
     stub.KEYS["k1"] = {"raise": ConnectionError("no route to host")}
-    with pytest.raises(AccountError, match=r"\[alice\] key check failed: no route to host"):
+    with pytest.raises(
+        AccountError, match=r"\[alice\] key check failed: ConnectionError: no route to host"
+    ):
         await open_account(URL, AccountConfig("alice", "k1", "alice@x"), required=set())
     assert stub.made[0].closed
 

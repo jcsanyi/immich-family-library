@@ -55,6 +55,7 @@ from ifl.immich import (
     add_album_assets,
     albums_containing,
     bulk_failure,
+    describe_error,
     download_asset_file,
     download_original,
     existing_asset_by_checksum,
@@ -240,7 +241,7 @@ async def _relink_member_album(
             log.info("re-linked into %r with %s's key", album.name, who.name)
             return
         except Exception as e:  # noqa: BLE001 - any refusal means try the next key
-            failures.append(f"{who.name}: {e}")
+            failures.append(f"{who.name}: {describe_error(e)}")
     raise MoveError(
         f"could not re-link the copy into {album.name!r} ({'; '.join(failures) or 'no key can'});"
         " original left in place"
@@ -357,7 +358,7 @@ async def move_assets(
             continue
         except Exception as e:  # noqa: BLE001 - the move stops before the trash; the rest go on
             log.exception("%s not moved", m.file_name)
-            out.failed.append((m.file_name, f"{type(e).__name__}: {e}"))
+            out.failed.append((m.file_name, describe_error(e)))
             out.unfinished.add(m.asset_id)
             slots_used += slot
             continue

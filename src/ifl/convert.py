@@ -31,6 +31,7 @@ from ifl.immich import (
     bulk_failure,
     create_album,
     delete_album,
+    describe_error,
     iter_album_assets,
     list_albums,
 )
@@ -141,7 +142,7 @@ async def convert_albums(
             out.failed.append((conv, e))
         except Exception as e:  # noqa: BLE001 - the original is only deleted last; the rest go on
             log.exception("album %r not converted", conv.album.name)
-            out.failed.append((conv, ConvertError(f"{type(e).__name__}: {e}")))
+            out.failed.append((conv, ConvertError(describe_error(e))))
     if out.remaining:
         log.info("%d more albums to convert; limit is %d per pass", out.remaining, limit)
     return out

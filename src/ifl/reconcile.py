@@ -24,6 +24,7 @@ from ifl.immich import (
     create_album,
     create_partner,
     create_workflow,
+    describe_error,
     set_album_user_role,
     update_workflow,
 )
@@ -58,7 +59,7 @@ def _failed(result: ReconcileResult, what: str, e: Exception) -> None:
     """One fix raised. Log it, list it, and let the others run; the scan finds
     this one again next pass."""
     log.exception("could not %s", what)
-    result.failed.append(f"{what}: {type(e).__name__}: {e}")
+    result.failed.append(f"{what}: {describe_error(e)}")
 
 
 async def reconcile(

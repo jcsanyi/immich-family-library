@@ -18,6 +18,7 @@ from ifl.accounts import AccountError, Accounts, open_accounts
 from ifl.config import Config, ConfigError, load_config, to_raw
 from ifl.convert import ConvertError, convert_albums
 from ifl.daemon import Daemon
+from ifl.immich import describe_error
 from ifl.lock import Locked, LockError, hold_lock
 from ifl.move import (
     MoveError,
@@ -171,7 +172,7 @@ async def _reupload_target(accounts: Accounts, asset_id: UUID) -> list[MoveAsset
             return []
         one = await reuploads_among(accounts, [found])
     except Exception as e:  # noqa: BLE001 - whatever Immich did, say it in one line
-        log.error("could not look up asset %s: %s: %s", asset_id, type(e).__name__, e)
+        log.error("could not look up asset %s: %s", asset_id, describe_error(e))
         return []
     for s in one.skipped_reuploads:
         log.error("not moving %s", s)

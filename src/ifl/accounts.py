@@ -15,6 +15,7 @@ from uuid import UUID
 from immichpy.client.main import AsyncClient
 
 from ifl.config import AccountConfig, Config
+from ifl.immich import describe_error
 
 log = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ async def open_account(
         raise
     except Exception as e:
         await client.close()
-        raise AccountError(f"[{cfg.name}] key check failed: {e}") from e
+        raise AccountError(f"[{cfg.name}] key check failed: {describe_error(e)}") from e
     log.info("account ok: %s (%s)", cfg.name, me.email)
     return Account(name=cfg.name, email=me.email, user_id=me.id, client=client)
 

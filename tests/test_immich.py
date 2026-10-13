@@ -701,3 +701,26 @@ async def test_get_asset_if_readable_takes_only_a_400_to_mean_no_access(monkeypa
     assert await immich.get_asset_if_readable(None, asset_id) is None
     with pytest.raises(ServiceException):
         await immich.get_asset_if_readable(None, asset_id)
+
+
+def test_describe_error_gives_one_line_for_any_error():
+    from immichpy.client.generated.exceptions import BadRequestException, ServiceException
+
+    refused = BadRequestException(
+        status=400,
+        reason="Bad Request",
+        body='{"message":"Not found or no asset.read access","error":"Bad Request"}',
+    )
+    refused.headers = {"Content-Type": "application/json", "X-Powered-By": "Express"}
+    assert (
+        immich.describe_error(refused) == "Immich answered 400: Not found or no asset.read access"
+    )
+    # A validation error lists its messages. A body that is not JSON falls back to the reason.
+    many = BadRequestException(status=400, body='{"message":["id must be a UUID","size too big"]}')
+    assert immich.describe_error(many) == "Immich answered 400: id must be a UUID; size too big"
+    gateway = ServiceException(status=502, reason="Bad Gateway", body="<html>nginx</html>")
+    assert immich.describe_error(gateway) == "Immich answered 502: Bad Gateway"
+    assert immich.describe_error(ServiceException(status=500)) == "Immich answered 500: no detail"
+
+    assert immich.describe_error(RuntimeError("went\naway")) == "RuntimeError: went away"
+    assert immich.describe_error(TimeoutError()) == "TimeoutError"
