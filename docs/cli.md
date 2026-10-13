@@ -21,11 +21,12 @@ same way, which is why the emails are checked.
 While `readonly` is true in the config, every command that writes to Immich
 refuses to start. `observe` and `show-config` still work.
 
-Only one command that writes to Immich can run at a time. Two at the same
-time can create an album or a workflow twice. So each such command takes the
-run lock before it starts. If the daemon or another such command holds the
-run lock, the command exits with code 3 before it touches anything. The run
-lock is a file. [deployment.md](deployment.md) says more.
+Only one command that writes to Immich can run at a time, because two at the
+same time can create an album or a workflow twice. Each of these commands
+takes the run lock, a file at `lock_path`, before it does anything else. If
+the daemon or another command already holds the run lock, the command exits
+with code 3 and changes nothing. [deployment.md](deployment.md) explains where
+to keep the file.
 
 ## `ifl observe`
 
