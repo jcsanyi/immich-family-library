@@ -229,7 +229,8 @@ What the service does about it:
   setting on produces none. Once a day, at `report_at`, one warning per member
   says how many of their photos were re-uploaded and trashed since the last
   report. A member with none gets no line. The tally lives in the daemon's
-  memory, so a restart drops what it had counted, and the next report covers
+  memory. A daemon that is stopped reports what it has counted before it
+  exits, and one that crashes loses it. Either way the next report covers
   only the time since the restart. A one-off `process` or `move` keeps no
   tally: its summary line gives the count. The tally is what a nudge to the
   member will one day be built on; a loop needs a nudge, not a pager.
@@ -270,7 +271,8 @@ service keeps nothing on disk between runs.
 The daemon remembers three things, in memory only: the re-upload scan's mark,
 each member's tally of trashed re-uploads, and when it last reported them.
 None of them is needed for correctness. A restart costs one read of the
-scan's three days, and the part of a day's tally it had counted. Immich
+scan's three days, and it brings the day's report forward to the moment of
+the stop. Immich
 stores a config label in one place only, the `from/<member>` tag. Apart from
 that tag, renaming a member in the config changes only how messages read.
 
@@ -309,6 +311,9 @@ toward `assets_per_pass`, so photos that are blocked on every pass, live
 photos say, never hold up the ones behind them. A move that fails does count,
 and so does one that gives up waiting for Immich to write the sidecar.
 
-The webhook never wakes the pass. It handles re-uploads alone, which move no
-bytes and so aren't what the caps meter. Everything else waits for the
-interval.
+Re-uploads move no bytes, so they aren't what the caps meter. A pass handles
+every re-upload it found before it starts on the album moves, and none of
+them counts toward `assets_per_pass`, whether it's trashed, blocked or fails.
+
+The webhook never wakes the pass. It handles re-uploads alone, with no cap,
+for the same reason. Everything else waits for the interval.

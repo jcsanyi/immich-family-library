@@ -31,7 +31,7 @@ from ifl.immich import (
     AlbumSummary,
     UserNames,
     find_workflow,
-    get_asset,
+    get_asset_if_readable,
     iter_album_assets,
     iter_assets_created_after,
     list_albums,
@@ -273,6 +273,9 @@ async def scan_assets(
             )
     if reuploads:
         await _scan_reuploads(accounts, mark, scan, seen, now or datetime.now(UTC))
+        # Re-uploads go first. They are outside the per-pass limit, and behind
+        # the album moves a limit that is always reached would never let them run.
+        scan.moves.sort(key=lambda m: not m.reupload)
     return scan
 
 
@@ -304,15 +307,13 @@ async def member_asset(
     accounts: Accounts, asset_id: UUID, owner_id: UUID | None = None
 ) -> tuple[Account, AssetResponseDto] | None:
     """The member who owns this asset, and the asset read with their key, or None
-    when no member holds it live. `owner_id` is a hint that saves the other
-    members' reads; it is never trusted."""
-    members = {m.user_id: m for m in accounts.members.values()}
-    for member in [members[owner_id]] if owner_id in members else members.values():
-        try:
-            asset = await get_asset(member.client, asset_id)
-        except Exception:  # noqa: BLE001 - not this member's, or gone already
-            continue
-        if asset.owner_id == member.user_id and not asset.is_trashed:
+    when no member holds it live. `owner_id` is a hint, never trusted: that
+    member is only asked first, which usually saves the other members' reads."""
+    members = list(accounts.members.values())
+    members.sort(key=lambda m: m.user_id != owner_id)
+    for member in members:
+        asset = await get_asset_if_readable(member.client, asset_id)
+        if asset is not None and asset.owner_id == member.user_id and not asset.is_trashed:
             return member, asset
     return None
 

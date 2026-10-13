@@ -116,8 +116,9 @@ report. A restart has these effects:
   time. If the daemon was stopped for longer, re-uploads from before those
   three days are not found. They stay in the member's library as duplicates of
   family photos.
-- The count starts again at zero. The next daily report covers only the time
-  since the restart.
+- The count starts again at zero. A daemon that stops cleanly logs its
+  report before it exits. The next daily report covers only the time since
+  the restart.
 
 ## The run lock
 

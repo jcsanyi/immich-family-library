@@ -38,7 +38,7 @@ start.
 | Setting | Default | What it is |
 |---|---|---|
 | `albums_per_pass` | `5` | The most albums that `convert-album --all` or a pass converts. 0 means no limit. |
-| `assets_per_pass` | `20` | The most photos that `move --all` or a pass moves. 0 means no limit. |
+| `assets_per_pass` | `20` | The most photos that `move --all` or a pass moves. 0 means no limit. Re-uploads do not count: each pass handles all of them first. |
 
 A command given a specific id ignores the limits. The limits and the interval
 together are the rate. See pacing in [how-it-works.md](how-it-works.md).

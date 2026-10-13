@@ -780,3 +780,38 @@ def test_reuploads_trashed_counts_per_member_and_shows_in_the_summary():
         str(MoveManyResult(done=[done(BOB, False)])) == "moved 1, blocked 0, failed 0, remaining 0"
     )
     assert MoveManyResult(done=[done(ALICE, True, trashed=False)]).reuploads_trashed() == {}
+
+
+async def test_reuploads_never_use_the_limit(world, monkeypatch):
+    from ifl.move import MoveError, MoveResult, move_assets
+    from ifl.observer import MoveAsset
+
+    accounts = make_accounts()
+    alice = accounts.members["alice"]
+    reuploads = [MoveAsset(uuid4(), alice, None, f"re{i}.jpg", reupload=True) for i in range(3)]
+    plain = [MoveAsset(uuid4(), alice, None, f"new{i}.jpg") for i in range(2)]
+
+    async def move(accounts, opts, asset_id, owner, **kw):
+        if asset_id == reuploads[1].asset_id:
+            raise MoveError("immich said no")
+        return MoveResult(
+            asset_id=asset_id,
+            owner_id=owner.user_id,
+            family_asset_id=uuid4(),
+            file_name="x.jpg",
+            uploaded=False,
+            edits=0,
+            trashed=True,
+        )
+
+    monkeypatch.setattr("ifl.move.move_asset", move)
+
+    result = await move_assets(accounts, OPTS, reuploads + plain, limit=1)
+
+    # Every re-upload was tried, the failed one included, and one real move fitted the limit.
+    assert [r.asset_id for r in result.done] == [
+        reuploads[0].asset_id,
+        reuploads[2].asset_id,
+        plain[0].asset_id,
+    ]
+    assert [f[0] for f in result.failed] == ["re1.jpg"] and result.remaining == 1

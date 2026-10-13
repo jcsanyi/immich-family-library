@@ -309,3 +309,45 @@ async def test_each_pass_counts_its_reuploads_and_a_failing_pass_still_reports(w
     await asyncio.wait_for(daemon.passes(), 5)
 
     assert reports == [{ALICE: 2}, {ALICE: 2}]
+
+
+async def test_a_wrong_owner_hint_only_changes_who_is_asked_first(world, daemon):
+    copy = world.add_asset(
+        FakeAsset(uuid4(), FAMILY, checksum="beach", original_file_name="beach.jpg")
+    )
+    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    re = world.add_asset(
+        FakeAsset(uuid4(), ALICE, checksum="beach", original_file_name="beach.jpg")
+    )
+
+    await daemon.handle_batch([(re.id, BOB)])  # the payload names bob; the asset is alice's
+
+    assert re.is_trashed and daemon.tally == {ALICE: 1}
+
+
+async def test_a_batch_fails_when_immich_does_not_answer(world, daemon, monkeypatch):
+    async def down(client, asset_id):
+        raise RuntimeError("immich went away")
+
+    monkeypatch.setattr("ifl.observer.get_asset_if_readable", down)
+
+    # Not "no member has it": the drain logs the failure and the next pass looks again.
+    with pytest.raises(RuntimeError, match="immich went away"):
+        await daemon.handle_batch([(uuid4(), ALICE)])
+
+
+async def test_a_clean_stop_reports_the_tally_it_would_otherwise_lose(world, monkeypatch, caplog):
+    daemon = local_daemon()
+    daemon.tally = {ALICE: 2}
+
+    async def one_pass(*a, **kw):
+        daemon.stopping.set()
+        return SimpleNamespace(mark=None, moved=None)
+
+    monkeypatch.setattr("ifl.daemon.run_pass", one_pass)
+
+    with caplog.at_level("WARNING", logger="ifl.daemon"):
+        await asyncio.wait_for(daemon.run(), 5)
+
+    assert "alice re-uploaded 2 photos the family already has since" in caplog.text
+    assert daemon.tally == {}

@@ -48,6 +48,17 @@ are listed here so that the next Immich upgrade knows what to re-check.
   Confirmed on dev: a key with only `user.read` got 200 from the first call
   and 403 from the second.
 
+## Reading one asset (`GET /assets/{id}`)
+
+- A key that cannot read an asset gets a 400 with the message "Not found or no
+  asset.read access". The answer is the same for an id that does not exist and
+  for another user's asset, live or trashed. The service takes a 400 to mean
+  "not this member's" and treats any other failure as an error. Confirmed on
+  dev.
+- A member's key can read a partner's asset. The family partner-shares with
+  every member, so a member's key reads family assets. The caller checks the
+  owner. Confirmed on dev.
+
 ## Per-asset metadata store (`/assets/{id}/metadata`)
 
 - Each asset has a key-value store. The owner reads and writes it through the

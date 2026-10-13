@@ -99,3 +99,18 @@ async def test_a_trashed_family_copy_is_skipped_and_a_family_album_asset_is_not_
         "SKIP re-upload cat.jpg from alice: the family's copy is in the trash"
         in describe_assets(scan)
     )
+
+
+async def test_reuploads_are_listed_before_the_album_moves(world):
+    accounts = make_accounts()
+    family_has(world, "beach")
+    trip = upload(world, ALICE, "trip", T1)
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[trip])
+    upload(world, BOB, "beach", T1)
+
+    scan = await scan_assets(accounts, "Drop", now=NOW)
+
+    assert [(m.file_name, m.reupload) for m in scan.moves] == [
+        ("beach.jpg", True),
+        ("trip.jpg", False),
+    ]

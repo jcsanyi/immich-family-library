@@ -21,8 +21,9 @@ writes to Immich beside it.
 
 What the daemon remembers, it remembers in memory only: the re-upload scan's
 mark, each member's tally of trashed re-uploads, and when it last reported
-them. A restart reads the scan's whole window once, drops the tally, and
-reports next at `report_at`.
+them. A clean stop reports the tally before the process exits; a crash loses
+it. A restart reads the scan's whole window once and reports next at
+`report_at`.
 """
 
 from __future__ import annotations
@@ -80,6 +81,8 @@ class Daemon:
             await asyncio.gather(*tasks, return_exceptions=True)
             if runner is not None:
                 await runner.cleanup()
+            # The tally dies with the process, so say it now, not at `report_at`.
+            self.report(final=True)
 
     async def passes(self) -> None:
         while not self.stopping.is_set():
@@ -107,15 +110,16 @@ class Daemon:
         for uid, n in moved.reuploads_trashed().items():
             self.tally[uid] = self.tally.get(uid, 0) + n
 
-    def report(self, now: datetime | None = None) -> None:
+    def report(self, now: datetime | None = None, *, final: bool = False) -> None:
         """Once `report_at` has passed since the last report, or since the daemon
-        started: one warning per member whose re-uploads were trashed since then."""
+        started: one warning per member whose re-uploads were trashed since then.
+        `final` reports at once, whatever the time."""
         now = now or datetime.now().astimezone()
         at = self.cfg.report_at
         scheduled = now.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
         if scheduled > now:
             scheduled -= timedelta(days=1)
-        if self.reported_at >= scheduled:
+        if self.reported_at >= scheduled and not final:
             return
         since = self.reported_at.astimezone(now.tzinfo).isoformat(timespec="minutes")
         names = {uid: a.name for uid, a in self.accounts.by_user_id().items()}

@@ -122,9 +122,10 @@ picks up what it missed. It holds the run lock for as long as it runs.
 
 The daemon counts the re-uploads it trashes, for each member. Once a day,
 when `report_at` passes, it logs one warning for each member with a count
-above zero, and starts the count again. The count is in memory. After a
-restart, the next report covers only the time since the restart, and the
-warning gives that time.
+above zero, and starts the count again. The count is in memory. When the
+daemon stops on SIGINT or SIGTERM, it logs the same warnings for what it has
+counted so far. After a restart, the next report covers only the time since
+the restart, and the warning gives that time.
 
 This is the container's default command.
 

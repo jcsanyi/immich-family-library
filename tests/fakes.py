@@ -316,6 +316,17 @@ class FakeWorld:
         ), "asset not visible to this account"
         return a
 
+    async def get_asset_if_readable(self, client, asset_id):
+        known = asset_id in self.library or any(
+            a.id == asset_id for lst in self.assets.values() for a in lst
+        )
+        if not known:
+            return None
+        try:
+            return await self.get_asset(client, asset_id)
+        except AssertionError:
+            return None
+
     async def albums_containing(self, client, asset_id):
         return [
             al
@@ -471,6 +482,7 @@ WRITE_HELPERS = (
     "list_partner_ids",
     "create_partner",
     "get_asset",
+    "get_asset_if_readable",
     "albums_containing",
     "get_asset_edits",
     "find_sidecar",

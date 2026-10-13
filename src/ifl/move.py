@@ -302,6 +302,10 @@ async def move_assets(
     reads settle is free: a photo that is blocked on every pass, a live photo
     say, must not hold a slot on every pass and starve the photos behind it.
 
+    A re-upload never uses a slot, whatever becomes of it. It has nothing to
+    upload, and the limit is the brake on bytes. The scan lists re-uploads
+    first, so all of them are tried before the limit can end the loop.
+
     Each item is a MoveAsset from the scan. One asset blocking or failing doesn't
     stop the others, whatever the exception. Per-owner lookups happen once.
 
@@ -312,6 +316,7 @@ async def move_assets(
     shared_links: dict[UUID, set[UUID]] = {}
     slots_used = 0
     for i, m in enumerate(moves):
+        slot = 0 if m.reupload else 1
         if limit and slots_used >= limit:
             out.remaining = len(moves) - i
             out.unfinished.update(rest.asset_id for rest in moves[i:])
@@ -342,19 +347,19 @@ async def move_assets(
             log.warning("blocked %s: %s", m.file_name, e)
             out.blocked.append((m.file_name, str(e)))
             out.unfinished.add(m.asset_id)
-            slots_used += isinstance(e, MoveTimedOut)
+            slots_used += slot * isinstance(e, MoveTimedOut)
             continue
         except MoveError as e:
             log.error("%s not moved: %s", m.file_name, e)
             out.failed.append((m.file_name, str(e)))
             out.unfinished.add(m.asset_id)
-            slots_used += 1
+            slots_used += slot
             continue
         except Exception as e:  # noqa: BLE001 - the move stops before the trash; the rest go on
             log.exception("%s not moved", m.file_name)
             out.failed.append((m.file_name, f"{type(e).__name__}: {e}"))
             out.unfinished.add(m.asset_id)
-            slots_used += 1
+            slots_used += slot
             continue
         finally:
             if in_flight is not None:
@@ -363,7 +368,7 @@ async def move_assets(
             log.warning("%s: %s", result.file_name, w)
         log.info("%s", result)
         out.done.append(result)
-        slots_used += 1
+        slots_used += slot
     if out.remaining:
         log.info("%d more assets to move; limit is %d per pass", out.remaining, limit)
     return out
