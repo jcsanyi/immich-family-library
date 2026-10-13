@@ -21,8 +21,8 @@ shares, and one workflow per member.
    key with `queue.read` is optional. Members create theirs under Account
    Settings, API Keys. Tell them which boxes to tick.
 4. **Config.** Copy `config.example.toml` to `config/config.toml`. Fill in the
-   URL and the keys. Leave `readonly = true`. Set
-   `state_path = "/data/state.json"`. For the webhook, make up a token and
+   URL and the keys. Leave `readonly = true`. Keep
+   `lock_path = "/data/run.lock"`. For the webhook, make up a token and
    set `url` to the container's name on the network.
 
 ## Compose
@@ -56,7 +56,7 @@ shares, and one workflow per member.
 
 Under rootless docker, root in the container is the unprivileged host user,
 and it can read a 0600 config. Under rootful docker, set `user:` in the
-compose file to match the owner of `./config`. The state volume is writable
+compose file to match the owner of `./config`. The data volume is writable
 by any user, so it needs no step.
 
 ```
@@ -79,7 +79,7 @@ Then it converts and moves whatever is waiting, under the limits.
 ## Running one-off commands beside the daemon
 
 `docker compose run --rm ifl <command>` runs a command in a second container
-with the same config and the same state volume. Only one command that writes
+with the same config and the same data volume. Only one command that writes
 to Immich can run at a time, and the run lock makes sure of that. The daemon
 holds the run lock for as long as it runs. A command that writes to Immich
 (`process`, `move`, `convert-album`, `reconcile-albums`) needs it too. So
@@ -121,12 +121,22 @@ report. A restart has these effects:
 
 ## The run lock
 
-The one file that the service writes is the run lock. It is `state_path` with
-`.lock` added: `/data/state.json.lock`. It stops two commands that write to
-Immich from running at the same time. It is on the volume so that the daemon
-and a command in a second container use the same file. The run lock uses
-flock. On an NFS volume, flock is not reliable. Keep the volume on a local
-disk.
+The one file that the service writes is the run lock, at `lock_path`. It
+stops two commands that write to Immich from running at the same time.
+
+The run lock works only between commands that open the same file. The default
+`lock_path` is in `/tmp`. Each container has its own `/tmp`, so with the
+default, a command from `docker compose run` does not see the lock of the
+daemon. The two can then write to Immich at the same time, and nothing warns
+you. Keep `lock_path = "/data/run.lock"` from the example config. The data
+volume is there for this file only.
+
+If you never use `docker compose run` beside the daemon, you can keep the
+default and remove the volume. `docker compose exec ifl ifl <command>` runs
+in the container of the daemon and uses its `/tmp`.
+
+The run lock uses flock. On an NFS volume, flock is not reliable. Keep the
+volume on a local disk.
 
 ## Upgrading
 

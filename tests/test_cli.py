@@ -17,7 +17,7 @@ CONFIG = """
 url = "https://x.example"
 [service]
 readonly = {readonly}
-state_path = "state.json"
+lock_path = "run.lock"
 temp_dir = "tmp"
 settle_seconds = 0
 [family]
@@ -176,11 +176,11 @@ def test_reconcile_albums_exits_1_when_a_fix_fails(world, config, monkeypatch):
 
 
 def test_a_writing_command_refuses_while_another_holds_the_lock(world, config, tmp_path):
-    from ifl.state import hold_lock
+    from ifl.lock import hold_lock
 
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
-    with hold_lock(tmp_path / "state.json"):
+    with hold_lock(tmp_path / "run.lock"):
         assert run(path, "process") == 3
         assert run(path, "move", "--all") == 3
         assert run(path, "observe") == 0  # reads only, so it never needs the lock
@@ -220,6 +220,6 @@ def test_move_one_says_why_an_asset_outside_the_family_albums_does_not_move(worl
 
 
 def test_a_lock_that_cannot_be_opened_exits_2_without_a_traceback(world, config, tmp_path):
-    (tmp_path / "state.json.lock").mkdir()
+    (tmp_path / "run.lock").mkdir()
     assert run(config(), "reconcile-albums") == 2
     assert run(config(), "observe") == 0

@@ -18,6 +18,7 @@ from ifl.accounts import AccountError, Accounts, open_accounts
 from ifl.config import Config, ConfigError, load_config, to_raw
 from ifl.convert import ConvertError, convert_albums
 from ifl.daemon import Daemon
+from ifl.lock import Locked, LockError, hold_lock
 from ifl.move import (
     MoveError,
     MoveOptions,
@@ -39,7 +40,6 @@ from ifl.observer import (
 )
 from ifl.process import run_pass
 from ifl.reconcile import reconcile
-from ifl.state import Locked, StateError, hold_lock
 
 log = logging.getLogger("ifl")
 
@@ -54,7 +54,7 @@ async def opened(config_path: Path, *, writes: bool) -> AsyncIterator[tuple[Conf
         raise ConfigError(
             "config is readonly; set readonly = false under [service] to allow this command"
         )
-    with hold_lock(cfg.state_path) if writes else contextlib.nullcontext():
+    with hold_lock(cfg.lock_path) if writes else contextlib.nullcontext():
         if writes:
             prepare_temp_dir(cfg.temp_dir)
         accounts = await open_accounts(cfg)
@@ -262,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show-config":
             return run_show_config(args.config, args.minimal)
         return asyncio.run(commands[args.command]())
-    except (ConfigError, AccountError, StateError) as e:
+    except (ConfigError, AccountError, LockError) as e:
         log.error("%s", e)
         return 2
     except (ConvertError, MoveError) as e:

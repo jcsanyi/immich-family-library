@@ -28,7 +28,7 @@ start.
 | Setting | Default | What it is |
 |---|---|---|
 | `readonly` | `true` | While true, every command that writes to Immich refuses to run. Set it to false once `observe` reports what you expect. |
-| `state_path` | `data/state.json` | Where the run lock goes: the lock file is this path with `.lock` added. The service writes no file at the path itself. In the container the config mount is read-only, so use the data volume: `/data/state.json`. |
+| `lock_path` | `/tmp/immich-family-library/run.lock` | The run lock file. It works only between commands that see the same file. In the container, set it to a file on the data volume: `/data/run.lock`, which is the value in `config.example.toml`. A command in a second container has its own `/tmp`, and the default does not stop it. |
 | `temp_dir` | `/tmp/immich-family-library` | The directory where a move keeps a file between the download and the upload. It holds one file at a time, and the move deletes the file when it ends. The directory needs space for the largest photo or video that a member has. If the `/tmp` of the container is too small, mount a volume and set this path to it. Two instances of the service must not share one directory. |
 | `settle_seconds` | `60` | A photo changed more recently than this is not moved yet, because its jobs can still be running. Re-uploads do not wait for it. |
 | `interval_seconds` | `600` | The daemon's pause between passes. |

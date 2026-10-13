@@ -11,7 +11,9 @@ You need `uv` (https://docs.astral.sh/uv/). It installs the Python version in
 1. Clone the repository and run `uv sync`. This creates `.venv` with the
    locked dependencies and the `ifl` command.
 2. Copy `config.example.toml` to `config.toml` and fill in the URL and the
-   keys of the dev instance. `config.toml` is gitignored. `AGENTS.local.md`
+   keys of the dev instance. Delete the `lock_path` line: its value is for the
+   container, and the default is correct for a checkout. `config.toml` is
+   gitignored. `AGENTS.local.md`
    says where the keys live.
 3. Run `uv run ifl show-config` to check the config. Then run
    `uv run ifl observe` for a read-only pass. Both read `config.toml` in the
@@ -101,7 +103,7 @@ facial recognition reset is needed. Do not rely on faces or on people sharing.
 - `src/ifl/observer.py`: the three scans, read-only. `observe` reports them. `process` acts on them.
 - `src/ifl/convert.py`, `reconcile.py`, `move.py`: the three actions. `sidecar.py` is the XMP tag rewrite.
 - `src/ifl/process.py`: one pass. `daemon.py`: the pass on an interval, plus the webhook receiver.
-- `src/ifl/state.py`: the run lock.
+- `src/ifl/lock.py`: the run lock.
 - `src/ifl/cli.py`: argument parsing and the commands.
 
 ## Tests
@@ -121,7 +123,7 @@ service reads when the `immichpy` pin changes.
 Test files follow the source: `test_observer`, `test_convert`,
 `test_reconcile`, `test_move`, `test_reuploads`, `test_process`,
 `test_daemon` (which runs the receiver on a real aiohttp test server),
-`test_sidecar`, `test_config`, `test_state`, and `test_cli` for the exit
+`test_sidecar`, `test_config`, `test_lock`, and `test_cli` for the exit
 codes. Two files test the layers the
 fake replaces, against stub clients that return real models: `test_immich`
 covers every adapter helper, and `test_accounts` covers the startup checks on

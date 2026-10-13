@@ -4,18 +4,19 @@ from __future__ import annotations
 
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
 # The one place in the code that holds a default. `parse_config` fills every
 # field of `Config` from the file or from here, so the dataclasses carry none.
-# config.example.toml shows the same values, and a test holds it to them.
+# config.example.toml shows the same values, and a test holds it to them,
+# all but `lock_path`, where the example has the container's value.
 DEFAULTS = {
     "service": {
         "readonly": True,
-        "state_path": "data/state.json",
+        "lock_path": "/tmp/immich-family-library/run.lock",
         "temp_dir": "/tmp/immich-family-library",
         "settle_seconds": 60,
         "interval_seconds": 600,
@@ -32,7 +33,7 @@ DEFAULTS = {
 # typo or an old name fails at startup instead of silently taking the default.
 SCHEMA = {
     "immich": {"url", "admin_api_key"},
-    "service": {"readonly", "state_path", "temp_dir", "settle_seconds", "interval_seconds"},
+    "service": {"readonly", "lock_path", "temp_dir", "settle_seconds", "interval_seconds"},
     "webhook": {"url", "token", "listen"},
     "family": {"email", "api_key", "dropbox_album"},
     "members": {"email", "api_key"},  # per [members.<name>] table
@@ -89,7 +90,7 @@ class Config:
     family: AccountConfig
     dropbox_album: str
     members: dict[str, AccountConfig]
-    state_path: Path
+    lock_path: Path  # the run lock; see lock.py
     temp_dir: Path  # holds one original at a time, between its download and its upload
     readonly: bool
     settle_seconds: int  # leave an asset alone this long after its last change
@@ -101,7 +102,6 @@ class Config:
     from_prefix: str  # the family copy is tagged "<from_prefix>/<member>"
     admin_api_key: str | None  # any admin user's key; only for the queue check
     report_at: time  # local time of day for the daily re-upload report
-    config_dir: Path = field(compare=False)
 
 
 KINDS = {str: "a string", bool: "true or false", int: "a whole number"}
@@ -181,12 +181,12 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
 
     service = raw.get("service") or {}
     readonly = _typed("service", service, "readonly", bool)
-    state_path_raw = _typed("service", service, "state_path", str)
-    if not state_path_raw:
-        raise ConfigError("[service] state_path must name a file")
-    state_path = Path(state_path_raw)
-    if not state_path.is_absolute():
-        state_path = config_dir / state_path
+    lock_path_raw = _typed("service", service, "lock_path", str)
+    if not lock_path_raw:
+        raise ConfigError("[service] lock_path must name a file")
+    lock_path = Path(lock_path_raw)
+    if not lock_path.is_absolute():
+        lock_path = config_dir / lock_path
     temp_dir_raw = _typed("service", service, "temp_dir", str)
     if not temp_dir_raw:
         raise ConfigError("[service] temp_dir must name a directory")
@@ -243,7 +243,7 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
         family=family,
         dropbox_album=dropbox_album,
         members=members,
-        state_path=state_path,
+        lock_path=lock_path,
         temp_dir=temp_dir,
         readonly=readonly,
         settle_seconds=settle,
@@ -255,7 +255,6 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
         from_prefix=from_prefix,
         admin_api_key=admin_api_key,
         report_at=report_at,
-        config_dir=config_dir,
     )
 
 
@@ -309,7 +308,7 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
         "immich": {"url": cfg.immich_url},
         "service": {
             "readonly": cfg.readonly,
-            "state_path": str(cfg.state_path),
+            "lock_path": str(cfg.lock_path),
             "temp_dir": str(cfg.temp_dir),
             "settle_seconds": cfg.settle_seconds,
             "interval_seconds": cfg.interval_seconds,
@@ -329,10 +328,7 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
             "listen": cfg.webhook.listen,
         }
     if minimal:
-        # The one default that is not a constant: it is relative to the config file.
-        default_state = str(cfg.config_dir / DEFAULTS["service"]["state_path"])
-        defaults = {**DEFAULTS, "service": {**DEFAULTS["service"], "state_path": default_state}}
-        for section, settings in defaults.items():
+        for section, settings in DEFAULTS.items():
             for key, default in settings.items():
                 if section in out and key in out[section] and out[section][key] == default:
                     del out[section][key]
