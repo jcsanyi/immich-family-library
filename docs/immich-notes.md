@@ -131,6 +131,17 @@ are listed here so that the next Immich upgrade knows what to re-check.
 
 - Metadata search as a member returns partners' assets too. Callers filter by
   owner. `createdAfter` is what the re-upload scan uses.
+- A search by album with the family's key returns each member-owned asset
+  with its `visibility` and its `livePhotoVideoId`. Hidden and archived assets
+  are in the result. The asset scan uses these two fields to block live and
+  hidden photos. Confirmed on dev.
+- A search by album does not return a locked asset. A photo that was in a
+  family album and then locked was gone from the search, for the family and
+  for its owner. Confirmed on dev.
+- A search with `visibility=locked` needs an elevated session. An API key gets
+  401, "Elevated permission is required". Confirmed on dev.
+- Immich refuses to add a locked asset to an album (`no_permission`).
+  Confirmed on dev.
 
 ## Workflows and the webhook (`services/workflow-execution.service.ts`, `packages/plugin-core`)
 

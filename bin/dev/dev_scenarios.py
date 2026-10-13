@@ -30,6 +30,9 @@ Subcommands:
                   the family's copy of FILE, for the "family deleted it" case.
   reshare         As carol, add her re-uploaded cat to the family's "Cat" album: the
                   re-share that restores the family's trashed copy.
+  blocked-photos  As alice, put a live photo and a locked, a hidden and an archived photo
+                  into the family's "Family Trip" album: what the asset scan and the move
+                  must leave alone, with the archived photo as the one that does move.
 
 Dev instance only. Nothing here is safe against a real library.
 """
@@ -55,6 +58,7 @@ from immichpy.client.generated.models.asset_edit_action_item_dto_parameters impo
     AssetEditActionItemDtoParameters,
 )
 from immichpy.client.generated.models.asset_edits_create_dto import AssetEditsCreateDto
+from immichpy.client.generated.models.asset_visibility import AssetVisibility
 from immichpy.client.generated.models.bulk_ids_dto import BulkIdsDto
 from immichpy.client.generated.models.create_album_dto import CreateAlbumDto
 from immichpy.client.generated.models.crop_parameters import CropParameters
@@ -68,7 +72,16 @@ from immichpy.client.generated.models.update_asset_dto import UpdateAssetDto
 from immichpy.client.main import AsyncClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
-from seed_dev import BASE, PHOTOS, add_to_album, ensure_album, login_all, make_jpeg, upload  # noqa: E402
+from seed_dev import (  # noqa: E402
+    BASE,
+    CLIP,
+    PHOTOS,
+    add_to_album,
+    ensure_album,
+    login_all,
+    make_jpeg,
+    upload,
+)
 
 from ifl.accounts import ADMIN_PERMISSIONS, MEMBER_PERMISSIONS, Account, Accounts  # noqa: E402
 from ifl.immich import list_albums  # noqa: E402
@@ -267,6 +280,57 @@ async def reshare(accounts: Accounts, args, *_) -> None:
     log.info("carol re-shared %s into the family's Cat album", cat)
 
 
+async def blocked_photos(accounts: Accounts, args, *_) -> None:
+    fam, alice = accounts.family, accounts.members["alice"]
+    album = await family_album(fam, "Family Trip")
+    taken = BASE - timedelta(days=3)
+
+    # A live photo is a still that names a hidden video. The trailing `free` box
+    # makes the bytes differ from the seed clip, which Immich would dedupe.
+    motion = CLIP.read_bytes() + b"\x00\x00\x00\x10free" + b"livephot"
+    video = await alice.client.assets.upload_asset(
+        asset_data=("alice-live.mov", motion),
+        file_created_at=taken,
+        file_modified_at=taken,
+        filename="alice-live.mov",
+        visibility=AssetVisibility.HIDDEN,
+    )
+    name = "alice-live.jpg"
+    still = await alice.client.assets.upload_asset(
+        asset_data=(name, make_jpeg(name, taken, 44.65, -63.58, "Live photo")),
+        file_created_at=taken,
+        file_modified_at=taken,
+        filename=name,
+        live_photo_video_id=video.id,
+    )
+    log.info("alice: live photo %s with motion part %s", still.id, video.id)
+    stills = {None: still.id}
+    for visibility in (AssetVisibility.LOCKED, AssetVisibility.HIDDEN, AssetVisibility.ARCHIVE):
+        name = f"alice-{visibility.value}.jpg"
+        stills[visibility] = await upload(
+            alice, name, make_jpeg(name, taken, 44.65, -63.58, name), taken
+        )
+
+    # Into the album first, as a member does: Immich refuses to add a photo that
+    # is already locked. One call per photo, so a refusal says which one.
+    for aid in stills.values():
+        res = await alice.client.albums.add_assets_to_album(
+            id=album.id, bulk_ids_dto=BulkIdsDto(ids=[aid])
+        )
+        log.info("alice: add %s to %r: %s", aid, album.name, [(r.success, r.error) for r in res])
+
+    for visibility, aid in stills.items():
+        if visibility is None:
+            continue
+        try:
+            await alice.client.assets.update_asset(
+                id=aid, update_asset_dto=UpdateAssetDto(visibility=visibility)
+            )
+            log.info("alice: alice-%s.jpg is now %s", visibility.value, visibility.value)
+        except Exception as e:  # noqa: BLE001 - a refusal is a finding, and the rest still run
+            log.warning("alice: could not make %s %s: %s", aid, visibility.value, e)
+
+
 COMMANDS = {
     "keys": keys,
     "convert-cases": convert_cases,
@@ -276,6 +340,7 @@ COMMANDS = {
     "edit": edit,
     "reupload": reupload,
     "reshare": reshare,
+    "blocked-photos": blocked_photos,
 }
 
 
@@ -315,6 +380,7 @@ if __name__ == "__main__":
         "bobs-picks",
         "edit",
         "reshare",
+        "blocked-photos",
     ):
         sub.add_parser(name)
     r = sub.add_parser("reupload")

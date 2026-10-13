@@ -43,7 +43,6 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
-from immichpy.client.generated.models.asset_visibility import AssetVisibility
 
 from ifl.accounts import Account, Accounts
 from ifl.config import Config
@@ -70,7 +69,7 @@ from ifl.immich import (
     upload_asset,
     upsert_tag,
 )
-from ifl.observer import AssetScan, MoveAsset
+from ifl.observer import AssetScan, MoveAsset, unmovable
 from ifl.sidecar import tags_in, with_only_tag
 from ifl.state import State
 
@@ -82,6 +81,10 @@ PROVENANCE_KEY = "ifl"
 
 class MoveBlocked(Exception):
     """Not now. The reason is for the log; the asset is found again next pass."""
+
+
+class MoveTimedOut(MoveBlocked):
+    """Blocked after a wait on Immich, so the try cost the pass real time."""
 
 
 class MoveError(Exception):
@@ -169,7 +172,7 @@ async def _fresh_sidecar(owner: Account, asset_id: UUID, tag: str, timeout: floa
             if tag in tags_in(xmp):
                 return xmp
         if asyncio.get_running_loop().time() >= deadline:
-            raise MoveBlocked(f"sidecar not written within {timeout:.0f}s; Immich may be busy")
+            raise MoveTimedOut(f"sidecar not written within {timeout:.0f}s; Immich may be busy")
         await asyncio.sleep(0.5)
 
 
@@ -224,7 +227,7 @@ class MoveManyResult:
     done: list[MoveResult] = field(default_factory=list)
     blocked: list[tuple[str, str]] = field(default_factory=list)  # (file name, reason)
     failed: list[tuple[str, str]] = field(default_factory=list)  # (file name, error)
-    remaining: int = 0  # movable assets left untouched because of the limit
+    remaining: int = 0  # movable assets not tried because of the limit
     unfinished: set[UUID] = field(default_factory=set)  # blocked, failed or over the limit
     skipped_in_flight: int = 0  # another path was already on it
 
@@ -254,20 +257,28 @@ async def move_assets(
     limit: int,
     in_flight: set[UUID] | None = None,
 ) -> MoveManyResult:
-    """Move assets in scan order, at most `limit` of them (0 for no limit). Each
-    item is a MoveAsset from the scan. One asset blocking or failing doesn't stop
-    the others, whatever the exception. Per-owner lookups happen once. Each
+    """Move assets in scan order until `limit` of them have used a slot (0 for no
+    limit). A move uses a slot, and so does a failure or a timeout, because each
+    may have uploaded bytes or kept the pass waiting. A block that the first
+    reads settle is free: a photo that is blocked on every pass, a live photo
+    say, must not hold a slot on every pass and starve the photos behind it.
+
+    Each item is a MoveAsset from the scan. One asset blocking or failing doesn't
+    stop the others, whatever the exception. Per-owner lookups happen once. Each
     trashed re-upload joins its member's tally as soon as its move returns, so a
     run that is cut short has still counted what it trashed.
 
     `in_flight` is shared between the daemon's pass and its webhook receiver:
     an asset the other path is already on is skipped here, and ours are held in
     it while they're worked on."""
-    todo = moves if limit == 0 else moves[:limit]
-    out = MoveManyResult(remaining=len(moves) - len(todo))
-    out.unfinished = {m.asset_id for m in moves[len(todo) :]}
+    out = MoveManyResult()
     shared_links: dict[UUID, set[UUID]] = {}
-    for m in todo:
+    slots_used = 0
+    for i, m in enumerate(moves):
+        if limit and slots_used >= limit:
+            out.remaining = len(moves) - i
+            out.unfinished.update(rest.asset_id for rest in moves[i:])
+            break
         owner = m.owner
         if in_flight is not None:
             if m.asset_id in in_flight:
@@ -294,16 +305,19 @@ async def move_assets(
             log.warning("blocked %s: %s", m.file_name, e)
             out.blocked.append((m.file_name, str(e)))
             out.unfinished.add(m.asset_id)
+            slots_used += isinstance(e, MoveTimedOut)
             continue
         except MoveError as e:
             log.error("%s not moved: %s", m.file_name, e)
             out.failed.append((m.file_name, str(e)))
             out.unfinished.add(m.asset_id)
+            slots_used += 1
             continue
         except Exception as e:  # noqa: BLE001 - the move stops before the trash; the rest go on
             log.exception("%s not moved", m.file_name)
             out.failed.append((m.file_name, f"{type(e).__name__}: {e}"))
             out.unfinished.add(m.asset_id)
+            slots_used += 1
             continue
         finally:
             if in_flight is not None:
@@ -313,6 +327,7 @@ async def move_assets(
             log.warning("%s: %s", result.file_name, w)
         log.info("%s", result)
         out.done.append(result)
+        slots_used += 1
     if out.remaining:
         log.info("%d more assets to move; limit is %d per pass", out.remaining, limit)
     return out
@@ -368,10 +383,8 @@ async def move_asset(
     asset = await get_asset(owner.client, asset_id)
     if asset.owner_id != owner.user_id:
         raise MoveError(f"{asset.original_file_name} is not owned by {owner.name}")
-    if asset.visibility in (AssetVisibility.LOCKED, AssetVisibility.HIDDEN):
-        raise MoveBlocked(f"visibility is {asset.visibility.value}")
-    if asset.live_photo_video_id is not None:
-        raise MoveBlocked("live photo; not handled yet")
+    if why := unmovable(asset):
+        raise MoveBlocked(why)
 
     # The family copy, looked up first. With a live copy, the moved tag on the
     # original decides: without it this is a duplicate, and the copy is

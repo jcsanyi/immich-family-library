@@ -135,4 +135,4 @@ Two gaps are open as issues:
   loop for a photo. It exists only on Android 12 or later, and it has never
   been exercised on a phone (issue 13). Do it on prod with one hand-moved
   photo, from an Android phone, before you move anything else.
-- Live photos are blocked by the move, not handled (issue 14).
+- Live photos are blocked, not handled (issue 14).
