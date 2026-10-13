@@ -119,8 +119,8 @@ startup check requires every one listed. A key with `all` passes.
 `partner.create`.
 
 The service trashes nothing in the family account. Immich puts the restore of
-a trashed photo under `asset.delete`, and the service restores the family's
-copy when a member shares a photo that the family deleted.
+a trashed photo under `asset.delete`. The service restores the family's copy
+when a member shares a photo that the family deleted.
 
 **Admin key** (optional)
 

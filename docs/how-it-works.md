@@ -67,8 +67,9 @@ run.
 The service reads the original once. A photo that someone adds to the original
 after that read, and before the delete, is not carried over. The window is
 short: the read, one add request per contributor, and the delete. Immich has
-no way to lock an album or to delete it only if it is unchanged. The photo is not lost: it stays in its
-owner's library, in no album, and the owner can add it to the family album.
+no way to lock an album or to delete it only if it is unchanged. The photo is
+not lost: it stays in its owner's library, in no album, and the owner can add
+it to the family album.
 
 ## Family album consistency
 

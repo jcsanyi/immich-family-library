@@ -18,8 +18,8 @@ from ifl.config import AccountConfig, Config
 
 log = logging.getLogger(__name__)
 
-# The Immich minor that the pinned client was generated from. An older server
-# is refused. A newer minor or major gets a warning, because nobody has run it.
+# The Immich minor that the pinned client was generated from. Nobody has run
+# the service against a later one.
 MIN_SERVER = (3, 3, 0)
 
 # docs/configuration.md has the table and which call needs what. No set has

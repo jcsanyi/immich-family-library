@@ -124,8 +124,8 @@ do.
 
 - `0`: everything asked for was done.
 - `1`: something was blocked or failed. The log says what. For `--all`,
-  `reconcile-albums` and `process`, only failures count, not blocks. A state file that `move` or
-  `process` could not write is a failure.
+  `reconcile-albums` and `process`, only failures count, not blocks. A state
+  file that `move` or `process` could not write is a failure.
 - `2`: the config or a key is wrong, or `readonly` refused the command, or
   the state file or the run lock cannot be opened.
 - `3`: the daemon or another writing command holds the run lock. Wait for
