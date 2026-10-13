@@ -267,6 +267,7 @@ def test_webhook_and_interval_settings():
         "0.0.0.0:0",
         "0.0.0.0:65536",
         "::1:8080",
+        "9000",
         8080,
     ):
         with pytest.raises(ConfigError, match=r"\[webhook\] listen must be"):
@@ -274,7 +275,6 @@ def test_webhook_and_interval_settings():
     for listen, bind in (
         ("127.0.0.1:9000", ("127.0.0.1", 9000)),
         (":9000", ("0.0.0.0", 9000)),
-        ("9000", ("0.0.0.0", 9000)),
         ("[::]:9000", ("::", 9000)),
     ):
         raw = {**GOOD, "webhook": {"url": "http://x", "token": "t", "listen": listen}}

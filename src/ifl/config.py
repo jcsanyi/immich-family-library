@@ -66,9 +66,15 @@ class WebhookConfig:
 
     @property
     def bind(self) -> tuple[str, int]:
-        """`listen` as the host and port to bind."""
-        host, _, port = self.listen.rpartition(":")
-        return host.strip("[]") or "0.0.0.0", int(port)
+        """`listen` as the host and port to bind. An empty host means every
+        address. Raises ValueError when `listen` is not `host:port`."""
+        host, sep, port = self.listen.rpartition(":")
+        bracketed = host.startswith("[") and host.endswith("]")
+        if not sep or not port.isascii() or not port.isdigit():
+            raise ValueError(f"not host:port: {self.listen!r}")
+        if ":" in host and not bracketed:
+            raise ValueError(f"an IPv6 host needs brackets: {self.listen!r}")
+        return (host[1:-1] if bracketed else host) or "0.0.0.0", int(port)
 
 
 @dataclass(frozen=True)
@@ -244,17 +250,15 @@ def _check_webhook(webhook: WebhookConfig) -> None:
         ok = False
     if not ok:
         raise ConfigError("[webhook] url must be an http or https URL")
-    host, _, port = webhook.listen.rpartition(":")
-    bracketed = host.startswith("[") and host.endswith("]")
-    if (
-        not port.isascii()
-        or not port.isdigit()
-        or not 1 <= int(port) <= 65535
-        or (":" in host and not bracketed)
-    ):
+    try:
+        _, port = webhook.bind
+        ok = 1 <= port <= 65535
+    except ValueError:
+        ok = False
+    if not ok:
         raise ConfigError(
             '[webhook] listen must be "host:port" with a port from 1 to 65535, '
-            'for example "0.0.0.0:8080" or "[::]:8080"'
+            'for example "0.0.0.0:8080", ":8080" or "[::]:8080"'
         )
 
 
