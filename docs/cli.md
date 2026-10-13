@@ -141,7 +141,8 @@ do.
 
 - `0`: everything asked for was done.
 - `1`: something was blocked or failed. The log says what. For `--all`,
-  `reconcile-albums` and `process`, only failures count, not blocks.
+  `reconcile-albums` and `process`, only failures count, not blocks. If Immich
+  stops answering during a scan, the command stops with one line and exits 1.
 - `2`: the config or a key is wrong, or `readonly` refused the command, or
   the run lock cannot be opened.
 - `3`: the daemon or another writing command holds the run lock. Wait for

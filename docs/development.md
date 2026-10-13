@@ -106,6 +106,32 @@ facial recognition reset is needed. Do not rely on faces or on people sharing.
 - `src/ifl/lock.py`: the run lock.
 - `src/ifl/cli.py`: argument parsing and the commands.
 
+## Errors
+
+Two levels catch errors, and each has one job.
+
+- **One piece of work.** One album, one fix, one photo, or one webhook asset.
+  The loop catches every error, records it in its result, and continues with
+  the next piece. The loops are `convert_albums`, `reconcile`, `move_assets`,
+  and `Daemon.handle_batch`.
+- **One process.** `main` in `cli.py` maps an error to an exit code. The two
+  loops of the daemon log an error and continue.
+
+Do not catch an error between these two levels. Let it rise.
+
+Three things in `immich.py` keep the reports the same everywhere:
+
+- `Failure` is the base class for a condition that the service found and can
+  describe. `MoveError`, `ConvertError` and `DownloadMismatch` derive from it.
+  When Immich refuses something that the code checks for, raise a `Failure`,
+  not a `RuntimeError`.
+- `log_failure` logs one piece of work that failed. A `Failure`, or an error
+  from Immich or the network (`IMMICH_ERRORS`), is one line. Any other error
+  is a fault in the service, and the log keeps its traceback.
+- `describe_error` gives one line for any error. Use it when an error goes
+  into a message. The text of the client for an Immich error has four lines
+  and all the response headers.
+
 ## Tests
 
 The tests use no network. `tests/fakes.py` is a fake Immich: albums with
