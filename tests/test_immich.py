@@ -681,3 +681,23 @@ async def test_user_names_fall_back_from_config_to_album_to_lookup_to_the_id():
 
     failing = stub_client([], users={"get_user": [None]})
     assert await immich.UserNames(failing, {}).describe(dave) == str(dave)
+
+
+async def test_get_asset_if_readable_takes_only_a_400_to_mean_no_access(monkeypatch):
+    from immichpy.client.generated.exceptions import BadRequestException, ServiceException
+
+    asset, asset_id = object(), uuid4()
+    answers = [asset, BadRequestException(status=400), ServiceException(status=502)]
+
+    async def get_asset(client, asset_id):
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(immich, "get_asset", get_asset)
+
+    assert await immich.get_asset_if_readable(None, asset_id) is asset
+    assert await immich.get_asset_if_readable(None, asset_id) is None
+    with pytest.raises(ServiceException):
+        await immich.get_asset_if_readable(None, asset_id)

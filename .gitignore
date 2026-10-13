@@ -223,5 +223,5 @@ __marimo__/
 
 # immich-family-library
 config.toml
-data/
+run.lock
 AGENTS.local.md

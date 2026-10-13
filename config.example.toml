@@ -12,11 +12,13 @@ url = "https://photos.example.com"
 admin_api_key = ""
 
 [service]
-# The state file: the re-upload marks and the daily tally. Nothing in it needs
-# a backup. Relative paths are resolved against this file's directory. In the
-# container the config mount is read-only, so use the data volume:
-# "/data/state.json".
-state_path = "data/state.json"
+# The run lock: a file that stops two commands from writing to Immich at once.
+# It only works between commands that see the same file. This value is for the
+# container, where the data volume is the one place a second container
+# (`docker compose run`) shares with the daemon. Outside a container, delete
+# the line to get the default, "run.lock" beside this file. Relative paths
+# are resolved against this file's directory.
+lock_path = "/data/run.lock"
 # Where a move keeps a photo's file between the download and the upload. One
 # file at a time, deleted when the move ends, so it needs room for the largest
 # photo or video a member has. Relative paths are resolved against this file's
@@ -51,7 +53,7 @@ from_prefix = "from"
 
 # A phone that hasn't synced a deletion re-uploads moved photos once the trash
 # purges. They're trashed again automatically. Once a day, at this local time,
-# a warning names each member whose re-uploads were trashed in the last day.
+# the daemon names each member whose re-uploads it trashed since the last report.
 # The compose file gives the container the host's timezone.
 [warnings]
 report_at = "22:00"

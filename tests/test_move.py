@@ -51,13 +51,6 @@ def world(monkeypatch):
     return patch_world(monkeypatch, "ifl.move")
 
 
-@pytest.fixture
-def state(tmp_path):
-    from ifl.state import State
-
-    return State(tmp_path / "state.json")
-
-
 def alice_asset(world, **kw):
     return world.add_asset(
         FakeAsset(uuid4(), ALICE, checksum="sha-1", original_file_name="a.jpg", **kw)
@@ -418,7 +411,7 @@ async def test_edits_wait_for_the_copy_to_have_dimensions(world, monkeypatch):
     assert world.edits[result.family_asset_id] == ["crop"] and polls["n"] >= 2
 
 
-async def test_move_all_spends_the_limit_on_moves_and_failures_but_not_on_blocks(world, state):
+async def test_move_all_spends_the_limit_on_moves_and_failures_but_not_on_blocks(world):
     from ifl.move import move_assets
     from ifl.observer import MoveAsset
 
@@ -439,7 +432,7 @@ async def test_move_all_spends_the_limit_on_moves_and_failures_but_not_on_blocks
     world.partners[FAMILY] = {ALICE}
     moves = [MoveAsset(a.id, alice, trip, a.original_file_name) for a in assets]
 
-    result = await move_assets(accounts, OPTS, moves, state=state, limit=2)
+    result = await move_assets(accounts, OPTS, moves, limit=2)
 
     # The two blocks at the head are free; the failure and the move fill the limit.
     assert [b[0] for b in result.blocked] == ["0.jpg", "1.jpg"]
@@ -451,11 +444,11 @@ async def test_move_all_spends_the_limit_on_moves_and_failures_but_not_on_blocks
     assert str(result) == "moved 1, blocked 2, failed 1, remaining 1"
 
     world.partners[FAMILY] = {ALICE, BOB}  # the share arrives; the rerun finishes 2.jpg
-    again = await move_assets(accounts, OPTS, moves[2:3] + moves[4:], state=state, limit=0)
+    again = await move_assets(accounts, OPTS, moves[2:3] + moves[4:], limit=0)
     assert [r.file_name for r in again.done] == ["2.jpg", "4.jpg"] and again.remaining == 0
 
 
-async def test_move_all_spends_the_limit_on_sidecar_timeouts(world, state):
+async def test_move_all_spends_the_limit_on_sidecar_timeouts(world):
     from ifl.move import move_assets
     from ifl.observer import MoveAsset
 
@@ -472,7 +465,7 @@ async def test_move_all_spends_the_limit_on_sidecar_timeouts(world, state):
     world.sidecar_writes = False
     moves = [MoveAsset(a.id, alice, trip, a.original_file_name) for a in assets]
 
-    result = await move_assets(accounts, OPTS, moves, state=state, limit=2)
+    result = await move_assets(accounts, OPTS, moves, limit=2)
 
     # Each timeout kept the pass waiting, so the third photo is not tried.
     assert [b[0] for b in result.blocked] == ["0.jpg", "1.jpg"]
@@ -506,7 +499,7 @@ async def test_a_reupload_is_trashed_and_counted_without_touching_the_copy(world
     assert "re-upload, family already has it" in str(result)
 
 
-async def test_a_reupload_the_webhook_already_trashed_is_not_trashed_or_counted_again(world, state):
+async def test_a_reupload_the_webhook_already_trashed_is_not_trashed_or_counted_again(world):
     from ifl.move import move_assets
     from ifl.observer import MoveAsset
 
@@ -517,12 +510,12 @@ async def test_a_reupload_the_webhook_already_trashed_is_not_trashed_or_counted_
     # finished with it before the pass reached it.
     item = MoveAsset(re.id, accounts.members["alice"], None, "a.jpg", reupload=True)
 
-    by_webhook = await move_assets(accounts, OPTS, [item], state=state, limit=0, in_flight=set())
-    by_pass = await move_assets(accounts, OPTS, [item], state=state, limit=0, in_flight=set())
+    by_webhook = await move_assets(accounts, OPTS, [item], limit=0, in_flight=set())
+    by_pass = await move_assets(accounts, OPTS, [item], limit=0, in_flight=set())
 
     assert by_webhook.done[0].trashed and not by_pass.done[0].trashed
     assert [w for w in world.writes if w[0] == "trash"] == [("trash", ALICE, re.id)]
-    assert state.members[ALICE].reuploads == 1 and by_pass.reuploads_trashed() == {}
+    assert by_webhook.reuploads_trashed() == {ALICE: 1} and by_pass.reuploads_trashed() == {}
     assert by_pass.done[0].family_asset_id == copy.id and not by_pass.unfinished
 
 
@@ -680,7 +673,7 @@ async def test_a_duplicate_skips_the_extraction_and_settle_checks(world):
         await move_asset(accounts, OPTS, fresh.id, accounts.members["alice"], now=NOW)
 
 
-async def test_an_unexpected_error_on_one_asset_does_not_stop_the_others(world, monkeypatch, state):
+async def test_an_unexpected_error_on_one_asset_does_not_stop_the_others(world, monkeypatch):
     from ifl.move import move_assets
     from ifl.observer import MoveAsset
 
@@ -713,7 +706,7 @@ async def test_an_unexpected_error_on_one_asset_does_not_stop_the_others(world, 
     moves = [MoveAsset(a.id, alice, trip, a.original_file_name) for a in assets]
     in_flight: set = set()
 
-    result = await move_assets(accounts, OPTS, moves, state=state, limit=0, in_flight=in_flight)
+    result = await move_assets(accounts, OPTS, moves, limit=0, in_flight=in_flight)
 
     assert [f[0] for f in result.failed] == ["0.jpg"] and "boom" in result.failed[0][1]
     assert [r.file_name for r in result.done] == ["1.jpg"]
@@ -721,9 +714,7 @@ async def test_an_unexpected_error_on_one_asset_does_not_stop_the_others(world, 
     assert result.unfinished == {assets[0].id} and not in_flight
 
 
-async def test_a_failed_per_owner_lookup_does_not_leave_the_asset_in_flight(
-    world, monkeypatch, state
-):
+async def test_a_failed_per_owner_lookup_does_not_leave_the_asset_in_flight(world, monkeypatch):
     from ifl.move import move_assets
     from ifl.observer import MoveAsset
 
@@ -740,7 +731,7 @@ async def test_a_failed_per_owner_lookup_does_not_leave_the_asset_in_flight(
     moves = [MoveAsset(a.id, alice, trip, a.original_file_name)]
     in_flight: set = set()
 
-    result = await move_assets(accounts, OPTS, moves, state=state, limit=0, in_flight=in_flight)
+    result = await move_assets(accounts, OPTS, moves, limit=0, in_flight=in_flight)
 
     assert [f[0] for f in result.failed] == ["a.jpg"] and result.unfinished == {a.id}
     assert not in_flight  # otherwise both paths skip this asset until a restart
@@ -791,68 +782,38 @@ def test_reuploads_trashed_counts_per_member_and_shows_in_the_summary():
     assert MoveManyResult(done=[done(ALICE, True, trashed=False)]).reuploads_trashed() == {}
 
 
-async def test_a_run_cut_short_has_tallied_what_it_trashed(world, state, monkeypatch):
-    import asyncio
-
-    from ifl.move import MoveResult, move_assets
+async def test_reuploads_never_use_the_limit(world, monkeypatch):
+    from ifl.move import MoveError, MoveResult, move_assets
     from ifl.observer import MoveAsset
 
     accounts = make_accounts()
     alice = accounts.members["alice"]
-    moves = [MoveAsset(uuid4(), alice, None, f"{i}.jpg", reupload=True) for i in range(2)]
+    reuploads = [MoveAsset(uuid4(), alice, None, f"re{i}.jpg", reupload=True) for i in range(3)]
+    plain = [MoveAsset(uuid4(), alice, None, f"new{i}.jpg") for i in range(2)]
 
     async def move(accounts, opts, asset_id, owner, **kw):
-        if asset_id == moves[1].asset_id:
-            raise asyncio.CancelledError
+        if asset_id == reuploads[1].asset_id:
+            raise MoveError("immich said no")
         return MoveResult(
             asset_id=asset_id,
             owner_id=owner.user_id,
             family_asset_id=uuid4(),
-            file_name="0.jpg",
+            file_name="x.jpg",
             uploaded=False,
             edits=0,
-            duplicate=True,
-            reupload=True,
             trashed=True,
         )
 
     monkeypatch.setattr("ifl.move.move_asset", move)
 
-    with pytest.raises(asyncio.CancelledError):
-        await move_assets(accounts, OPTS, moves, state=state, limit=0)
+    # The re-uploads come last here: the limit must not depend on the order.
+    result = await move_assets(accounts, OPTS, plain + reuploads, limit=1)
 
-    assert state.members[ALICE].reuploads == 1
-
-
-def test_advance_marks_holds_a_member_at_their_oldest_unfinished_reupload(tmp_path, caplog):
-    import logging
-
-    from ifl.move import MoveManyResult, advance_marks
-    from ifl.observer import AssetScan, MoveAsset
-    from ifl.state import State
-
-    state = State(tmp_path / "state.json")
-
-    accounts = make_accounts()
-    alice, bob = accounts.members["alice"], accounts.members["bob"]
-    t1, t2 = NOW - timedelta(days=3), NOW - timedelta(days=1)
-    done, stuck_old, stuck_new = uuid4(), uuid4(), uuid4()
-    scan = AssetScan(
-        moves=[
-            MoveAsset(done, alice, None, "a.jpg", reupload=True, created_at=t2),
-            MoveAsset(stuck_new, bob, None, "b2.jpg", reupload=True, created_at=t2),
-            MoveAsset(stuck_old, bob, None, "b1.jpg", reupload=True, created_at=t1),
-            MoveAsset(uuid4(), bob, None, "plain.jpg", created_at=t1),  # not a re-upload
-        ],
-        scanned_at=NOW,
-    )
-    many = MoveManyResult(unfinished={stuck_old, stuck_new})
-
-    with caplog.at_level(logging.INFO, logger="ifl.move"):
-        advance_marks(state, scan, many, accounts)
-
-    assert state.get_mark(alice.user_id) == NOW  # everything of hers finished
-    assert state.get_mark(bob.user_id) == t1  # held at his oldest unfinished one
-    assert [r.getMessage() for r in caplog.records] == [
-        f"bob's re-upload mark held at {t1.isoformat(timespec='seconds')} by 2 unfinished re-upload(s)"
+    # One real move fitted the limit. Every re-upload was still tried, the failed one included.
+    assert [r.asset_id for r in result.done] == [
+        plain[0].asset_id,
+        reuploads[0].asset_id,
+        reuploads[2].asset_id,
     ]
+    assert [f[0] for f in result.failed] == ["re1.jpg"] and result.remaining == 1
+    assert result.unfinished == {plain[1].asset_id, reuploads[1].asset_id}

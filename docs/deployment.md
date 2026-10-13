@@ -1,7 +1,7 @@
 # Deployment
 
 The service is one container, on the same docker network as Immich, with a
-volume for its state file. It is not an Immich plugin: the plugin sandbox cannot
+volume for its run lock. It is not an Immich plugin: the plugin sandbox cannot
 hold other users' keys, keep state, or poll. The only pieces on the Immich
 side are things the service creates itself through the API: albums, partner
 shares, and one workflow per member.
@@ -21,8 +21,8 @@ shares, and one workflow per member.
    key with `queue.read` is optional. Members create theirs under Account
    Settings, API Keys. Tell them which boxes to tick.
 4. **Config.** Copy `config.example.toml` to `config/config.toml`. Fill in the
-   URL and the keys. Leave `readonly = true`. Set
-   `state_path = "/data/state.json"`. For the webhook, make up a token and
+   URL and the keys. Leave `readonly = true`. Keep
+   `lock_path = "/data/run.lock"`. For the webhook, make up a token and
    set `url` to the container's name on the network.
 
 ## Compose
@@ -34,7 +34,7 @@ shares, and one workflow per member.
   project is named differently, set `IMMICH_NETWORK` (`docker network ls`
   shows the name).
 - It mounts `./config` read-only at `/config`. It mounts a named volume,
-  `ifl-data`, at `/data` for the state file.
+  `ifl-data`, at `/data` for the run lock.
 - It mounts nothing for the temp directory. A move keeps one file at a time in
   `/tmp/immich-family-library`, in the writable layer of the container. The
   disk that holds docker's data needs free space for the largest photo or
@@ -56,7 +56,7 @@ shares, and one workflow per member.
 
 Under rootless docker, root in the container is the unprivileged host user,
 and it can read a 0600 config. Under rootful docker, set `user:` in the
-compose file to match the owner of `./config`. The state volume is writable
+compose file to match the owner of `./config`. The data volume is writable
 by any user, so it needs no step.
 
 ```
@@ -79,7 +79,7 @@ Then it converts and moves whatever is waiting, under the limits.
 ## Running one-off commands beside the daemon
 
 `docker compose run --rm ifl <command>` runs a command in a second container
-with the same config and the same state volume. Only one command that writes
+with the same config and the same data volume. Only one command that writes
 to Immich can run at a time, and the run lock makes sure of that. The daemon
 holds the run lock for as long as it runs. A command that writes to Immich
 (`process`, `move`, `convert-album`, `reconcile-albums`) needs it too. So
@@ -102,30 +102,46 @@ core plugin allows any host. If a later Immich tightens that, the symptom is
 an error in Immich's log and a receiver that never hears anything. The pass
 still catches every re-upload, only later.
 
-## The state file
+## What the service keeps
 
-`/data/state.json` is the state file. It holds each member's re-upload scan
-mark, each member's tally of trashed re-uploads since the last daily report,
-and the time of that report. Nothing in it needs a backup. If it is lost, the
-re-upload marks start again at the next pass, and one daily report is
-dropped. Re-uploads from the gap are not found and stay in the member's
-library as duplicates of family photos. The record of where a family photo
-came from is on the photo itself, in its `ifl` metadata entry and its
-`from/<member>` tag.
+The service keeps no data on disk. The record of where a family photo came
+from is on the photo itself, in its `ifl` metadata entry and its
+`from/<member>` tag. Nothing needs a backup.
 
-The file beside it, `state.json.lock`, is the run lock. It is not a lock on
-the state file. It stops two commands that write to Immich from running at the
-same time, and all of them take it, including the commands that do not use
-the state file. It is in this directory because the service can write here.
+The daemon keeps three things in memory: the mark of the re-upload scan, the
+count of trashed re-uploads for each member, and the time of the last daily
+report. A restart has these effects:
+
+- The re-upload scan reads the last three days of each member's uploads one
+  time. If the daemon was stopped for longer, re-uploads from before those
+  three days are not found. They stay in the member's library as duplicates of
+  family photos.
+- The count starts again at zero. A daemon that stops cleanly logs its
+  report before it exits. The next daily report covers only the time since
+  the restart.
+
+## The run lock
+
+The one file that the service writes is the run lock, at `lock_path`. It
+stops two commands that write to Immich from running at the same time.
+
+The run lock works only between commands that open the same file. A command
+from `docker compose run` is in a second container, and the data volume is
+the one writable place that it shares with the daemon. Keep
+`lock_path = "/data/run.lock"` from the example config. The data volume is
+there for this file only.
+
+The default `lock_path` is `run.lock` beside the config file. In the
+container that directory is mounted read-only, so a config without the
+setting fails at startup with a message that names the run lock.
+
+Do not put the run lock in the `/tmp` of the container to remove the volume.
+Each container has its own `/tmp`. A command from `docker compose run` then
+does not see the lock of the daemon, the two write to Immich at the same
+time, and nothing warns you.
+
 The run lock uses flock. On an NFS volume, flock is not reliable. Keep the
-state volume on a local disk.
-
-If you remove a member from the config, the service removes that member from
-the state file at its next start.
-
-Do not edit the file. The daemon loads it one time, when it starts, and
-writes it from memory after that. If the file does not parse at start, the
-service moves it to `state.json.bad` and starts with an empty state.
+volume on a local disk.
 
 ## Upgrading
 

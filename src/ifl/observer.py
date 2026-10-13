@@ -28,9 +28,12 @@ from immichpy.client.generated.models.asset_visibility import AssetVisibility
 from ifl.accounts import Account, Accounts
 from ifl.config import WebhookConfig
 from ifl.immich import (
+    PROVENANCE_KEY,
     AlbumSummary,
     UserNames,
     find_workflow,
+    get_asset_if_readable,
+    get_asset_metadata_value,
     iter_album_assets,
     iter_assets_created_after,
     list_albums,
@@ -38,7 +41,6 @@ from ifl.immich import (
     owned_checksums,
     step_matches,
 )
-from ifl.state import State
 
 WORKFLOW_NAME = "immich-family-library"
 
@@ -100,7 +102,6 @@ class MoveAsset:
     album: AlbumSummary | None  # the family album it was found in; None for a re-upload
     file_name: str
     reupload: bool = False
-    created_at: datetime | None = None  # for advancing the re-upload mark
 
 
 @dataclass
@@ -108,8 +109,8 @@ class AssetScan:
     moves: list[MoveAsset] = field(default_factory=list)
     blocked: list[Blocked] = field(default_factory=list)
     dropbox: AlbumSummary | None = None
-    scanned_at: datetime | None = None  # when the re-upload scan looked; None if it didn't
-    skipped_reuploads: list[str] = field(default_factory=list)  # family copy in the trash
+    scanned_at: datetime | None = None  # when the re-upload scan looked
+    skipped_reuploads: list[str] = field(default_factory=list)  # matches left alone, with why
 
     def reuploads_by_owner(self) -> dict[str, int]:
         out: dict[str, int] = {}
@@ -215,17 +216,21 @@ async def scan_reconcile(
 
 
 REUPLOAD_MARGIN = timedelta(minutes=10)  # re-read a little before the mark, uploads can land late
+REUPLOAD_WINDOW = timedelta(days=3)  # how far back the re-upload scan ever reads
 
 
 async def scan_assets(
     accounts: Accounts,
     dropbox_album: str,
     *,
-    state: State | None = None,
+    mark: datetime | None = None,
+    reuploads: bool = True,
     now: datetime | None = None,
 ) -> AssetScan:
-    """Member-owned assets in family-owned albums, plus, when the state is given,
-    re-uploads: members' recent assets whose checksum the family already owns."""
+    """Member-owned assets in family-owned albums, plus re-uploads: members'
+    recent assets whose checksum the family already owns. `mark` is when the
+    caller's last finished re-upload scan looked, if it has one. A caller with
+    its own way to find a re-upload turns that half off."""
     scan = AssetScan()
     by_id = accounts.by_user_id()
     family = accounts.family
@@ -268,45 +273,79 @@ async def scan_assets(
                     file_name=asset.original_file_name,
                 )
             )
-    if state is not None:
-        await _scan_reuploads(accounts, state, scan, seen, now or datetime.now(UTC))
+    if reuploads:
+        await _scan_reuploads(accounts, mark, scan, seen, now or datetime.now(UTC))
+        # Re-uploads go first: each takes a moment, and behind the album moves
+        # they would wait on every download and upload of the pass.
+        scan.moves.sort(key=lambda m: not m.reupload)
     return scan
 
 
 async def _scan_reuploads(
-    accounts: Accounts, state: State, scan: AssetScan, seen: set[UUID], now: datetime
+    accounts: Accounts, mark: datetime | None, scan: AssetScan, seen: set[UUID], now: datetime
 ) -> None:
-    """Members' assets uploaded since the last look that the family already owns.
+    """Members' assets uploaded since the mark that the family already owns.
 
-    A member with no mark has never been scanned, and nothing the service
-    hasn't moved can be a re-upload, so their library isn't read: the pass
-    starts their mark at this scan's time. Photos they and the family both
-    held before then are left alone."""
+    The read never reaches back past the window, with a mark or without one. So
+    a process that has just started reads the window once, and a mark that is
+    held back cannot make the read grow. A re-upload older than the window is
+    never looked for: it stays in the member's library as a duplicate."""
     scan.scanned_at = now
+    since = now - REUPLOAD_WINDOW
+    if mark is not None:
+        since = max(since, mark - REUPLOAD_MARGIN)
     candidates: list[tuple[Account, list[AssetResponseDto]]] = []
     for member in accounts.members.values():
-        mark = state.get_mark(member.user_id)
-        if mark is None:
-            log.info(
-                "%s: no re-upload mark yet; a pass sets it, and nothing earlier can be a re-upload",
-                member.name,
-            )
-            continue
         recent = [
             a
-            async for a in iter_assets_created_after(member.client, mark - REUPLOAD_MARGIN)
+            async for a in iter_assets_created_after(member.client, since)
             if a.owner_id == member.user_id and not a.is_trashed and a.id not in seen
         ]
         candidates.append((member, recent))
     await reupload_items(accounts, candidates, scan)
 
 
+async def member_asset(
+    accounts: Accounts, asset_id: UUID, owner_id: UUID | None = None
+) -> tuple[Account, AssetResponseDto] | None:
+    """The member who owns this asset, and the asset read with their key, or None
+    when no member holds it live. `owner_id` is a hint, never trusted: that
+    member is only asked first, which usually saves the other members' reads."""
+    members = list(accounts.members.values())
+    members.sort(key=lambda m: m.user_id != owner_id)
+    for member in members:
+        asset = await get_asset_if_readable(member.client, asset_id)
+        if asset is not None and asset.owner_id == member.user_id and not asset.is_trashed:
+            return member, asset
+    return None
+
+
+async def reuploads_among(
+    accounts: Accounts, found: list[tuple[Account, AssetResponseDto]]
+) -> AssetScan:
+    """A scan of just these assets, each with the member who owns it: the
+    re-uploads among them as move items, and the matches left alone as skipped.
+    For a caller that has asset ids in hand, not a window to read."""
+    by_member: dict[UUID, tuple[Account, list[AssetResponseDto]]] = {}
+    for member, asset in found:
+        by_member.setdefault(member.user_id, (member, []))[1].append(asset)
+    scan = AssetScan()
+    await reupload_items(accounts, list(by_member.values()), scan)
+    return scan
+
+
 async def reupload_items(
     accounts: Accounts, candidates: list[tuple[Account, list[AssetResponseDto]]], scan: AssetScan
 ) -> None:
-    """Of these member-owned assets, the ones the family already owns become
-    re-upload move items on `scan`; those whose family copy is trashed are
-    listed as skipped. Shared by the pass and the webhook receiver."""
+    """Of these member-owned assets, the re-uploads become move items on `scan`.
+    Shared by the pass and, through `reuploads_among`, the webhook receiver and `move`.
+
+    A re-upload is a member's asset whose checksum the family holds in a copy
+    that came from that same member: the copy's provenance entry names them.
+    A copy the family got some other way, by a direct upload or from another
+    member, makes no claim on this member's photo. Only a family album does.
+    Those, and the ones whose family copy is in the trash, are listed as
+    skipped."""
     family = accounts.family
     for member, assets in candidates:
         recent = {a.checksum: a for a in assets if a.owner_id == member.user_id}
@@ -320,6 +359,15 @@ async def reupload_items(
                     f"{a.original_file_name} from {member.name}: the family's copy is in the trash"
                 )
                 continue
+            provenance = await get_asset_metadata_value(
+                family.client, copy.asset_id, PROVENANCE_KEY
+            )
+            if not provenance or provenance.get("origin_user_id") != str(member.user_id):
+                scan.skipped_reuploads.append(
+                    f"{a.original_file_name} from {member.name}: "
+                    "the family's copy did not come from them"
+                )
+                continue
             scan.moves.append(
                 MoveAsset(
                     asset_id=a.id,
@@ -327,7 +375,6 @@ async def reupload_items(
                     album=None,
                     file_name=a.original_file_name,
                     reupload=True,
-                    created_at=a.created_at,
                 )
             )
 

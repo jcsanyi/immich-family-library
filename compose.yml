@@ -1,5 +1,5 @@
 # Runs the service next to an Immich compose stack: `docker compose up -d` in
-# this checkout, with config.toml in ./config and the state file in a named
+# this checkout, with config.toml in ./config and the run lock in a named
 # volume. Nothing in that volume needs a backup; see docs/deployment.md.
 #
 # The service joins the Immich stack's network so it can reach the server by

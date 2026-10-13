@@ -1,6 +1,5 @@
 .git
 .venv
-data
 config
 config.toml
 tests

@@ -190,21 +190,29 @@ What the service does about it:
   force-empties trash, for exactly this reason.
 - The asset scan has a second source: per member, the photos uploaded since
   the last look, with their checksums batched through the family's bulk
-  check. The last look is a per-member mark in the state file. A match goes
-  through the same move: the copy is found by checksum, nothing is uploaded,
-  the copy is re-linked into any album the duplicate sits in, the duplicate
-  is trashed, and it joins the member's daily tally.
-- A member's first scan reads nothing. Before the service has moved anything
-  of theirs, nothing they hold can be a re-upload, so the mark simply starts
-  at that pass. Photos they and the family both held from before are left
-  where they are. The same goes for a lost state file: re-uploads from the gap
-  are never looked for, and sit as harmless duplicates in the member's
-  library.
+  check. A match is a re-upload only when the family's copy came from that
+  same member, which the copy's `ifl` entry says. It then goes through the
+  same move: the copy is found by checksum, nothing is uploaded, the copy is
+  re-linked into any album the duplicate sits in, the duplicate is trashed,
+  and it joins the member's daily tally.
+- A family copy that came from somewhere else makes no claim on a member's
+  photo. The family may have uploaded the file itself, or got it from another
+  member who also had it. Either way the member's photo stays where it is,
+  and the scan says it skipped it. Only a family album makes a photo the
+  family's: if the member puts theirs into one, it's moved like any other,
+  and the family's existing copy stands in for it.
+- The last look is a mark the daemon keeps in memory, and the scan never reads
+  further back than three days. A daemon that has just started has no mark,
+  so its first pass reads all three days, and so does every one-off `process`,
+  `move` and `observe`. A daemon that was down for longer than that leaves a
+  gap: re-uploads from the gap are never looked for, and sit as harmless
+  duplicates in the member's library.
 - The moved tag tells a duplicate from a crashed move. The service puts that
   tag on an original before it uploads, so an original wearing it is a move
   that died partway, and the member's photo is the one to finish from. An
   original without it is a re-upload, or a photo the family got some other
-  way, and the family's copy is the one that counts: its edits and provenance
+  way that has now been put into a family album, and the family's copy is the
+  one that counts: its edits and provenance
   are left alone, and the move skips the extraction and settle checks, since
   it needs nothing the new upload's jobs produce. The copy's `ifl` entry has
   the last word: if it names a different original, the copy already has its
@@ -218,15 +226,19 @@ What the service does about it:
   left alone too. With no copy it's the member's own photo again, and only a
   family album makes a photo the family's. The scan stops matching it at the
   next pass.
-- The service tallies trashed re-uploads per member, from the pass and from
+- The daemon tallies trashed re-uploads per member, from the pass and from
   the webhook alike. A re-upload here means what the re-upload scan or the
   webhook found: an upload a phone made on its own. A photo a member puts
   into a family album by hand is a move or a re-share, never a loop, so it
   isn't counted even when the family already has it. A member with the
   setting on produces none. Once a day, at `report_at`, one warning per member
-  says how many of their photos were re-uploaded and trashed in the last day.
-  A member with none gets no line. The tally is what a nudge to the member
-  will one day be built on; a loop needs a nudge, not a pager.
+  says how many of their photos were re-uploaded and trashed since the last
+  report. A member with none gets no line. The tally lives in the daemon's
+  memory. A daemon that is stopped reports what it has counted before it
+  exits, and one that crashes loses it. Either way the next report covers
+  only the time since the restart. A one-off `process` or `move` keeps no
+  tally: its summary line gives the count. The tally is what a nudge to the
+  member will one day be built on; a loop needs a nudge, not a pager.
 
 Trashing a re-upload quickly saves Immich no work, since every job already
 queued for it runs regardless. What it does is restart the 30-day clock and
@@ -259,42 +271,35 @@ photo, and the service never writes into it.
 
 Immich is the source of truth for everything. Where a copy came from is in its
 `ifl` entry, and whether a move is finished is in what Immich holds. The
-service keeps one small JSON file, the state file, and nothing in it is needed
-for correctness. It holds each member's re-upload scan mark, each member's
-tally of trashed re-uploads since the last daily report, and when that report
-last ran. Losing it means the marks start again at the next pass and one
-report is dropped. The file never stores config labels. Immich stores a label
-in one place only, the `from/<member>` tag. Apart from that tag, renaming a
-member in the config changes only how messages read.
+service keeps nothing on disk between runs.
 
-A member taken out of the config is dropped from the state file the next time
-the daemon, `process` or `move` starts. Added back later, they start as a new
-member does: their mark begins at that pass, and nothing from the gap is
-trashed. The file isn't meant to be edited by hand.
+The daemon remembers three things, in memory only: the re-upload scan's mark,
+each member's tally of trashed re-uploads, and when it last reported them.
+None of them is needed for correctness. A restart costs one read of the
+scan's three days, and it brings the day's report forward to the moment of
+the stop. Immich
+stores a config label in one place only, the `from/<member>` tag. Apart from
+that tag, renaming a member in the config changes only how messages read.
 
 Only one command that writes to Immich runs at a time. Two at once could each
 look for a family album, find none, and both create it, and the same goes for
 the dropbox and the members' workflows. They could also both work on one
 photo. So every writing command takes the run lock first: the daemon for as
 long as it runs, a one-off command for its own length. A second one is refused
-before it touches anything. `observe` writes nothing and never takes it.
-
-The run lock is a file, and it sits beside the state file only because that
-directory is the one place the service can write. It isn't a lock on the state
-file. But it has that effect: whoever holds it is the state file's only
-writer, so the file needs no locking of its own.
+before it touches anything. `observe` writes nothing and never takes it. The
+run lock is a file, and the only one the service keeps.
 
 The daemon's pass and its webhook receiver share a set of in-flight asset ids,
 so they never work on the same photo at once. Whoever is second skips, and a
-skipped re-upload holds its member's mark back so it's found again.
+skipped re-upload holds the mark back so it's found again.
 
 Any unfinished re-upload holds the mark the same way: one that's blocked,
-failed, or left over the per-pass cap. The next pass re-reads that member's
-uploads from the oldest unfinished one onward, so a re-upload that stays
-blocked, say in one of the member's shared links, means the scan re-reads
-that stretch of their library every pass until the block clears. Nothing is
-missed, but the work grows with their uploads since then, and the pass log
-says whose mark is held and from when.
+failed, or left over the per-pass cap. The mark stays where it was, and the
+pass log says so. While a re-upload stays blocked, say in one of the member's
+shared links, every pass re-reads every member's uploads from the held mark
+onward, so the read grows until the block clears. It can't grow past three
+days: by then the scan no longer finds that re-upload, and the mark moves
+again.
 
 ## Pacing
 
@@ -311,6 +316,9 @@ toward `assets_per_pass`, so photos that are blocked on every pass, live
 photos say, never hold up the ones behind them. A move that fails does count,
 and so does one that gives up waiting for Immich to write the sidecar.
 
-The webhook never wakes the pass. It handles re-uploads alone, which move no
-bytes and so aren't what the caps meter. Everything else waits for the
-interval.
+Re-uploads move no bytes, so they aren't what the caps meter. A pass handles
+every re-upload it found before it starts on the album moves, and none of
+them counts toward `assets_per_pass`, whether it's trashed, blocked or fails.
+
+The webhook never wakes the pass. It handles re-uploads alone, with no cap,
+for the same reason. Everything else waits for the interval.

@@ -19,7 +19,7 @@ def test_parse_good():
     assert cfg.family.email == "f@x"
     assert cfg.dropbox_album == "Drop"
     assert cfg.members["a"].name == "a"
-    assert cfg.state_path == Path("/etc/ifl/data/state.json")
+    assert cfg.lock_path == Path("/etc/ifl/run.lock")
     assert cfg.temp_dir == Path("/tmp/immich-family-library")
     assert cfg.report_at == time(22, 0)
     assert cfg.readonly is True
@@ -55,8 +55,8 @@ def test_parse_good():
             r"\[service\] readonly must be true or false",
         ),
         (lambda r: r["service"].update({"readonly": 0}), "readonly must be true or false"),
-        (lambda r: r["service"].update({"state_path": 5}), "state_path must be a string"),
-        (lambda r: r["service"].update({"state_path": ""}), "state_path must name a file"),
+        (lambda r: r["service"].update({"lock_path": 5}), "lock_path must be a string"),
+        (lambda r: r["service"].update({"lock_path": ""}), "lock_path must name a file"),
         (lambda r: r["service"].update({"temp_dir": 5}), "temp_dir must be a string"),
         (lambda r: r["service"].update({"temp_dir": ""}), "temp_dir must name a directory"),
         (lambda r: r["family"].update({"email": 5}), r"\[family\] email must be a string"),
@@ -79,7 +79,7 @@ def test_parse_errors(mutate, msg):
         parse_config(raw)
 
 
-def test_the_example_file_shows_every_default():
+def test_the_example_file_shows_every_default_but_the_lock_path():
     import re
     import tomllib
 
@@ -89,9 +89,13 @@ def test_the_example_file_shows_every_default():
     # The [webhook] section is commented out in the example; read it as written.
     text = re.sub(r"(?m)^# (\[webhook\]|(?:url|token|listen) = )", r"\1", text)
     example = tomllib.loads(text)
+    # The one value that is not the default: the example is the container's
+    # config, and the default lock is beside the config, which is mounted read-only.
+    assert example["service"].pop("lock_path") == "/data/run.lock"
     for section, settings in DEFAULTS.items():
         for key, default in settings.items():
-            assert example[section][key] == default, f"[{section}] {key}"
+            if (section, key) != ("service", "lock_path"):
+                assert example[section][key] == default, f"[{section}] {key}"
 
 
 def test_dropbox_album_defaults():
@@ -120,7 +124,7 @@ def test_to_raw_redacts_and_resolves():
     assert raw["members"]["a"]["api_key"] == "*********mber"
     assert raw["service"] == {
         "readonly": True,
-        "state_path": "/etc/ifl/data/state.json",
+        "lock_path": "/etc/ifl/run.lock",
         "temp_dir": "/tmp/immich-family-library",
         "settle_seconds": 60,
         "interval_seconds": 600,

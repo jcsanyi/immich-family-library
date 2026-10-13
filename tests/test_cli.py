@@ -17,7 +17,7 @@ CONFIG = """
 url = "https://x.example"
 [service]
 readonly = {readonly}
-state_path = "state.json"
+lock_path = "run.lock"
 temp_dir = "tmp"
 settle_seconds = 0
 [family]
@@ -176,69 +176,73 @@ def test_reconcile_albums_exits_1_when_a_fix_fails(world, config, monkeypatch):
 
 
 def test_a_writing_command_refuses_while_another_holds_the_lock(world, config, tmp_path):
-    from ifl.state import hold_lock
+    from ifl.lock import hold_lock
 
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
-    with hold_lock(tmp_path / "state.json"):
+    with hold_lock(tmp_path / "run.lock"):
         assert run(path, "process") == 3
         assert run(path, "move", "--all") == 3
         assert run(path, "observe") == 0  # reads only, so it never needs the lock
     assert run(path, "process") == 0
 
 
-def test_observe_reads_the_state_without_creating_it_and_process_writes_it(world, config, tmp_path):
-    path = config()
-    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
-    assert run(path, "observe") == 0 and not (tmp_path / "state.json").exists()
-    assert run(path, "process") == 0 and (tmp_path / "state.json").exists()
-    assert run(path, "observe") == 0
-
-
-def test_a_one_off_command_fails_when_the_state_cannot_be_saved(world, config, tmp_path):
-    path = config()
-    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
-    (tmp_path / "state.json.tmp").mkdir()  # every save fails; the lock still opens
-
-    assert run(path, "process") == 1 and not (tmp_path / "state.json").exists()
-    assert run(path, "move", "--all") == 1
-
-
-def test_move_one_tallies_a_reupload(world, config, tmp_path):
-    from datetime import UTC, datetime
-
-    from ifl.state import State
-
+def test_move_one_moves_a_reupload_of_any_age(world, config):
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
     copy = world.add_asset(FakeAsset(uuid4(), FAMILY, "aa", "a.jpg"))
-    world.metadata[copy.id] = {"ifl": {"origin_asset_id": str(uuid4())}}
+    world.metadata[copy.id] = {
+        "ifl": {"origin_user_id": str(ALICE), "origin_asset_id": str(uuid4())}
+    }
+    # Uploaded long before the scan's window: one id is looked up directly.
     re = world.add_asset(FakeAsset(uuid4(), ALICE, "aa", "a.jpg"))
-    state = State(tmp_path / "state.json")
-    state.set_mark(ALICE, datetime(2025, 1, 1, tzinfo=UTC))
 
     assert run(path, "move", str(re.id)) == 0 and re.is_trashed
-    assert State.load(state.path).members[ALICE].reuploads == 1
+
+
+def test_move_one_says_why_an_asset_outside_the_family_albums_does_not_move(world, config, caplog):
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    world.add_asset(FakeAsset(uuid4(), FAMILY, "cc", "cat.jpg", is_trashed=True))
+    binned = world.add_asset(FakeAsset(uuid4(), ALICE, "cc", "cat.jpg"))
+    own = world.add_asset(FakeAsset(uuid4(), ALICE, "dd", "dog.jpg"))
+    # The family uploaded this one itself, so its copy names nobody.
+    world.add_asset(FakeAsset(uuid4(), FAMILY, "ff", "fox.jpg"))
+    both = world.add_asset(FakeAsset(uuid4(), ALICE, "ff", "fox.jpg"))
+    gone = world.add_asset(FakeAsset(uuid4(), ALICE, "ee", "eel.jpg", is_trashed=True))
+
+    with caplog.at_level("ERROR", logger="ifl"):
+        assert run(path, "move", str(binned.id)) == 1 and not binned.is_trashed
+        assert run(path, "move", str(own.id)) == 1 and not own.is_trashed
+        assert run(path, "move", str(both.id)) == 1 and not both.is_trashed
+        assert run(path, "move", str(gone.id)) == 1
+
+    assert "not moving cat.jpg from alice: the family's copy is in the trash" in caplog.text
+    assert (
+        "not moving dog.jpg from alice: it is in no family-owned album, and the family has no copy"
+        in caplog.text
+    )
+    assert "not moving fox.jpg from alice: the family's copy did not come from them" in caplog.text
+    assert f"asset {gone.id} is not a member's asset, or it is in the trash" in caplog.text
 
 
 def test_a_lock_that_cannot_be_opened_exits_2_without_a_traceback(world, config, tmp_path):
-    (tmp_path / "state.json.lock").mkdir()
+    (tmp_path / "run.lock").mkdir()
     assert run(config(), "reconcile-albums") == 2
     assert run(config(), "observe") == 0
 
 
-def test_a_writing_command_drops_removed_members_and_observe_does_not(world, config, tmp_path):
-    from datetime import UTC, datetime
-
-    from ifl.state import State
-
+def test_move_one_reports_an_immich_failure_in_one_line(world, config, monkeypatch, caplog):
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
-    gone = uuid4()
-    state = State(tmp_path / "state.json")
-    state.set_mark(gone, datetime(2025, 1, 1, tzinfo=UTC))
-    state.add_reuploads(gone, 4)
 
-    assert run(path, "observe") == 0 and gone in State.load(state.path).members
-    assert run(path, "process") == 0
-    assert set(State.load(state.path).members) == {ALICE, BOB}
+    async def down(client, asset_id):
+        raise RuntimeError("immich went away")
+
+    monkeypatch.setattr("ifl.observer.get_asset_if_readable", down)
+    asset_id = uuid4()
+
+    with caplog.at_level("ERROR", logger="ifl"):
+        assert run(path, "move", str(asset_id)) == 1
+
+    assert f"could not look up asset {asset_id}: RuntimeError: immich went away" in caplog.text

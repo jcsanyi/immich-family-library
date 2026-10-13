@@ -28,7 +28,7 @@ start.
 | Setting | Default | What it is |
 |---|---|---|
 | `readonly` | `true` | While true, every command that writes to Immich refuses to run. Set it to false once `observe` reports what you expect. |
-| `state_path` | `data/state.json` | The state file: the re-upload marks and the daily tally. Nothing in it needs a backup. In the container the config mount is read-only, so use the data volume: `/data/state.json`. |
+| `lock_path` | `run.lock` | The run lock file. A relative path is resolved against the directory of the config file, so the default is one lock for each config. The lock works only between commands that see the same file. In the container, the config directory is read-only: set a file on the data volume, `/data/run.lock`, which is the value in `config.example.toml`. |
 | `temp_dir` | `/tmp/immich-family-library` | The directory where a move keeps a file between the download and the upload. It holds one file at a time, and the move deletes the file when it ends. The directory needs space for the largest photo or video that a member has. If the `/tmp` of the container is too small, mount a volume and set this path to it. Two instances of the service must not share one directory. |
 | `settle_seconds` | `60` | A photo changed more recently than this is not moved yet, because its jobs can still be running. Re-uploads do not wait for it. |
 | `interval_seconds` | `600` | The daemon's pause between passes. |
@@ -38,7 +38,7 @@ start.
 | Setting | Default | What it is |
 |---|---|---|
 | `albums_per_pass` | `5` | The most albums that `convert-album --all` or a pass converts. 0 means no limit. |
-| `assets_per_pass` | `20` | The most photos that `move --all` or a pass moves. 0 means no limit. |
+| `assets_per_pass` | `20` | The most photos that `move --all` or a pass moves. 0 means no limit. Re-uploads do not count: each pass handles all of them first. |
 
 A command given a specific id ignores the limits. The limits and the interval
 together are the rate. See pacing in [how-it-works.md](how-it-works.md).
@@ -61,7 +61,7 @@ and that does not occur as a keyword in their files.
 
 | Setting | Default | What it is |
 |---|---|---|
-| `report_at` | `"22:00"` | The local time of day for the daily re-upload report. One warning per member whose re-uploads were trashed in the last day. The compose file gives the container the host's timezone. |
+| `report_at` | `"22:00"` | The local time of day for the daily re-upload report. One warning per member whose re-uploads the daemon trashed since the last report. The compose file gives the container the host's timezone. |
 
 ## `[family]`
 

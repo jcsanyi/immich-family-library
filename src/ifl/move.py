@@ -50,6 +50,7 @@ from immichpy.client.generated.models.album_user_role import AlbumUserRole
 from ifl.accounts import Account, Accounts
 from ifl.config import Config, ConfigError
 from ifl.immich import (
+    PROVENANCE_KEY,
     AlbumSummary,
     add_album_assets,
     albums_containing,
@@ -72,14 +73,12 @@ from ifl.immich import (
     upload_asset,
     upsert_tag,
 )
-from ifl.observer import AssetScan, MoveAsset, unmovable
+from ifl.observer import MoveAsset, unmovable
 from ifl.sidecar import tags_in, with_only_tag
-from ifl.state import State
 
 log = logging.getLogger(__name__)
 
 WATCHED_QUEUES = ("sidecar", "metadataExtraction")
-PROVENANCE_KEY = "ifl"
 TEMP_PREFIX = "ifl-"  # the only files the service removes from the temp directory
 
 
@@ -273,7 +272,7 @@ class MoveManyResult:
     skipped_in_flight: int = 0  # another path was already on it
 
     def reuploads_trashed(self) -> dict[UUID, int]:
-        """Trashed re-uploads per member, for the summary line."""
+        """Trashed re-uploads per member, for the summary line and the daemon's tally."""
         out: dict[UUID, int] = {}
         for r in self.done:
             if r.counts_as_reupload:
@@ -294,20 +293,21 @@ async def move_assets(
     opts: MoveOptions,
     moves: list[MoveAsset],
     *,
-    state: State,
     limit: int,
     in_flight: set[UUID] | None = None,
 ) -> MoveManyResult:
-    """Move assets in scan order until `limit` of them have used a slot (0 for no
-    limit). A move uses a slot, and so does a failure or a timeout, because each
-    may have uploaded bytes or kept the pass waiting. A block that the first
-    reads settle is free: a photo that is blocked on every pass, a live photo
-    say, must not hold a slot on every pass and starve the photos behind it.
+    """Move assets in scan order. Once `limit` of them have used a slot (0 for no
+    limit), the rest that would use one are left for the next pass. A move uses
+    a slot, and so does a failure or a timeout, because each may have uploaded
+    bytes or kept the pass waiting. A block that the first reads settle is
+    free: a photo that is blocked on every pass, a live photo say, must not
+    hold a slot on every pass and starve the photos behind it.
+
+    A re-upload never uses a slot, whatever becomes of it, and the limit never
+    stops one. It has nothing to upload, and the limit is the brake on bytes.
 
     Each item is a MoveAsset from the scan. One asset blocking or failing doesn't
-    stop the others, whatever the exception. Per-owner lookups happen once. Each
-    trashed re-upload joins its member's tally as soon as its move returns, so a
-    run that is cut short has still counted what it trashed.
+    stop the others, whatever the exception. Per-owner lookups happen once.
 
     `in_flight` is shared between the daemon's pass and its webhook receiver:
     an asset the other path is already on is skipped here, and ours are held in
@@ -315,11 +315,12 @@ async def move_assets(
     out = MoveManyResult()
     shared_links: dict[UUID, set[UUID]] = {}
     slots_used = 0
-    for i, m in enumerate(moves):
-        if limit and slots_used >= limit:
-            out.remaining = len(moves) - i
-            out.unfinished.update(rest.asset_id for rest in moves[i:])
-            break
+    for m in moves:
+        slot = 0 if m.reupload else 1
+        if limit and slot and slots_used >= limit:
+            out.remaining += 1
+            out.unfinished.add(m.asset_id)
+            continue
         owner = m.owner
         if in_flight is not None:
             if m.asset_id in in_flight:
@@ -346,61 +347,31 @@ async def move_assets(
             log.warning("blocked %s: %s", m.file_name, e)
             out.blocked.append((m.file_name, str(e)))
             out.unfinished.add(m.asset_id)
-            slots_used += isinstance(e, MoveTimedOut)
+            slots_used += slot * isinstance(e, MoveTimedOut)
             continue
         except MoveError as e:
             log.error("%s not moved: %s", m.file_name, e)
             out.failed.append((m.file_name, str(e)))
             out.unfinished.add(m.asset_id)
-            slots_used += 1
+            slots_used += slot
             continue
         except Exception as e:  # noqa: BLE001 - the move stops before the trash; the rest go on
             log.exception("%s not moved", m.file_name)
             out.failed.append((m.file_name, f"{type(e).__name__}: {e}"))
             out.unfinished.add(m.asset_id)
-            slots_used += 1
+            slots_used += slot
             continue
         finally:
             if in_flight is not None:
                 in_flight.discard(m.asset_id)
-        tally_reupload(state, result)
         for w in result.warnings:
             log.warning("%s: %s", result.file_name, w)
         log.info("%s", result)
         out.done.append(result)
-        slots_used += 1
+        slots_used += slot
     if out.remaining:
         log.info("%d more assets to move; limit is %d per pass", out.remaining, limit)
     return out
-
-
-def tally_reupload(state: State, result: MoveResult) -> None:
-    if result.counts_as_reupload:
-        state.add_reuploads(result.owner_id, 1)
-
-
-def advance_marks(state: State, scan: AssetScan, many: MoveManyResult, accounts: Accounts) -> None:
-    """After a pass, record how far the re-upload scan got, per member. A member
-    whose every re-upload was handled is marked at the scan time; otherwise at
-    the upload time of their oldest unfinished one, so it's found again. A mark
-    that stays held means a re-read of that stretch every pass, so say so."""
-    if scan.scanned_at is None:
-        return
-    for member in accounts.members.values():
-        pending = [
-            m.created_at
-            for m in scan.moves
-            if m.reupload and m.owner.user_id == member.user_id and m.asset_id in many.unfinished
-        ]
-        if pending:
-            held_at = min(pending)
-            log.info(
-                "%s's re-upload mark held at %s by %d unfinished re-upload(s)",
-                member.name,
-                held_at.isoformat(timespec="seconds"),
-                len(pending),
-            )
-        state.set_mark(member.user_id, held_at if pending else scan.scanned_at)
 
 
 async def move_asset(

@@ -34,6 +34,14 @@ Subcommands:
                   the family's copy of FILE, for the "family deleted it" case.
   reshare         As carol, add her re-uploaded cat to the family's "Cat" album: the
                   re-share that restores the family's trashed copy.
+  shared-link     As MEMBER, put their own live FILE into a shared link: what blocks a
+                  move, and what holds the re-upload mark when FILE is a re-upload. Stop
+                  the daemon first, or the webhook trashes the re-upload before the link
+                  exists. --remove deletes every shared link of MEMBER instead.
+  family-copy     Upload the seed photo FILE straight into the family account: a photo
+                  the family got some other way while a member still holds theirs. The
+                  copy names no origin, so the member's photo is no re-upload: every pass
+                  leaves it alone, a restart included, and `observe` lists it as skipped.
   big-video       As alice, upload a video of --gb gigabytes (2 by default) into the
                   family's "Family Trip": the move must carry it without holding it in
                   memory. The file is the seed clip with padding, built in --workdir.
@@ -75,6 +83,8 @@ from immichpy.client.generated.models.metadata_search_dto import MetadataSearchD
 from immichpy.client.generated.models.partner_direction import PartnerDirection
 from immichpy.client.generated.models.permission import Permission
 from immichpy.client.generated.models.rotate_parameters import RotateParameters
+from immichpy.client.generated.models.shared_link_create_dto import SharedLinkCreateDto
+from immichpy.client.generated.models.shared_link_type import SharedLinkType
 from immichpy.client.generated.models.tag_upsert_dto import TagUpsertDto
 from immichpy.client.generated.models.update_album_user_dto import UpdateAlbumUserDto
 from immichpy.client.generated.models.update_asset_dto import UpdateAssetDto
@@ -308,6 +318,31 @@ async def reshare(accounts: Accounts, args, *_) -> None:
     log.info("carol re-shared %s into the family's Cat album", cat)
 
 
+async def shared_link(accounts: Accounts, args, *_) -> None:
+    member = accounts.members[args.member]
+    if args.remove:
+        for link in await member.client.shared_links.get_all_shared_links():
+            await member.client.shared_links.remove_shared_link(link.id)
+            log.info("%s: removed shared link %s", member.name, link.id)
+        return
+    if not args.file:
+        raise SystemExit("give the file name to link, or --remove")
+    asset_id = await own_asset(member, args.file)
+    link = await member.client.shared_links.create_shared_link(
+        SharedLinkCreateDto(type=SharedLinkType.INDIVIDUAL, asset_ids=[asset_id])
+    )
+    log.info("%s: shared link %s on %s (%s)", member.name, link.id, args.file, asset_id)
+
+
+async def family_copy(accounts: Accounts, args, *_) -> None:
+    photo = next((p for p in PHOTOS if p[1] == args.file), None)
+    if photo is None:
+        raise SystemExit(f"{args.file} is not one of the seed photos")
+    _, name, days, lat, lon, desc = photo
+    taken = BASE - timedelta(days=days, hours=3)
+    await upload(accounts.family, name, make_jpeg(name, taken, lat, lon, desc), taken)
+
+
 async def blocked_photos(accounts: Accounts, args, *_) -> None:
     fam, alice = accounts.family, accounts.members["alice"]
     album = await family_album(fam, "Family Trip")
@@ -410,6 +445,8 @@ COMMANDS = {
     "reupload": reupload,
     "reshare": reshare,
     "blocked-photos": blocked_photos,
+    "shared-link": shared_link,
+    "family-copy": family_copy,
     "big-video": big_video,
 }
 
@@ -454,6 +491,12 @@ if __name__ == "__main__":
         "blocked-photos",
     ):
         sub.add_parser(name)
+    s = sub.add_parser("shared-link")
+    s.add_argument("member", help="whose photo and whose link")
+    s.add_argument("file", nargs="?", help="file name of the member's own live photo")
+    s.add_argument("--remove", action="store_true", help="delete every shared link of the member")
+    f = sub.add_parser("family-copy")
+    f.add_argument("file", help="file name of a seed photo")
     b = sub.add_parser("big-video")
     b.add_argument("--gb", type=float, default=2.0, help="size of the padding, in gigabytes")
     b.add_argument("--workdir", type=Path, default=Path("/tmp"), help="where to build the file")

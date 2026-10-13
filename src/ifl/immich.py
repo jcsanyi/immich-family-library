@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID
 
 import aiohttp
+from immichpy.client.generated.exceptions import BadRequestException
 from immichpy.client.generated.models.add_users_dto import AddUsersDto
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_add_dto import AlbumUserAddDto
@@ -207,6 +208,16 @@ async def set_album_user_role(
 
 async def get_asset(client: AsyncClient, asset_id: UUID) -> AssetResponseDto:
     return await client.assets.get_asset_info(id=asset_id)
+
+
+async def get_asset_if_readable(client: AsyncClient, asset_id: UUID) -> AssetResponseDto | None:
+    """The asset, or None when this account cannot read it. Immich gives one
+    answer, a 400, for an asset that does not exist and for one the key has no
+    access to. Any other failure is raised."""
+    try:
+        return await get_asset(client, asset_id)
+    except BadRequestException:
+        return None
 
 
 async def albums_containing(client: AsyncClient, asset_id: UUID) -> list[AlbumSummary]:
@@ -438,6 +449,7 @@ async def owned_checksums(
 
 WEBHOOK_METHOD = "immich-plugin-core#webhook"
 TOKEN_HEADER = "X-IFL-Token"
+PROVENANCE_KEY = "ifl"  # the metadata entry on a family copy that says where it came from
 
 
 def webhook_step(url: str, token: str) -> WorkflowStepDto:

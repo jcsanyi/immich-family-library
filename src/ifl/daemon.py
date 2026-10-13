@@ -1,7 +1,7 @@
 """The long-running service.
 
-Two things in one process, sharing the accounts, the state and a set of
-in-flight asset ids:
+Two things in one process, sharing the accounts, the re-upload tally and a set
+of in-flight asset ids:
 
 - the pass, run every `interval_seconds`: conversions, reconcile, moves, under
   the limits. This is the only path that does paced work.
@@ -17,9 +17,13 @@ The receiver never wakes the pass: the interval and the limits are the pacing
 for real moves, and nothing the receiver handles is metered by them.
 
 The daemon holds the run lock for as long as it runs, so no other command
-writes to Immich beside it, and it is the state file's only writer: the file
-is loaded once, at start. Both halves
-share one in-memory state, which saves itself on every change.
+writes to Immich beside it.
+
+What the daemon remembers, it remembers in memory only: the re-upload scan's
+mark, each member's tally of trashed re-uploads, and when it last reported
+them. A clean stop reports the tally before the process exits; a crash loses
+it. A restart reads the scan's whole window once and reports next at
+`report_at`.
 """
 
 from __future__ import annotations
@@ -29,17 +33,17 @@ import contextlib
 import hmac
 import logging
 import signal
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from aiohttp import web
 
-from ifl.accounts import Account, Accounts
+from ifl.accounts import Accounts
 from ifl.config import Config
-from ifl.immich import TOKEN_HEADER, get_asset
-from ifl.move import MoveOptions, move_assets
-from ifl.observer import AssetScan, describe_assets, reupload_items
+from ifl.immich import TOKEN_HEADER
+from ifl.move import MoveManyResult, MoveOptions, move_assets
+from ifl.observer import describe_assets, member_asset, reuploads_among
 from ifl.process import run_pass
-from ifl.state import State
 
 log = logging.getLogger(__name__)
 
@@ -47,11 +51,13 @@ BATCH_WAIT = 1.0  # seconds to collect more events after the first, so a backup 
 
 
 class Daemon:
-    def __init__(self, accounts: Accounts, cfg: Config, state: State):
+    def __init__(self, accounts: Accounts, cfg: Config, now: datetime | None = None):
         self.accounts = accounts
         self.cfg = cfg
-        self.state = state
+        self.tally: dict[UUID, int] = {}  # trashed re-uploads per member since the last report
+        self.reported_at = now or datetime.now().astimezone()
         self.in_flight: set[UUID] = set()
+        self.mark: datetime | None = None  # the re-upload scan's; a restart reads the whole window
         self.events: asyncio.Queue[tuple[UUID, UUID | None]] = asyncio.Queue()
         self.stopping = asyncio.Event()
 
@@ -75,20 +81,58 @@ class Daemon:
             await asyncio.gather(*tasks, return_exceptions=True)
             if runner is not None:
                 await runner.cleanup()
+            # The tally dies with the process, so say it now, not at `report_at`.
+            self.report(final=True)
 
     async def passes(self) -> None:
         while not self.stopping.is_set():
             try:
                 result = await run_pass(
-                    self.accounts, self.cfg, self.state, in_flight=self.in_flight
+                    self.accounts, self.cfg, in_flight=self.in_flight, mark=self.mark
                 )
+                self.mark = result.mark
+                if result.moved:
+                    self.count(result.moved)
                 log.info("pass done: %s", result)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("pass failed; next one in %ds", self.cfg.interval_seconds)
+            # Outside the try: the webhook keeps counting while passes fail, and
+            # the report is the one signal for a looping phone.
+            self.report()
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self.stopping.wait(), timeout=self.cfg.interval_seconds)
+
+    # ---- the daily report
+
+    def count(self, moved: MoveManyResult) -> None:
+        for uid, n in moved.reuploads_trashed().items():
+            self.tally[uid] = self.tally.get(uid, 0) + n
+
+    def report(self, now: datetime | None = None, *, final: bool = False) -> None:
+        """Once `report_at` has passed since the last report, or since the daemon
+        started: one warning per member whose re-uploads were trashed since then.
+        `final` reports at once, whatever the time."""
+        now = now or datetime.now().astimezone()
+        at = self.cfg.report_at
+        scheduled = now.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
+        if scheduled > now:
+            scheduled -= timedelta(days=1)
+        if self.reported_at >= scheduled and not final:
+            return
+        since = self.reported_at.astimezone(now.tzinfo).isoformat(timespec="minutes")
+        names = {uid: a.name for uid, a in self.accounts.by_user_id().items()}
+        for uid, n in self.tally.items():
+            log.warning(
+                "%s re-uploaded %d photo%s the family already has since %s; trashed",
+                names[uid],
+                n,
+                "" if n == 1 else "s",
+                since,
+            )
+        self.tally = {}
+        self.reported_at = now
 
     # ---- webhook
 
@@ -137,37 +181,30 @@ class Daemon:
                 log.exception("webhook batch failed; the next pass will catch anything missed")
 
     async def handle_batch(self, batch: list[tuple[UUID, UUID | None]]) -> None:
-        members = {m.user_id: m for m in self.accounts.members.values()}
-        by_member: dict[UUID, list] = {}
+        found = []
         for asset_id, owner_id in dict.fromkeys(batch):
-            candidates = [members[owner_id]] if owner_id in members else list(members.values())
-            for member in candidates:
-                asset = await self._read(member, asset_id)
-                if asset is not None:
-                    by_member.setdefault(member.user_id, []).append(asset)
-                    break
-        if not by_member:
+            try:
+                one = await member_asset(self.accounts, asset_id, owner_id)
+            except Exception as e:  # noqa: BLE001 - one unreadable asset must not cost the batch
+                log.warning(
+                    "webhook: could not read asset %s (%s: %s); the next pass looks again",
+                    asset_id,
+                    type(e).__name__,
+                    e,
+                )
+                continue
+            if one is not None:
+                found.append(one)
+        if not found:
             return
-        scan = AssetScan()
-        await reupload_items(
-            self.accounts, [(members[uid], assets) for uid, assets in by_member.items()], scan
-        )
+        scan = await reuploads_among(self.accounts, found)
         if not scan.moves and not scan.skipped_reuploads:
             log.debug("webhook: %d new uploads, none the family has", len(batch))
             return
         log.info("webhook: %s", "; ".join(describe_assets(scan)))
         opts = MoveOptions.from_config(self.cfg)
         result = await move_assets(
-            self.accounts, opts, scan.moves, state=self.state, limit=0, in_flight=self.in_flight
+            self.accounts, opts, scan.moves, limit=0, in_flight=self.in_flight
         )
+        self.count(result)
         log.info("webhook: %s", result)
-
-    @staticmethod
-    async def _read(member: Account, asset_id: UUID):
-        try:
-            asset = await get_asset(member.client, asset_id)
-        except Exception:  # noqa: BLE001 - not this member's, or gone already
-            return None
-        if asset.owner_id != member.user_id or asset.is_trashed:
-            return None
-        return asset
