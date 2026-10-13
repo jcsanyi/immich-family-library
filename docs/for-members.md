@@ -16,29 +16,29 @@ you'll see and what the few settings do.
 The family account shares its whole library with you. In Immich that's called
 partner sharing. You can always browse it:
 
-- **In the app:** open the Library tab at the bottom. The family account is
+- **In the app**, open the Library tab at the bottom. The family account is
   listed under Partners. Tap it to see everything the family owns.
-- **On the web:** Sharing in the left-hand menu, then the family account under
-  Partners.
+- **On the web**, choose Sharing in the left-hand menu, then the family
+  account under Partners.
 
 By default those photos only appear there, not in your main timeline. If you'd
 rather have them mixed in with your own photos, turn on **Show in timeline**
 for the family account:
 
-- **App:** Library tab, tap the family account, and flip the **Show in
-  timeline** switch on that screen.
-- **Web:** open Account Settings (your avatar, top right), find the family
-  account under Partner Sharing, and turn on **Show in timeline**.
+- **In the app**, open the Library tab, tap the family account, and flip the
+  "Show in timeline" switch on that screen.
+- **On the web**, open Account Settings (your avatar, top right), find the
+  family account under Partner Sharing, and turn on "Show in timeline".
 
-That's your own setting. Turn it on or off whenever you like. It changes
-nothing for anyone else. Most of us leave it on, so the family's photos and
-our own sit together in one timeline.
+The setting is yours alone. Turn it on or off whenever you like, and it
+changes nothing for anyone else. Most of us leave it on, so the family's
+photos and our own sit together in one timeline.
 
 ## Sharing an album with the family
 
 Make an album as you normally would, then share it with the family account,
-the same way you'd share with any person. That's the whole gesture. Within
-the hour, and usually much sooner:
+the same way you'd share with any person. Within the hour, and usually much
+sooner:
 
 - the album becomes a family album, owned by the family account, with the same
   name and description;
@@ -73,7 +73,7 @@ on it, which is just a record of what you've handed over. You don't need to do
 anything about either. The family's copy is the one everyone sees from then
 on.
 
-Everything that matters comes with it: the photo itself, when and where it was
+Almost everything comes with it: the photo itself, when and where it was
 taken, any fixes you made to the date or location in Immich, the description,
 the rating, whether it was a favourite, and any cropping or rotating you did.
 Two things don't come along. Your own tags stay behind, because tags are
@@ -116,6 +116,6 @@ the wasted upload, once a month per photo.
   service move photos on your behalf. Whoever runs it will tell you which
   boxes to tick when you create it. Nothing else about your account changes.
 
-If something looks wrong, a photo that didn't move or one that moved and
-shouldn't have, tell whoever runs the service. Nothing is ever deleted
-outright. The original is always in your trash for 30 days.
+If something looks wrong, such as a photo that didn't move or one that moved
+and shouldn't have, tell whoever runs the service. Your original stays in your
+trash for 30 days.
