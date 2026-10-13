@@ -55,6 +55,7 @@ def test_parse_good():
         ),
         (lambda r: r["service"].update({"readonly": 0}), "readonly must be true or false"),
         (lambda r: r["service"].update({"state_path": 5}), "state_path must be a string"),
+        (lambda r: r["service"].update({"state_path": ""}), "state_path must name a file"),
         (lambda r: r["family"].update({"email": 5}), r"\[family\] email must be a string"),
         (lambda r: r["family"].update({"dropbox_album": 5}), "dropbox_album must be a string"),
         (lambda r: r["members"]["a"].update({"api_key": 5}), r"\[members.a\] api_key must be"),
@@ -267,6 +268,8 @@ def test_webhook_and_interval_settings():
         "0.0.0.0:0",
         "0.0.0.0:65536",
         "::1:8080",
+        "[:8080",
+        "::]:8080",
         "9000",
         8080,
     ):

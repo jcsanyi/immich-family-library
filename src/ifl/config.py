@@ -70,10 +70,15 @@ class WebhookConfig:
         address. Raises ValueError when `listen` is not `host:port`."""
         host, sep, port = self.listen.rpartition(":")
         bracketed = host.startswith("[") and host.endswith("]")
-        if not sep or not port.isascii() or not port.isdigit():
+        half_bracketed = not bracketed and (host.startswith("[") or host.endswith("]"))
+        if (
+            not sep
+            or not port.isascii()
+            or not port.isdigit()
+            or half_bracketed
+            or (":" in host and not bracketed)
+        ):
             raise ValueError(f"not host:port: {self.listen!r}")
-        if ":" in host and not bracketed:
-            raise ValueError(f"an IPv6 host needs brackets: {self.listen!r}")
         return (host[1:-1] if bracketed else host) or "0.0.0.0", int(port)
 
 
@@ -174,7 +179,10 @@ def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
 
     service = raw.get("service") or {}
     readonly = _typed("service", service, "readonly", bool)
-    state_path = Path(_typed("service", service, "state_path", str))
+    state_path_raw = _typed("service", service, "state_path", str)
+    if not state_path_raw:
+        raise ConfigError("[service] state_path must name a file")
+    state_path = Path(state_path_raw)
     if not state_path.is_absolute():
         state_path = config_dir / state_path
 
