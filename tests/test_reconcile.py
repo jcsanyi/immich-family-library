@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from fakes import ALICE, BOB, EDITOR, FAMILY, OWNER, STRANGER, VIEWER, make_accounts, patch_world
 
@@ -92,6 +94,8 @@ async def test_one_failing_fix_does_not_stop_the_others(world, monkeypatch):
     assert world.albums[handmade.id].roles == {FAMILY: OWNER, ALICE: EDITOR, BOB: EDITOR}
     assert result.partnered == 0 and len(result.failed) == 2
     assert all("immich went away" in f for f in result.failed)
+    # Each says where: a line of reconcile itself, since the fix is written in place.
+    assert all(re.search(r"\(reconcile\.py:\d+ in reconcile\)$", f) for f in result.failed)
     assert "failed 2" in str(result)
 
 

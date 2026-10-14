@@ -120,12 +120,11 @@ async def open_account(
         missing = required - have if "all" not in have else set()
         if missing:
             raise AccountError(f"[{cfg.name}] key is missing permissions: {sorted(missing)}")
-    except EXPECTED_ERRORS as e:
+    except BaseException as e:
+        await client.close()
         # Immich's answer to a key is the check itself: a refusal is a wrong key.
-        await client.close()
-        raise AccountError(f"[{cfg.name}] key check failed: {describe_error(e)}") from e
-    except BaseException:
-        await client.close()
+        if isinstance(e, EXPECTED_ERRORS):
+            raise AccountError(f"[{cfg.name}] key check failed: {describe_error(e)}") from e
         raise
     log.info("account ok: %s (%s)", cfg.name, me.email)
     return Account(name=cfg.name, email=me.email, user_id=me.id, client=client)

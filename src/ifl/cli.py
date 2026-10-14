@@ -18,7 +18,7 @@ from ifl.accounts import AccountError, Accounts, open_accounts
 from ifl.config import Config, ConfigError, load_config, to_raw
 from ifl.convert import convert_albums
 from ifl.daemon import Daemon
-from ifl.immich import EXPECTED_ERRORS, locate_error
+from ifl.immich import EXPECTED_ERRORS, log_failure
 from ifl.lock import Locked, LockError, hold_lock
 from ifl.move import (
     MoveOptions,
@@ -269,8 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     except EXPECTED_ERRORS as e:
         # Each batch of work reports its own failures and goes on. What gets
         # here stopped the command outright: a scan that Immich did not answer.
-        log.error("the command stopped: %s", locate_error(e))
-        log.debug("the traceback of the stop", exc_info=e)
+        log_failure(log, "the command stopped", e)
         return 1
     except KeyboardInterrupt:
         return 130

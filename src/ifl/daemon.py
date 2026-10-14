@@ -39,7 +39,7 @@ from uuid import UUID
 from aiohttp import web
 
 from ifl.accounts import Accounts
-from ifl.config import Config
+from ifl.config import Config, ConfigError
 from ifl.immich import TOKEN_HEADER, log_failure
 from ifl.move import MoveManyResult, MoveOptions, move_assets
 from ifl.observer import describe_assets, member_asset, reuploads_among
@@ -143,7 +143,13 @@ class Daemon:
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         host, port = self.cfg.webhook.bind
-        await web.TCPSite(runner, host, port).start()
+        try:
+            await web.TCPSite(runner, host, port).start()
+        except OSError as e:
+            await runner.cleanup()
+            raise ConfigError(
+                f"[webhook] cannot listen on {self.cfg.webhook.listen}: {e}"
+            ) from None
         log.info("webhook listening on %s%s", self.cfg.webhook.listen, self.cfg.webhook.path)
         return runner
 

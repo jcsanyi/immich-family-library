@@ -378,3 +378,19 @@ async def test_a_clean_stop_reports_the_tally_it_would_otherwise_lose(world, mon
 
     assert "alice re-uploaded 2 photos the family already has since" in caplog.text
     assert daemon.tally == {}
+
+
+async def test_a_listen_address_that_is_taken_is_a_config_error(world):
+    import socket
+
+    from ifl.config import ConfigError
+
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        daemon = local_daemon()
+        webhook = replace(daemon.cfg.webhook, listen=f"127.0.0.1:{taken.getsockname()[1]}")
+        daemon.cfg = replace(daemon.cfg, webhook=webhook)
+
+        with pytest.raises(ConfigError, match=r"\[webhook\] cannot listen on 127\.0\.0\.1:\d+"):
+            await daemon.serve()

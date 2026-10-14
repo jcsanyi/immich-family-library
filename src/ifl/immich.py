@@ -16,6 +16,7 @@ from typing import Any
 from uuid import UUID
 
 import aiohttp
+import pydantic
 from immichpy.client.generated.exceptions import ApiException, BadRequestException
 from immichpy.client.generated.models.add_users_dto import AddUsersDto
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
@@ -193,9 +194,17 @@ class Failure(Exception):
     their own kinds."""
 
 
-# Immich answered with an error, or the network or the disk failed. Like a
-# `Failure`, none of these says anything about the service's own code.
-OUTSIDE_ERRORS = (ApiException, aiohttp.ClientError, OSError)
+# Immich answered with an error, sent something the client could not read, or
+# could not be reached. Like a `Failure`, none of these says anything about the
+# service's own code. `OSError` as a whole is not here: a wrong path in the
+# service's own file handling is one too, and that is a fault.
+OUTSIDE_ERRORS = (
+    ApiException,
+    pydantic.ValidationError,
+    aiohttp.ClientError,
+    ConnectionError,
+    TimeoutError,
+)
 EXPECTED_ERRORS = (Failure, *OUTSIDE_ERRORS)
 
 _OWN_CODE = Path(__file__).parent

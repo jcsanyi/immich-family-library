@@ -133,23 +133,28 @@ A catch of that kind is correct, on two conditions:
 - The code acts on the answer. If no key is accepted, the move raises a
   `MoveError` that lists what each key was told.
 
-Three things in `immich.py` keep the reports the same everywhere:
+These names in `immich.py` keep the reports the same everywhere:
 
 - `Failure` is the base class for a condition that the service found and can
   describe. `MoveError`, `ConvertError` and `DownloadMismatch` derive from it.
   When Immich refuses something that the code checks for, raise a `Failure`,
   not a `RuntimeError`.
-- `log_failure` logs one piece of work that failed. A `Failure`, or an error
-  from outside the service (`OUTSIDE_ERRORS`: Immich, the network, the disk),
-  is one line. Any other error is a fault in the service, and the log keeps
+- `OUTSIDE_ERRORS` is the set of errors from outside the service: Immich
+  answered with an error, Immich sent a reply that the client cannot read, or
+  the network failed. `OSError` as a whole is not in the set, because an error
+  in the file handling of the service is an `OSError` too.
+- `EXPECTED_ERRORS` is a `Failure` or one of `OUTSIDE_ERRORS`. It is the set
+  to catch when a catch must not take a fault in the service.
+- `log_failure` logs one piece of work that failed. An expected error is one
+  line. Any other error is a fault in the service, and the log keeps
   its traceback. The traceback of an expected error goes to the debug log, so
   `-v` shows it.
 - `describe_error` gives one line for any error. Use it when an error goes
   into a message. The text of the client for an Immich error has four lines
   and all the response headers.
 - `locate_error` adds the place to an error from outside: the Immich call and
-  the line of the service that made it. `log_failure` and `main` use it,
-  because without a traceback nothing else says where the error came from.
+  the line of the service that made it. `log_failure` uses it, because
+  without a traceback nothing else says where the error came from.
 
 The default level of `log_failure` is error. Give it `level=logging.WARNING`
 when the service corrects the failure itself and no person has to act.

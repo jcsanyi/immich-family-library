@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pydantic
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
@@ -38,6 +39,9 @@ from fakes import (
 from immichpy.client.generated.exceptions import ApiException
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_response_dto import AlbumUserResponseDto
+from immichpy.client.generated.models.asset_bulk_upload_check_item import (
+    AssetBulkUploadCheckItem,
+)
 from immichpy.client.generated.models.asset_bulk_upload_check_response_dto import (
     AssetBulkUploadCheckResponseDto,
 )
@@ -747,6 +751,9 @@ def test_log_failure_keeps_the_traceback_for_faults_in_the_service(caplog):
     from immichpy.client.generated.exceptions import ServiceException
 
     log = logging.getLogger("ifl.test")
+    with pytest.raises(pydantic.ValidationError) as caught:
+        AssetBulkUploadCheckItem(id=None, checksum=None)
+    unreadable = caught.value
     cases = [
         (immich.Failure("the copy is in the trash"), "the copy is in the trash", False),
         (immich.DownloadMismatch("got 3 bytes"), "got 3 bytes", False),
@@ -758,15 +765,19 @@ def test_log_failure_keeps_the_traceback_for_faults_in_the_service(caplog):
         (aiohttp.ClientConnectionError("refused"), "ClientConnectionError: refused", False),
         (TimeoutError(), "TimeoutError", False),
         (ConnectionResetError("reset by peer"), "ConnectionResetError: reset by peer", False),
+        (unreadable, None, False),  # a reply the client could not read is Immich's doing
         (KeyError("owner"), "KeyError: 'owner'", True),
+        # Not every OSError is an outage: this one is a wrong path in the service.
+        (FileNotFoundError("no such file"), "FileNotFoundError: no such file", True),
     ]
     for error, why, fault in cases:
         for level in (logging.ERROR, logging.WARNING):
             caplog.clear()
             with caplog.at_level(logging.DEBUG, logger="ifl.test"):
-                assert immich.log_failure(log, "a.jpg not moved", error, level=level) == why
+                got = immich.log_failure(log, "a.jpg not moved", error, level=level)
+            assert got == (why or got) and "\n" not in got
             said, *rest = caplog.records
-            assert said.getMessage() == f"a.jpg not moved: {why}"
+            assert said.getMessage() == f"a.jpg not moved: {got}"
             assert said.funcName == "test_log_failure_keeps_the_traceback_for_faults_in_the_service"
             if fault:
                 # A fault is an error with its traceback, whatever level was asked for.

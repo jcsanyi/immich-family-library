@@ -293,3 +293,30 @@ async def test_a_fault_during_the_key_check_is_not_reported_as_a_wrong_key(monke
             "https://x.example", AccountConfig(name="alice", api_key="k"), required=set()
         )
     assert closed == [True]
+
+
+async def test_a_reply_the_client_cannot_read_is_a_failed_key_check(monkeypatch):
+    import pydantic
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.users = SimpleNamespace(get_my_user=self.unreadable)
+
+        async def unreadable(self):
+            # What the generated client raises for a body of another Immich version.
+            UserAdminResponseDto.model_validate({"id": "not a user"})
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
+
+    with pytest.raises(
+        AccountError, match=r"\[alice\] key check failed: ValidationError"
+    ) as failed:
+        await open_account(
+            "https://x.example", AccountConfig(name="alice", api_key="k"), required=set()
+        )
+    assert "\n" not in str(failed.value) and isinstance(
+        failed.value.__cause__, pydantic.ValidationError
+    )
