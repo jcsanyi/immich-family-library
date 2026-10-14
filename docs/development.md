@@ -108,6 +108,59 @@ facial recognition reset is needed. Do not rely on faces or on people sharing.
 
 ## Errors
 
+### Where an error from Immich gets its type
+
+`open_account` wraps each client in `guard` (`immich.py`). The wrapper puts
+every call into the client inside `immich_call`. Whatever the call raises
+comes out as one type, `ImmichError`. That covers an error answer from
+Immich, a reply that the client cannot read, and a network failure. The
+wrapper finds the methods of the client as the code uses them, so a new
+client version needs no change here.
+
+The reason is that the type of an error does not say where the error came
+from. A timeout, an `OSError` and a validation error can each come from
+Immich or from a mistake in the service. The place does say it: an error
+that comes out of a call to the client is from Immich. So that decision is
+made one time, at the call, and no code above `immich.py` examines the type
+of a client or network error.
+
+An `ImmichError` holds the client method (`call`), the status if Immich
+answered (`status`), the line of the service that wanted the call (`place`),
+and the original error as its cause. Its text is one line:
+`Immich answered 403 to albums.get_all_albums: Forbidden (observer.py:148 in scan_albums)`.
+
+The place is the nearest line outside `immich.py`. One client method can
+serve some parts of the service, and the method alone does not say which part
+made the call.
+
+Two things are outside the wrapper:
+
+- `TypeError`, `AttributeError` and `NameError` pass through it unchanged. A
+  wrong argument or a wrong name is a fault in the service, even when it shows
+  inside a client call.
+- The two transfer helpers read the body of a response without a client
+  method. They use `immich_call` directly for those lines.
+
+### Failures and faults
+
+`Failure` is the base class for a condition that the service found and can
+describe. `ImmichError`, `MoveError`, `ConvertError` and `DownloadMismatch`
+derive from it. When Immich refuses something that the code checks for, raise
+a `Failure`, not a `RuntimeError`.
+
+Any error that is not a `Failure` is a fault in the service.
+
+- `log_failure` logs one piece of work that failed. A `Failure` is one line,
+  and its traceback goes to the debug log, so `-v` shows it. A fault is an
+  error with its traceback.
+- `describe_error` gives one line for any error. Use it when an error goes
+  into a message.
+
+The default level of `log_failure` is error. Give it `level=logging.WARNING`
+when the service corrects the failure itself and no person has to act.
+
+### Where to catch
+
 Two levels catch errors, and each has one job.
 
 - **One piece of work.** One album, one fix, one photo, or one webhook asset.
@@ -127,37 +180,11 @@ one key, the refusal tells the move to try the next key
 tells the lookup that this member cannot read it (`get_asset_if_readable`).
 A catch of that kind is correct, on two conditions:
 
-- It catches only the errors that carry the answer: a named status, or
-  `EXPECTED_ERRORS`. It does not catch `Exception`. A fault in the service is
-  not an answer, and it must keep its traceback.
+- It catches only the errors that carry the answer: `ImmichError`, or one
+  status of it. It does not catch `Exception`. A fault in the service is not
+  an answer, and it must keep its traceback.
 - The code acts on the answer. If no key is accepted, the move raises a
   `MoveError` that lists what each key was told.
-
-These names in `immich.py` keep the reports the same everywhere:
-
-- `Failure` is the base class for a condition that the service found and can
-  describe. `MoveError`, `ConvertError` and `DownloadMismatch` derive from it.
-  When Immich refuses something that the code checks for, raise a `Failure`,
-  not a `RuntimeError`.
-- `OUTSIDE_ERRORS` is the set of errors from outside the service: Immich
-  answered with an error, Immich sent a reply that the client cannot read, or
-  the network failed. `OSError` as a whole is not in the set, because an error
-  in the file handling of the service is an `OSError` too.
-- `EXPECTED_ERRORS` is a `Failure` or one of `OUTSIDE_ERRORS`. It is the set
-  to catch when a catch must not take a fault in the service.
-- `log_failure` logs one piece of work that failed. An expected error is one
-  line. Any other error is a fault in the service, and the log keeps
-  its traceback. The traceback of an expected error goes to the debug log, so
-  `-v` shows it.
-- `describe_error` gives one line for any error. Use it when an error goes
-  into a message. The text of the client for an Immich error has four lines
-  and all the response headers.
-- `locate_error` adds the place to an error from outside: the Immich call and
-  the line of the service that made it. `log_failure` uses it, because
-  without a traceback nothing else says where the error came from.
-
-The default level of `log_failure` is error. Give it `level=logging.WARNING`
-when the service corrects the failure itself and no person has to act.
 
 ## Tests
 

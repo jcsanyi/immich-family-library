@@ -19,7 +19,6 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
-import pydantic
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
@@ -39,9 +38,6 @@ from fakes import (
 from immichpy.client.generated.exceptions import ApiException
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_response_dto import AlbumUserResponseDto
-from immichpy.client.generated.models.asset_bulk_upload_check_item import (
-    AssetBulkUploadCheckItem,
-)
 from immichpy.client.generated.models.asset_bulk_upload_check_response_dto import (
     AssetBulkUploadCheckResponseDto,
 )
@@ -687,7 +683,7 @@ async def test_user_names_fall_back_from_config_to_album_to_lookup_to_the_id():
     from immichpy.client.generated.exceptions import BadRequestException
 
     async def refused(**kwargs):
-        raise BadRequestException(status=400)
+        raise immich.ImmichError("users.get_user", BadRequestException(status=400))
 
     failing = SimpleNamespace(users=SimpleNamespace(get_user=refused))
     assert await immich.UserNames(failing, {}).describe(dave) == str(dave)
@@ -699,8 +695,12 @@ async def test_user_names_fall_back_from_config_to_album_to_lookup_to_the_id():
 async def test_get_asset_if_readable_takes_only_a_400_to_mean_no_access(monkeypatch):
     from immichpy.client.generated.exceptions import BadRequestException, ServiceException
 
+    def answered(status):
+        kind = BadRequestException if status == 400 else ServiceException
+        return immich.ImmichError("assets.get_asset_info", kind(status=status))
+
     asset, asset_id = object(), uuid4()
-    answers = [asset, BadRequestException(status=400), ServiceException(status=502)]
+    answers = [asset, answered(400), answered(502)]
 
     async def get_asset(client, asset_id):
         answer = answers.pop(0)
@@ -712,12 +712,15 @@ async def test_get_asset_if_readable_takes_only_a_400_to_mean_no_access(monkeypa
 
     assert await immich.get_asset_if_readable(None, asset_id) is asset
     assert await immich.get_asset_if_readable(None, asset_id) is None
-    with pytest.raises(ServiceException):
+    with pytest.raises(immich.ImmichError, match="Immich answered 502"):
         await immich.get_asset_if_readable(None, asset_id)
 
 
-def test_describe_error_gives_one_line_for_any_error():
+def test_an_immich_error_is_one_line_that_names_the_call():
     from immichpy.client.generated.exceptions import BadRequestException, ServiceException
+
+    def said(cause):
+        return str(immich.ImmichError("albums.get_all_albums", cause))
 
     refused = BadRequestException(
         status=400,
@@ -725,93 +728,166 @@ def test_describe_error_gives_one_line_for_any_error():
         body='{"message":"Not found or no asset.read access","error":"Bad Request"}',
     )
     refused.headers = {"Content-Type": "application/json", "X-Powered-By": "Express"}
-    assert (
-        immich.describe_error(refused) == "Immich answered 400: Not found or no asset.read access"
+    assert said(refused) == (
+        "Immich answered 400 to albums.get_all_albums: Not found or no asset.read access"
     )
+    assert immich.ImmichError("x", refused).status == 400
     # A validation error lists its messages. A body that is not JSON falls back to the reason.
     many = BadRequestException(status=400, body='{"message":["id must be a UUID","size too big"]}')
-    assert immich.describe_error(many) == "Immich answered 400: id must be a UUID; size too big"
+    assert said(many).endswith(": id must be a UUID; size too big")
     gateway = ServiceException(status=502, reason="Bad Gateway", body="<html>nginx</html>")
-    assert immich.describe_error(gateway) == "Immich answered 502: Bad Gateway"
-    assert immich.describe_error(ServiceException(status=500)) == "Immich answered 500: no detail"
-
+    assert said(gateway) == "Immich answered 502 to albums.get_all_albums: Bad Gateway"
+    assert said(ServiceException(status=500)).endswith(": no detail")
     # Whatever Immich puts in the message, the result is one line.
     odd = BadRequestException(status=None, body='{"message":{"id":"must be\\na UUID"}}')
-    assert "\n" not in immich.describe_error(odd)
-    assert immich.describe_error(odd).startswith("Immich answered with no status: ")
+    assert "\n" not in said(odd) and said(odd).startswith("Immich answered with no status to ")
 
+    down = immich.ImmichError("albums.get_all_albums", TimeoutError())
+    assert str(down) == "albums.get_all_albums got no usable answer from Immich: TimeoutError"
+    assert down.status is None
+
+    assert immich.describe_error(down) == str(down)  # a Failure is its own text
     assert immich.describe_error(RuntimeError("went\naway")) == "RuntimeError: went away"
-    assert immich.describe_error(TimeoutError()) == "TimeoutError"
 
 
 def test_log_failure_keeps_the_traceback_for_faults_in_the_service(caplog):
     import logging
 
-    import aiohttp
-    from immichpy.client.generated.exceptions import ServiceException
-
     log = logging.getLogger("ifl.test")
-    with pytest.raises(pydantic.ValidationError) as caught:
-        AssetBulkUploadCheckItem(id=None, checksum=None)
-    unreadable = caught.value
+    down = immich.ImmichError("albums.get_all_albums", TimeoutError())
     cases = [
         (immich.Failure("the copy is in the trash"), "the copy is in the trash", False),
         (immich.DownloadMismatch("got 3 bytes"), "got 3 bytes", False),
-        (
-            ServiceException(status=502, reason="Bad Gateway"),
-            "Immich answered 502: Bad Gateway",
-            False,
-        ),
-        (aiohttp.ClientConnectionError("refused"), "ClientConnectionError: refused", False),
-        (TimeoutError(), "TimeoutError", False),
-        (ConnectionResetError("reset by peer"), "ConnectionResetError: reset by peer", False),
-        (unreadable, None, False),  # a reply the client could not read is Immich's doing
-        (KeyError("owner"), "KeyError: 'owner'", True),
-        # Not every OSError is an outage: this one is a wrong path in the service.
+        (down, str(down), False),
+        # Above the guarded client, an error's type says nothing about where it
+        # came from. All of these are the service's own until proved otherwise.
+        (TimeoutError(), "TimeoutError", True),
+        (ConnectionResetError("reset by peer"), "ConnectionResetError: reset by peer", True),
         (FileNotFoundError("no such file"), "FileNotFoundError: no such file", True),
+        (KeyError("owner"), "KeyError: 'owner'", True),
     ]
     for error, why, fault in cases:
         for level in (logging.ERROR, logging.WARNING):
             caplog.clear()
             with caplog.at_level(logging.DEBUG, logger="ifl.test"):
-                got = immich.log_failure(log, "a.jpg not moved", error, level=level)
-            assert got == (why or got) and "\n" not in got
+                assert immich.log_failure(log, "a.jpg not moved", error, level=level) == why
             said, *rest = caplog.records
-            assert said.getMessage() == f"a.jpg not moved: {got}"
+            assert said.getMessage() == f"a.jpg not moved: {why}"
             assert said.funcName == "test_log_failure_keeps_the_traceback_for_faults_in_the_service"
             if fault:
                 # A fault is an error with its traceback, whatever level was asked for.
                 assert said.levelno == logging.ERROR and said.exc_info and not rest
             else:
-                # Anything expected is one line at that level; the traceback is for debug.
+                # A failure is one line at that level; the traceback is for debug.
                 assert said.levelno == level and not said.exc_info
                 assert [r.levelno for r in rest] == [logging.DEBUG] and rest[0].exc_info
 
 
-async def test_an_error_from_outside_says_which_call_and_where_it_was_made():
-    import re
+async def test_the_guarded_client_turns_whatever_a_call_raises_into_an_immich_error():
+    """Against a real socket and the real client, so that the wrapper is shown
+    to find the client's methods by itself."""
+    readable, refused, garbled = uuid4(), uuid4(), uuid4()
 
-    import aiohttp
+    async def asset(request):
+        asset_id = request.match_info["id"]
+        if asset_id == str(refused):
+            return web.json_response({"message": "Not found or no asset.read access"}, status=400)
+        if asset_id == str(garbled):
+            return web.json_response({"id": "this is no asset"})
+        body = FakeAsset(readable, ALICE).to_json()
+        return web.Response(text=body, content_type="application/json")
+
+    app = web.Application()
+    app.router.add_get("/api/assets/{id}", asset)
+    async with TestServer(app) as srv:
+        url = str(srv.make_url(""))
+        client = immich.guard(AsyncClient(base_url=url, api_key="the-key"))
+        try:
+            # A call that works is untouched.
+            assert (await immich.get_asset(client, readable)).id == readable
+
+            with pytest.raises(immich.ImmichError) as failed:
+                await immich.get_asset(client, refused)
+            assert failed.value.status == 400 and str(failed.value) == (
+                "Immich answered 400 to assets.get_asset_info: Not found or no asset.read access"
+            )
+            assert await immich.get_asset_if_readable(client, refused) is None
+
+            # A reply the client cannot read: no status, and the model named.
+            with pytest.raises(immich.ImmichError) as failed:
+                await immich.get_asset(client, garbled)
+            assert failed.value.status is None and str(failed.value).startswith(
+                "assets.get_asset_info got no usable answer from Immich: ValidationError"
+            )
+            assert "\n" not in str(failed.value)
+
+            # A name that does not exist is the service's own mistake, and stays one.
+            assert not hasattr(client.assets, "no_such_call")
+        finally:
+            await client.close()
+
+    # Nothing listening any more.
+    gone = immich.guard(AsyncClient(base_url=url, api_key="the-key"))
+    try:
+        with pytest.raises(immich.ImmichError) as failed:
+            await immich.get_asset(gone, readable)
+        assert failed.value.status is None
+        assert "assets.get_asset_info got no usable answer from Immich: Client" in str(failed.value)
+    finally:
+        await gone.close()
+
+
+async def test_the_transfers_work_through_the_guarded_client(server, tmp_path):
+    raw, seen = server
+    client = immich.guard(raw)
+    seen.body = BODY
+    dest = tmp_path / "original"
+
+    await immich.download_original(client, uuid4(), dest, checksum=BODY_SHA1)
+    assert dest.read_bytes() == BODY
+
+    with pytest.raises(immich.ImmichError) as failed:
+        await immich.download_original(client, MISSING, dest, checksum=BODY_SHA1)
+    assert failed.value.status == 404
+
+    # A checksum that does not match is the service's own finding, not Immich's error.
+    with pytest.raises(immich.DownloadMismatch):
+        await immich.download_original(client, uuid4(), dest, checksum="not-it")
+
+
+def test_immich_call_leaves_the_services_own_errors_alone():
+    for own in (immich.Failure("no copy"), TypeError("bad argument"), AttributeError("x")):
+        with pytest.raises(type(own)) as raised, immich.immich_call("albums.get_all_albums"):
+            raise own
+        assert raised.value is own
+    with pytest.raises(immich.ImmichError) as raised, immich.immich_call("albums.get_all_albums"):
+        raise OSError("connection reset")
+    assert isinstance(raised.value.__cause__, OSError)
+
+
+async def test_an_immich_error_names_the_line_of_the_service_that_wanted_the_call():
+    import re
 
     from ifl.accounts import Account, Accounts
     from ifl.observer import member_asset
 
     async def down(**kwargs):
-        raise aiohttp.ClientConnectionError("immich went away")
+        raise TimeoutError
 
-    client = SimpleNamespace(assets=SimpleNamespace(get_asset_info=down))
+    # One client method, `get_asset_info`, serves the move, the webhook and the
+    # scan. The place says which of them was at work.
+    client = immich.guard(SimpleNamespace(assets=SimpleNamespace(get_asset_info=down)))
     alice = Account(name="alice", email="a@x", user_id=uuid4(), client=client)
     accounts = Accounts(family=alice, members={"alice": alice}, admin=None)
 
-    with pytest.raises(aiohttp.ClientConnectionError) as failed:
+    with pytest.raises(immich.ImmichError) as failed:
         await member_asset(accounts, uuid4())
 
-    # The Immich call, then the line of the service that made it.
-    assert re.fullmatch(
-        r"ClientConnectionError: immich went away "
-        r"\(get_asset at observer\.py:\d+ in member_asset\)",
-        immich.locate_error(failed.value),
+    # The helpers in immich.py are skipped: the caller of the helper is the news.
+    assert re.fullmatch(r"observer\.py:\d+ in member_asset", failed.value.place)
+    assert str(failed.value) == (
+        "assets.get_asset_info got no usable answer from Immich: TimeoutError "
+        f"({failed.value.place})"
     )
-    # A failure the service names itself, and a fault, are left as they are.
-    assert immich.locate_error(immich.Failure("no copy")) == "no copy"
-    assert immich.locate_error(KeyError("x")) == "KeyError: 'x'"
+    # Built outside the service, as a test does, it has no place to name.
+    assert immich.ImmichError("x", TimeoutError()).place is None

@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import aiohttp
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_response_dto import AlbumUserResponseDto
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
@@ -31,7 +32,7 @@ from immichpy.client.generated.models.workflow_step_dto import WorkflowStepDto
 from immichpy.client.generated.models.workflow_trigger import WorkflowTrigger
 
 from ifl.accounts import Account, Accounts
-from ifl.immich import AlbumSummary, Owned, summarize_album, webhook_step
+from ifl.immich import AlbumSummary, ImmichError, Owned, summarize_album, webhook_step
 
 FAMILY, ALICE, BOB, STRANGER = (uuid4() for _ in range(4))
 EDITOR, VIEWER, OWNER = AlbumUserRole.EDITOR, AlbumUserRole.VIEWER, AlbumUserRole.OWNER
@@ -505,6 +506,12 @@ WRITE_HELPERS = (
     "create_workflow",
     "update_workflow",
 )
+
+
+def outage(call: str = "albums.get_all_albums") -> ImmichError:
+    """What a helper raises when Immich cannot be reached: the guarded client
+    turns whatever the call raised into this."""
+    return ImmichError(call, aiohttp.ClientConnectionError("immich went away"))
 
 
 def patch_world(monkeypatch, *modules: str, world: FakeWorld | None = None) -> FakeWorld:

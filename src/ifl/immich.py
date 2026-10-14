@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import hashlib
+import inspect
 import json
 import logging
-import traceback
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -16,8 +18,7 @@ from typing import Any
 from uuid import UUID
 
 import aiohttp
-import pydantic
-from immichpy.client.generated.exceptions import ApiException, BadRequestException
+from immichpy.client.generated.exceptions import ApiException
 from immichpy.client.generated.models.add_users_dto import AddUsersDto
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_add_dto import AlbumUserAddDto
@@ -111,7 +112,7 @@ class UserNames:
         try:
             user = await self.client.users.get_user(id=user_id)
             self.cache[user_id] = user.email
-        except EXPECTED_ERRORS:
+        except ImmichError:
             # The name is for a message only. Without one, the id will do.
             self.cache[user_id] = str(user_id)
         return self.cache[user_id]
@@ -194,71 +195,135 @@ class Failure(Exception):
     their own kinds."""
 
 
-# Immich answered with an error, sent something the client could not read, or
-# could not be reached. Like a `Failure`, none of these says anything about the
-# service's own code. `OSError` as a whole is not here: a wrong path in the
-# service's own file handling is one too, and that is a fault.
-OUTSIDE_ERRORS = (
-    ApiException,
-    pydantic.ValidationError,
-    aiohttp.ClientError,
-    ConnectionError,
-    TimeoutError,
-)
-EXPECTED_ERRORS = (Failure, *OUTSIDE_ERRORS)
+class ImmichError(Failure):
+    """A call to Immich did not work: Immich answered with an error, sent a
+    reply the client could not read, or could not be reached. `call` is the
+    client method, `status` is Immich's answer when there was one, and `place`
+    is the line of the service that wanted the call. The error that the client
+    raised is the cause."""
 
-_OWN_CODE = Path(__file__).parent
+    def __init__(self, call: str, cause: Exception):
+        self.call = call
+        self.status = cause.status if isinstance(cause, ApiException) else None
+        self.place = _calling_place()
+        if isinstance(cause, ApiException):
+            # The client's own text runs to four lines and carries every
+            # response header. The status and Immich's message are the news.
+            try:
+                message = json.loads(cause.body or "").get("message")
+            except (ValueError, AttributeError, TypeError):
+                message = None
+            if isinstance(message, list):
+                message = "; ".join(str(m) for m in message)
+            detail = message or cause.reason or "no detail"
+            text = f"Immich answered {cause.status or 'with no status'} to {call}: {detail}"
+        else:
+            # A reply that fails validation lists every field. The start says
+            # which model, and the rest is in the debug traceback.
+            why = describe_error(cause)
+            why = why if len(why) <= 300 else why[:300] + " ..."
+            text = f"{call} got no usable answer from Immich: {why}"
+        if self.place:
+            text += f" ({self.place})"
+        super().__init__(" ".join(text.split()))
+
+
+def _calling_place() -> str | None:
+    """The nearest line of the service outside this module, as the stack stands
+    now. One client method serves several parts of the service, so the method
+    alone does not say which part was at work. The helpers here are skipped:
+    each is one call, and the line that wanted it is the news."""
+    here, package = Path(__file__), Path(__file__).parent
+    frame = inspect.currentframe()
+    while frame is not None:
+        file = Path(frame.f_code.co_filename)
+        if file != here and file.parent == package:
+            return f"{file.name}:{frame.f_lineno} in {frame.f_code.co_name}"
+        frame = frame.f_back
+    return None
+
+
+# A wrong argument or a wrong name is the service's own fault, even when it
+# shows up inside a call to the client. These are never read as Immich's doing.
+_OWN_FAULTS = (TypeError, AttributeError, NameError)
+
+
+@contextmanager
+def immich_call(name: str) -> Iterator[None]:
+    """Whatever the block raises comes out as an `ImmichError` that names the
+    call. What counts as Immich's doing is decided here, by where the error
+    came from, and nowhere by its type: the same types are raised by the
+    service's own mistakes."""
+    try:
+        yield
+    except (Failure, *_OWN_FAULTS):
+        raise
+    except Exception as e:
+        raise ImmichError(name, e) from e
+
+
+_PLAIN_VALUES = (str, bytes, int, float, bool, type(None), dict, list, tuple, set)
+
+
+class _Guarded:
+    """The client, or one of the objects it is made of, with every call into
+    it inside `immich_call`. Methods are found as they are used, so a new
+    client version needs nothing here."""
+
+    def __init__(self, target: Any, path: str = ""):
+        self._target = target
+        self._path = path
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._target, name)
+        path = f"{self._path}.{name}" if self._path else name
+        if callable(attr):
+            return _guarded_call(attr, path)
+        if isinstance(attr, _PLAIN_VALUES):
+            return attr
+        return _Guarded(attr, path)
+
+
+def _guarded_call(fn: Callable[..., Any], path: str) -> Callable[..., Any]:
+    @functools.wraps(fn)
+    def call(*args: Any, **kwargs: Any) -> Any:
+        with immich_call(path):
+            result = fn(*args, **kwargs)
+        if not inspect.isawaitable(result):
+            return result
+
+        async def answer() -> Any:
+            with immich_call(path):
+                return await result
+
+        return answer()
+
+    return call
+
+
+def guard(client: AsyncClient) -> AsyncClient:
+    """The client as the service uses it: see `immich_call`."""
+    return _Guarded(client)  # type: ignore[return-value]
 
 
 def describe_error(e: BaseException) -> str:
-    """Any error as one line, for a log line or a result.
-
-    The client's own text for an Immich answer runs to four lines and carries
-    every response header, so an answer is cut down to its status and the
-    message Immich sent. A `Failure` is its own text. Anything else is its type
-    and its text."""
-    if isinstance(e, Failure):
-        return " ".join(str(e).split())
-    if isinstance(e, ApiException):
-        try:
-            message = json.loads(e.body or "").get("message")
-        except (ValueError, AttributeError, TypeError):
-            message = None
-        if isinstance(message, list):
-            message = "; ".join(str(m) for m in message)
-        detail = " ".join(str(message or e.reason or "no detail").split())
-        return f"Immich answered {e.status or 'with no status'}: {detail}"
+    """Any error as one line, for a log line or a result. A `Failure` is its
+    own text. Anything else is its type and its text."""
     text = " ".join(str(e).split())
+    if isinstance(e, Failure):
+        return text
     return f"{type(e).__name__}: {text}" if text else type(e).__name__
-
-
-def locate_error(e: BaseException) -> str:
-    """`describe_error`, and for an error from outside, where the service was
-    when it happened: the Immich call, and the line that made it. That is what
-    a traceback would have said, kept to the one line. A `Failure` already
-    says what it found, and a fault keeps its whole traceback."""
-    why = describe_error(e)
-    if isinstance(e, Failure) or not isinstance(e, OUTSIDE_ERRORS):
-        return why
-    own = [f for f in traceback.extract_tb(e.__traceback__) if Path(f.filename).parent == _OWN_CODE]
-    if not own:
-        return why
-    call = own[-1]
-    caller = next((f for f in reversed(own) if Path(f.filename) != Path(__file__)), call)
-    at = f"{Path(caller.filename).name}:{caller.lineno} in {caller.name}"
-    return f"{why} ({at})" if call is caller else f"{why} ({call.name} at {at})"
 
 
 def log_failure(log: logging.Logger, what: str, e: Exception, *, level: int = logging.ERROR) -> str:
     """Log one piece of work that failed, and return the reason as one line.
 
-    A `Failure` or an error from outside is one line at `level`: the reason
-    and the place are all there is to know, and the traceback goes to debug.
-    Anything else is a fault in the service, and is an error with its
-    traceback whatever the level."""
-    why = locate_error(e)
+    A `Failure` is one line at `level`: the reason is all there is to know, and
+    the traceback goes to debug. Anything else is a fault in the service, and
+    is an error with its traceback whatever the level."""
+    why = describe_error(e)
     # stacklevel: each record names the caller's line, not this function's.
-    if isinstance(e, EXPECTED_ERRORS):
+    if isinstance(e, Failure):
         log.log(level, "%s: %s", what, why, stacklevel=2)
         log.debug("the traceback of %s", what, exc_info=e, stacklevel=2)
     else:
@@ -300,7 +365,9 @@ async def get_asset_if_readable(client: AsyncClient, asset_id: UUID) -> AssetRes
     access to. Any other failure is raised."""
     try:
         return await get_asset(client, asset_id)
-    except BadRequestException:
+    except ImmichError as e:
+        if e.status != 400:
+            raise
         return None
 
 
@@ -372,7 +439,14 @@ async def download_original(
             digest.update(chunk)
 
         with dest.open("wb") as f:
-            async for chunk in res.response.content.iter_chunked(CHUNK):
+            # The body arrives outside any client method, so the guard on the
+            # client does not see it. Writing the file is the service's own work.
+            chunks = res.response.content.iter_chunked(CHUNK)
+            while True:
+                with immich_call("the download of an original"):
+                    chunk = await anext(chunks, None)
+                if chunk is None:
+                    break
                 await asyncio.to_thread(keep, chunk)
     finally:
         res.response.release()
@@ -470,7 +544,8 @@ async def upload_asset(
             _host_index=0,
         )
         res = await api.api_client.call_api(*request, _request_timeout=timeout)
-        await res.read()
+        with immich_call("the upload of an asset"):
+            await res.read()
     types = {"200": "AssetMediaResponseDto", "201": "AssetMediaResponseDto"}
     made = api.api_client.response_deserialize(res, types).data
     return made.id, made.status.value == "created"

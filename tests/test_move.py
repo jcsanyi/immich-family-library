@@ -821,7 +821,7 @@ async def test_reuploads_never_use_the_limit(world, monkeypatch):
 
 
 async def test_relink_takes_an_outside_error_as_a_refusal_and_lets_a_fault_rise(world, monkeypatch):
-    import aiohttp
+    from fakes import outage
 
     accounts = make_accounts()
     a = alice_asset(world)
@@ -829,7 +829,7 @@ async def test_relink_takes_an_outside_error_as_a_refusal_and_lets_a_fault_rise(
     bobs = world.album("Bobs", BOB, roles={ALICE: EDITOR}, assets=[a])
     world.partners[FAMILY] = {ALICE, BOB}  # so alice's key can add the family's copy
     real = world.add_album_assets
-    answers = {BOB: aiohttp.ClientConnectionError("immich went away")}
+    answers = {BOB: outage("albums.add_assets_to_album")}
 
     async def add(client, album_id, asset_ids):
         if album_id == bobs.id and client.user_id in answers:

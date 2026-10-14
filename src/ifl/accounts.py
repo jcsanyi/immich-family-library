@@ -15,7 +15,7 @@ from uuid import UUID
 from immichpy.client.main import AsyncClient
 
 from ifl.config import AccountConfig, Config
-from ifl.immich import EXPECTED_ERRORS, describe_error
+from ifl.immich import ImmichError, guard
 
 log = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ async def open_account(
     required: set[str],
     must_be_admin: bool = False,
 ) -> Account:
-    client = AsyncClient(base_url=url, api_key=cfg.api_key)
+    client = guard(AsyncClient(base_url=url, api_key=cfg.api_key))
     try:
         me = await client.users.get_my_user()
         if cfg.email is not None and me.email.lower() != cfg.email.lower():
@@ -123,8 +123,8 @@ async def open_account(
     except BaseException as e:
         await client.close()
         # Immich's answer to a key is the check itself: a refusal is a wrong key.
-        if isinstance(e, EXPECTED_ERRORS):
-            raise AccountError(f"[{cfg.name}] key check failed: {describe_error(e)}") from e
+        if isinstance(e, ImmichError):
+            raise AccountError(f"[{cfg.name}] key check failed: {e}") from e
         raise
     log.info("account ok: %s (%s)", cfg.name, me.email)
     return Account(name=cfg.name, email=me.email, user_id=me.id, client=client)

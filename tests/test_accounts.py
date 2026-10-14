@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -158,7 +159,9 @@ async def test_missing_permissions_are_named_and_all_covers_everything(stub):
 async def test_a_failing_call_becomes_an_account_error_and_closes_the_client(stub):
     stub.KEYS["k1"] = {"raise": ConnectionError("no route to host")}
     with pytest.raises(
-        AccountError, match=r"\[alice\] key check failed: ConnectionError: no route to host"
+        AccountError,
+        match=r"\[alice\] key check failed: users.get_my_user got no usable answer from "
+        r"Immich: ConnectionError: no route to host",
     ):
         await open_account(URL, AccountConfig("alice", "k1", "alice@x"), required=set())
     assert stub.made[0].closed
@@ -278,19 +281,19 @@ async def test_a_fault_during_the_key_check_is_not_reported_as_a_wrong_key(monke
 
     class Client:
         def __init__(self, **kwargs):
-            self.users = SimpleNamespace(get_my_user=self.broken)
+            self.users = SimpleNamespace(get_my_user=self.me)
 
-        async def broken(self):
-            raise KeyError("owner")
+        async def me(self):
+            return SimpleNamespace(email=None)  # the check then trips over it, in its own code
 
         async def close(self):
             closed.append(True)
 
     monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
 
-    with pytest.raises(KeyError):
+    with pytest.raises(AttributeError):
         await open_account(
-            "https://x.example", AccountConfig(name="alice", api_key="k"), required=set()
+            "https://x.example", AccountConfig("alice", "k", "alice@x"), required=set()
         )
     assert closed == [True]
 
@@ -311,12 +314,14 @@ async def test_a_reply_the_client_cannot_read_is_a_failed_key_check(monkeypatch)
 
     monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
 
-    with pytest.raises(
-        AccountError, match=r"\[alice\] key check failed: ValidationError"
-    ) as failed:
-        await open_account(
-            "https://x.example", AccountConfig(name="alice", api_key="k"), required=set()
-        )
-    assert "\n" not in str(failed.value) and isinstance(
-        failed.value.__cause__, pydantic.ValidationError
+    with pytest.raises(AccountError) as failed:
+        await open_account("https://x.example", AccountConfig("alice", "k"), required=set())
+    text = str(failed.value)
+    assert text.startswith(
+        "[alice] key check failed: users.get_my_user got no usable answer from Immich: "
+        "ValidationError: 18 validation errors for UserAdminResponseDto"
     )
+    # One line, cut short: the eighteen fields are in the debug traceback.
+    assert "\n" not in text and len(text) < 460
+    assert re.search(r" \.\.\. \(accounts\.py:\d+ in open_account\)$", text)
+    assert isinstance(failed.value.__cause__.__cause__, pydantic.ValidationError)

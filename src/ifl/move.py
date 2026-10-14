@@ -50,14 +50,13 @@ from immichpy.client.generated.models.album_user_role import AlbumUserRole
 from ifl.accounts import Account, Accounts
 from ifl.config import Config, ConfigError
 from ifl.immich import (
-    EXPECTED_ERRORS,
     PROVENANCE_KEY,
     AlbumSummary,
     Failure,
+    ImmichError,
     add_album_assets,
     albums_containing,
     bulk_failure,
-    describe_error,
     download_asset_file,
     download_original,
     existing_asset_by_checksum,
@@ -247,8 +246,8 @@ async def _relink_member_album(
     for who in _relink_keys(accounts, album, asset_owner):
         try:
             why = await _add_refusal(who.client, album, family_id)
-        except EXPECTED_ERRORS as e:
-            why = describe_error(e)
+        except ImmichError as e:
+            why = str(e)
         if why is None:
             log.info("re-linked into %r with %s's key", album.name, who.name)
             return
