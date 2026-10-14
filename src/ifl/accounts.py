@@ -30,6 +30,7 @@ MEMBER_PERMISSIONS = {
     "album.read",
     "asset.read",
     "albumAsset.create",  # add own photos to a family album
+    "albumAsset.delete",  # take an external-library photo back out of the dropbox
     "album.delete",  # delete own album after conversion
     "asset.download",  # the original's bytes
     "asset.delete",  # trash the original

@@ -192,6 +192,19 @@ async def add_album_assets(
     return await client.albums.add_assets_to_album(id=album_id, bulk_ids_dto=BulkIdsDto(ids=ids))
 
 
+async def remove_album_assets(
+    client: AsyncClient, album_id: UUID, asset_ids: Iterable[UUID]
+) -> list[BulkIdResponseDto]:
+    """One result per id. The assets leave the album and are otherwise untouched.
+    An asset that was not in the album comes back as a 'not_found' failure."""
+    ids = list(asset_ids)
+    if not ids:
+        return []
+    return await client.albums.remove_asset_from_album(
+        id=album_id, bulk_ids_dto=BulkIdsDto(ids=ids)
+    )
+
+
 class Failure(Exception):
     """Something the service found wrong and can say in its own words: a refusal
     from Immich that it checked for, or a condition it tested. The text is the
@@ -373,10 +386,13 @@ def log_failure(log: logging.Logger, what: str, e: Exception, *, level: int = lo
     return why
 
 
-def bulk_failure(r: BulkIdResponseDto) -> str | None:
-    """Why one entry of a bulk response failed, or None when it did not. An id
-    that was already there comes back as a 'duplicate' failure, and is not one."""
-    if r.success or r.error == BulkIdErrorReason.DUPLICATE:
+def bulk_failure(
+    r: BulkIdResponseDto, *, done: BulkIdErrorReason = BulkIdErrorReason.DUPLICATE
+) -> str | None:
+    """Why one entry of a bulk response failed, or None when it did not. `done`
+    is the error that says the work was already done, and is not a failure: an
+    add of an id that was already there is a 'duplicate'."""
+    if r.success or r.error == done:
         return None
     return f"{r.error.value if r.error else 'unknown'}: {r.error_message or 'no detail'}"
 

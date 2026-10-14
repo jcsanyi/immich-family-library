@@ -138,8 +138,8 @@ def test_move_one_refuses_an_external_library_photo_and_says_why(world, config, 
     assert run(path, "process") == 0
     assert not nas.is_trashed and not nas.tags and not world.uploads
     assert (
-        "not moving nas.jpg from alice: in an external library, which the service never moves"
-        in caplog.text
+        "not moving nas.jpg from alice: "
+        "in an external library, which the service doesn't support moving" in caplog.text
     )
 
 

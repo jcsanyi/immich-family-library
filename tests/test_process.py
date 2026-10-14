@@ -18,9 +18,12 @@ from fakes import (
     make_accounts,
     patch_world,
 )
+from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
+from immichpy.client.generated.models.bulk_id_response_dto import BulkIdResponseDto
 
 from ifl.accounts import Account
 from ifl.config import parse_config
+from ifl.immich import ImmichError
 from ifl.process import run_pass
 
 RAW = {
@@ -80,6 +83,83 @@ async def test_a_pass_converts_reconciles_and_moves_in_order(world):
     assert not again.converted.done and again.reconciled is None
     assert again.moved is not None and not again.moved.done
     assert str(again).endswith("assets: moved 0, blocked 0, failed 0, remaining 0")
+
+
+async def test_a_pass_takes_external_library_photos_out_of_the_dropbox(world, caplog):
+    accounts = make_accounts()
+    cfg = parse_config({**RAW, "limits": {"assets_per_pass": 1}})
+
+    def nas(owner, name):
+        return world.add_asset(FakeAsset(uuid4(), owner, name, f"{name}.jpg", library_id=uuid4()))
+
+    a1, a2, b1 = nas(ALICE, "a1"), nas(ALICE, "a2"), nas(BOB, "b1")
+    phone = world.add_asset(FakeAsset(uuid4(), ALICE, "phone", "phone.jpg"))
+    drop = world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR}, assets=[a1, a2, b1])
+    world.assets[drop.id].append(phone)
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR}, assets=[a1])
+
+    result = await run_pass(accounts, cfg)
+
+    # Each member's key took out that member's own, and the limit didn't apply.
+    assert [w for w in world.writes if w[0] == "remove"] == [
+        ("remove", ALICE, drop.id, {a1.id, a2.id}),
+        ("remove", BOB, drop.id, {b1.id}),
+    ]
+    assert result.dropbox.removed == {"alice": 2, "bob": 1} and not result.failed
+    # Out of the dropbox and nothing else: still theirs, untagged, and where it was.
+    assert all(not a.is_trashed and not a.tags for a in (a1, a2, b1))
+    assert world.assets[trip.id] == [a1] and len(world.uploads) == 1
+    assert [a for a in world.assets[drop.id] if not a.is_trashed] == []
+    assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == [
+        "alice: 2 photos from an external library taken out of 'Drop'; "
+        "the service doesn't support moving these",
+        "bob: 1 photo from an external library taken out of 'Drop'; "
+        "the service doesn't support moving these",
+    ]
+
+    again = await run_pass(accounts, cfg)
+    assert again.dropbox is None and not [w for w in world.writes[-3:] if w[0] == "remove"]
+
+
+async def test_a_photo_the_dropbox_wont_release_fails_the_pass_and_is_tried_again(world, caplog):
+    accounts = make_accounts()
+    cfg = parse_config(RAW)
+    a = world.add_asset(FakeAsset(uuid4(), ALICE, "a", "a.jpg", library_id=uuid4()))
+    b = world.add_asset(FakeAsset(uuid4(), BOB, "b", "b.jpg", library_id=uuid4()))
+    drop = world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR}, assets=[a, b])
+    real = world.remove_album_assets
+
+    async def down_for_alice(client, album_id, ids):
+        if client.user_id == ALICE:
+            raise ImmichError("albums.remove_asset_from_album", TimeoutError())
+        return await real(client, album_id, ids)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("ifl.move.remove_album_assets", down_for_alice)
+        result = await run_pass(accounts, cfg)
+
+    assert result.failed and result.dropbox.removed == {"bob": 1}
+    assert [name for name, _ in result.dropbox.failed] == ["a.jpg"]
+    assert "photos of alice not taken out of 'Drop'" in caplog.text
+    assert world.assets[drop.id] == [a]
+
+    assert str(result).endswith("; dropbox: took out 1, failed 1")
+
+    # Immich answers, and says no to that one photo.
+    async def refuse(client, album_id, ids):
+        return [
+            BulkIdResponseDto(id=i, success=False, error=BulkIdErrorReason.NO_PERMISSION)
+            for i in ids
+        ]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("ifl.move.remove_album_assets", refuse)
+        refused = await run_pass(accounts, cfg)
+    assert refused.failed and refused.dropbox.failed == [("a.jpg", "no_permission: no detail")]
+    assert "a.jpg not taken out of 'Drop': no_permission: no detail" in caplog.text
+
+    again = await run_pass(accounts, cfg)
+    assert again.dropbox.removed == {"alice": 1} and not again.failed
 
 
 async def test_limits_apply_per_pass(world):
