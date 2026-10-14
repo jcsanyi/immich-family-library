@@ -108,6 +108,12 @@ the wasted upload, once a month per photo.
 - If a photo is part of a stack, moving it takes it out of the stack. The
   stack itself stays.
 - Live photos aren't moved yet. They stay in your account for now.
+- Photos from an external library never move. That's a folder Immich reads
+  photos from where they already are, set up by whoever runs the server, and
+  most of us have none. You can still share one: add it to a family album, or
+  share an album that holds it, and everyone sees it there. It stays yours and
+  doesn't join the family's library. The dropbox doesn't work for these. The
+  photo is taken back out of it, and nothing else happens to it.
 - Taking a photo back from the family isn't possible yet. For now, ask whoever
   runs the service. Restoring your original from the trash won't do it: the
   photo is still in the family album, so it goes back to your trash within the

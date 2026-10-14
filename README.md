@@ -6,6 +6,8 @@ Members upload to their own accounts as usual. When a member shares an album wit
 
 Immich cannot transfer ownership of a photo. So "move" means the service re-uploads the photo under the family account with all of its metadata, then trashes the original. The original sits in the member's trash for 30 days by default. Nothing is ever deleted outright.
 
+> **Not for external libraries.** The service doesn't support moving a photo that lives in an Immich external library, and never moves one. A member can still share such a photo: in a family album, or in an album they share with the family, it stays in the album for everyone to see, and it stays the member's. The dropbox doesn't work for it. [docs/how-it-works.md](docs/how-it-works.md#external-libraries) has the detail.
+
 ## How it works
 
 There is one extra Immich user, the family account, and it owns the family library. The service watches for one thing: a member-owned photo sitting in an album the family account owns. When it finds one, it moves it. Sharing an album, adding to a family album, and adding to the family dropbox are all ways of getting a photo into that position.
@@ -36,6 +38,7 @@ The service is one container next to Immich, on the same docker network, with a 
 
 The [issues](https://github.com/jcsanyi/immich-family-library/issues) track what is left before a first release and the improvements after it. The gaps a member will notice:
 
+- The service never moves a photo that is in an external library. A member can share one through an album, and not through the dropbox.
 - Reclaim, moving a photo back to its original owner, is planned and not built (issue 3).
 - Live photos are not moved. The service blocks them and reports them (issue 14).
 - Stacks and manual face corrections do not carry over to the family copy (issues 5 and 4).

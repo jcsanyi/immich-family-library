@@ -107,10 +107,15 @@ startup check requires every one listed. A key with `all` passes.
 
 **Member keys**
 
-`user.read`, `album.read`, `album.delete`, `albumAsset.create`, `asset.read`,
-`asset.download`, `asset.delete`, `asset.edit.get`, `assetFile.read`,
-`assetFile.download`, `tag.create`, `tag.asset`, `sharedLink.read`,
-`partner.read`, `workflow.read`, `workflow.create`, `workflow.update`.
+`user.read`, `album.read`, `album.delete`, `albumAsset.create`,
+`albumAsset.delete`, `asset.read`, `asset.download`, `asset.delete`,
+`asset.edit.get`, `assetFile.read`, `assetFile.download`, `tag.create`,
+`tag.asset`, `sharedLink.read`, `partner.read`, `workflow.read`,
+`workflow.create`, `workflow.update`.
+
+The service uses `albumAsset.delete` for one thing. It takes a photo from an
+external library out of the dropbox, with the key of the member who owns the
+photo.
 
 **Family key**
 

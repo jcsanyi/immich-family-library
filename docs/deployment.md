@@ -143,6 +143,13 @@ time, and nothing warns you.
 The run lock uses flock. On an NFS volume, flock is not reliable. Keep the
 volume on a local disk.
 
+## External libraries
+
+The service is not for use with Immich external libraries. It does not move a
+photo that is in one. A member can share such a photo through an album, and
+not through the dropbox. [how-it-works.md](how-it-works.md#external-libraries)
+says what occurs in each case.
+
 ## Upgrading
 
 Pull or build the new image and run `docker compose up -d`. The service pins
@@ -154,6 +161,11 @@ The service refuses to start on an Immich that is older than that version. On
 a later minor or major version it starts, and it logs a warning that the
 release is not tested there. Do not let it move photos on such a version
 until a matching release is out: set `readonly` to true.
+
+A release can add a permission to a key set. The startup check then refuses a
+key that does not have the permission, and the service does not start. Before
+you start such a release, add the permission to each key. The owner of a key
+does this in Immich, under Account Settings, API Keys.
 
 ## Before production
 

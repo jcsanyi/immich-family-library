@@ -47,6 +47,9 @@ Immich. It reports:
 - `MOVE` lines for member photos in family albums, with `[dropbox]` marked.
   `REUPLOAD` lines for members' recent uploads that the family already has.
   `SKIP` lines for re-uploads whose family copy is trashed. `BLOCKED` photos.
+- `REMOVE` lines for photos from an external library that are in the dropbox.
+  A pass takes these out of the dropbox and does not move them. A photo from
+  an external library in a different family album has no line.
 - A count of re-uploads waiting per member.
 - A warning if Immich has jobs waiting on the queues that a move depends on.
   While they wait, a pass moves nothing. This needs the admin key.
@@ -85,6 +88,10 @@ With an asset id, the command moves that one photo. The asset id is in the
 address bar when the photo is open. If the photo is blocked, the command
 reports the reason and exits 1.
 
+The command does not move a photo from an external library. With an asset id,
+it gives the reason and exits 1. `--all` leaves these photos where they are,
+and it takes none out of the dropbox. Only a pass does that.
+
 The command looks up one id directly, so the age of the photo does not matter.
 If the photo is in no family album, the command checks whether it is a
 re-upload: the family has the same file, in a copy that the service moved from
@@ -108,11 +115,13 @@ resumes from what Immich has.
 
 One complete pass: the album scan and conversions under `albums_per_pass`,
 reconcile, the queue check if an admin key is configured, then the asset scan
-and moves under `assets_per_pass`, re-uploads included. A just-converted
+and moves under `assets_per_pass`, re-uploads included. Before the moves, it
+takes each photo from an external library out of the dropbox, with no limit. A just-converted
 album's photos move in the same pass. A queue backlog skips the moves for this
 pass, not the album work. It ends with one summary line, which counts the
 re-uploads it trashed. It does not make the daily report, which only the
-daemon keeps. If any conversion, reconcile fix or move failed, it exits 1.
+daemon keeps. If any conversion, reconcile fix, removal from the dropbox or
+move failed, it exits 1.
 
 Run it by hand, or from cron, as an alternative to the daemon.
 

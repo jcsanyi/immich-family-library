@@ -146,9 +146,7 @@ EXTERNAL = "in an external library, which the service doesn't support moving"
 
 def external(asset: AssetResponseDto) -> bool:
     """Whether the file lives in a member's own folder, outside Immich's storage.
-    The move can't take one. Immich identifies it by its path and not by its
-    contents, the moved tag makes Immich write a sidecar into that folder, and
-    the purge of a trashed one deletes the member's file."""
+    The service doesn't support moving these."""
     return asset.library_id is not None
 
 
