@@ -57,6 +57,7 @@ from ifl.immich import (
     ImmichError,
     add_album_assets,
     albums_containing,
+    bulk_error,
     bulk_failure,
     download_asset_file,
     download_original,
@@ -338,13 +339,14 @@ async def clear_dropbox(scan: AssetScan) -> DropboxResult:
         removed = 0
         for r in results:
             name = names.get(r.id, str(r.id))
-            if r.error == BulkIdErrorReason.NOT_FOUND:
+            if r.success:
+                removed += 1
+            elif r.error == BulkIdErrorReason.NOT_FOUND:
                 log.info("%s was already out of %r", name, dropbox.name)
-            elif why := bulk_failure(r):
+            else:
+                why = bulk_error(r)
                 log.error("%s not taken out of %r: %s", name, dropbox.name, why)
                 out.failed.append((name, why))
-            else:
-                removed += 1
         if removed:
             out.removed[owner.name] = removed
             log.warning(

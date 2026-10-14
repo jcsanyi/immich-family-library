@@ -368,6 +368,7 @@ def test_bulk_failure_reads_an_entry_whatever_immich_left_out():
     assert immich.bulk_failure(entry(success=True)) is None
     dup = entry(success=False, error=BulkIdErrorReason.DUPLICATE)
     assert immich.bulk_failure(dup) is None  # already there
+    assert immich.bulk_error(dup) == "duplicate: no detail"  # for a caller with no "done"
     denied = entry(success=False, error=BulkIdErrorReason.NO_PERMISSION, error_message="nope")
     assert immich.bulk_failure(denied) == "no_permission: nope"
     # A failure with no reason, and one with no message, still read as failures.

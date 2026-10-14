@@ -391,6 +391,11 @@ def bulk_failure(r: BulkIdResponseDto) -> str | None:
     that was already there comes back as a 'duplicate' failure, and is not one."""
     if r.success or r.error == BulkIdErrorReason.DUPLICATE:
         return None
+    return bulk_error(r)
+
+
+def bulk_error(r: BulkIdResponseDto) -> str:
+    """The reason Immich gave for one failed entry of a bulk response."""
     return f"{r.error.value if r.error else 'unknown'}: {r.error_message or 'no detail'}"
 
 

@@ -151,7 +151,7 @@ def test_move_all_says_it_left_external_photos_in_the_dropbox(world, config, cap
     with caplog.at_level("INFO", logger="ifl"):
         assert run(path, "move", "--all") == 0
     assert world.assets[drop.id] == [nas]
-    assert "leaving 1 external-library photos in 'Drop' for the next pass to take out" in (
+    assert "leaving 1 external-library photo in 'Drop' for the next pass to take out" in (
         caplog.text
     )
 

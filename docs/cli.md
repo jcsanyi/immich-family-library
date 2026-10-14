@@ -117,12 +117,12 @@ resumes from what Immich has.
 One complete pass: the album scan and conversions under `albums_per_pass`,
 reconcile, the queue check if an admin key is configured, then the asset scan
 and moves under `assets_per_pass`, re-uploads included. Before the moves, it
-takes each photo from an external library out of the dropbox, with no limit. A just-converted
-album's photos move in the same pass. A queue backlog skips the moves for this
-pass, not the album work. It ends with one summary line, which counts the
-re-uploads it trashed. It does not make the daily report, which only the
-daemon keeps. If any conversion, reconcile fix, removal from the dropbox or
-move failed, it exits 1.
+takes each photo from an external library out of the dropbox, with no limit.
+A just-converted album's photos move in the same pass. A queue backlog skips
+the moves for this pass, not the album work. It ends with one summary line,
+which counts the re-uploads it trashed. It does not make the daily report,
+which only the daemon keeps. If any conversion, reconcile fix, removal from
+the dropbox or move failed, it exits 1.
 
 Run it by hand, or from cron, as an alternative to the daemon.
 

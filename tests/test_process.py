@@ -185,6 +185,18 @@ async def test_a_photo_the_dropbox_wont_release_fails_the_pass_and_is_tried_agai
     assert refused.failed and refused.dropbox.failed == [("a.jpg", "no_permission: no detail")]
     assert "a.jpg not taken out of 'Drop': no_permission: no detail" in caplog.text
 
+    # Only a success counts as taken out, even a reply that means "done" to an add.
+    async def duplicate(client, album_id, ids):
+        return [
+            BulkIdResponseDto(id=i, success=False, error=BulkIdErrorReason.DUPLICATE) for i in ids
+        ]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("ifl.move.remove_album_assets", duplicate)
+        odd = await run_pass(accounts, cfg)
+    assert odd.failed and not odd.dropbox.removed
+    assert odd.dropbox.failed == [("a.jpg", "duplicate: no detail")]
+
     again = await run_pass(accounts, cfg)
     assert again.dropbox.removed == {"alice": 1} and not again.failed
 
