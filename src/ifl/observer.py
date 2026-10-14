@@ -131,6 +131,17 @@ def unmovable(asset: AssetResponseDto) -> str | None:
     return None
 
 
+EXTERNAL = "in an external library, which the service never moves"
+
+
+def external(asset: AssetResponseDto) -> bool:
+    """Whether the file lives in a member's own folder, outside Immich's storage.
+    The move can't take one. Immich identifies it by its path and not by its
+    contents, the moved tag makes Immich write a sidecar into that folder, and
+    the purge of a trashed one deletes the member's file."""
+    return asset.library_id is not None
+
+
 def _names(accounts: Accounts) -> UserNames:
     return UserNames(
         accounts.family.client, {uid: a.name for uid, a in accounts.by_user_id().items()}
@@ -254,6 +265,17 @@ async def scan_assets(
                         f"owner {who} is not a participant (no API key)",
                         asset_id=asset.id,
                     )
+                )
+                continue
+            if external(asset):
+                # Not a block: nothing the member does will change it, and the
+                # photo is shared with the family where it sits.
+                log.debug(
+                    "leaving %s from %s in %r: %s",
+                    asset.original_file_name,
+                    owner.name,
+                    album.name,
+                    EXTERNAL,
                 )
                 continue
             if why := unmovable(asset):

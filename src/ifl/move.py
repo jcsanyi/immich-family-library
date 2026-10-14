@@ -76,7 +76,7 @@ from ifl.immich import (
     upload_asset,
     upsert_tag,
 )
-from ifl.observer import MoveAsset, unmovable
+from ifl.observer import EXTERNAL, MoveAsset, external, unmovable
 from ifl.sidecar import tags_in, with_only_tag
 
 log = logging.getLogger(__name__)
@@ -401,6 +401,8 @@ async def move_asset(
     asset = await get_asset(owner.client, asset_id)
     if asset.owner_id != owner.user_id:
         raise MoveError(f"{asset.original_file_name} is not owned by {owner.name}")
+    if external(asset):
+        raise MoveBlocked(EXTERNAL)
     if why := unmovable(asset):
         raise MoveBlocked(why)
 

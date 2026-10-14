@@ -27,10 +27,12 @@ from ifl.move import (
     prepare_temp_dir,
 )
 from ifl.observer import (
+    EXTERNAL,
     MoveAsset,
     describe_albums,
     describe_assets,
     describe_reconcile,
+    external,
     member_asset,
     reuploads_among,
     scan_albums,
@@ -167,6 +169,9 @@ async def _reupload_target(accounts: Accounts, asset_id: UUID) -> list[MoveAsset
     found = await member_asset(accounts, asset_id)
     if found is None:
         log.error("asset %s is not a member's asset, or it is in the trash", asset_id)
+        return []
+    if external(found[1]):
+        log.error("not moving %s from %s: %s", found[1].original_file_name, found[0].name, EXTERNAL)
         return []
     one = await reuploads_among(accounts, [found])
     for s in one.skipped_reuploads:
