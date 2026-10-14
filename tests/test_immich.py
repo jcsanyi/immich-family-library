@@ -370,11 +370,6 @@ def test_bulk_failure_reads_an_entry_whatever_immich_left_out():
     assert immich.bulk_failure(dup) is None  # already there
     denied = entry(success=False, error=BulkIdErrorReason.NO_PERMISSION, error_message="nope")
     assert immich.bulk_failure(denied) == "no_permission: nope"
-    # A removal names its own "already done": the id was not there to take out.
-    gone = entry(success=False, error=BulkIdErrorReason.NOT_FOUND)
-    assert immich.bulk_failure(gone) == "not_found: no detail"
-    assert immich.bulk_failure(gone, done=BulkIdErrorReason.NOT_FOUND) is None
-    assert immich.bulk_failure(dup, done=BulkIdErrorReason.NOT_FOUND) == "duplicate: no detail"
     # A failure with no reason, and one with no message, still read as failures.
     assert immich.bulk_failure(entry(success=False)) == "unknown: no detail"
     assert immich.bulk_failure(entry(success=False, error_message="nope")) == "unknown: nope"

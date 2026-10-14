@@ -78,8 +78,7 @@ class PassResult:
         else:
             parts.append(f"assets: {self.moved}")
         if self.dropbox:
-            took_out = sum(self.dropbox.removed.values())
-            parts.append(f"dropbox: took out {took_out}, failed {len(self.dropbox.failed)}")
+            parts.append(f"dropbox: {self.dropbox}")
         return "; ".join(parts)
 
 

@@ -35,6 +35,10 @@ are listed here so that the next Immich upgrade knows what to re-check.
   other albums, and nothing else about it changes. Confirmed on dev with
   alice's key on a family album. Whether an editor can remove the asset of
   another user is not tested, and the service does not do it.
+- An id that is not in the album comes back from the removal as
+  `success: false` with the error `not_found`, and the album does not change.
+  This is so for an asset that the caller owns and for an id that does not
+  exist. Confirmed on dev with alice's key on a family album.
 - `GET /albums?assetId=` returns only the albums that the caller owns or is
   on. A partner of an asset's owner can add the asset to an album that the
   owner is not on. The owner's key then does not list that album. This is why

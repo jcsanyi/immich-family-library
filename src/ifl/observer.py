@@ -383,10 +383,10 @@ async def reupload_items(
     A copy the family got some other way, by a direct upload or from another
     member, makes no claim on this member's photo. Only a family album does.
     Those, and the ones whose family copy is in the trash, are listed as
-    skipped."""
+    skipped. An external-library photo is never a re-upload."""
     family = accounts.family
     for member, assets in candidates:
-        recent = {a.checksum: a for a in assets if a.owner_id == member.user_id}
+        recent = {a.checksum: a for a in assets if a.owner_id == member.user_id and not external(a)}
         if not recent:
             continue
         owned = await owned_checksums(family.client, recent)

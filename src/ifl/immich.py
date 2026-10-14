@@ -386,13 +386,10 @@ def log_failure(log: logging.Logger, what: str, e: Exception, *, level: int = lo
     return why
 
 
-def bulk_failure(
-    r: BulkIdResponseDto, *, done: BulkIdErrorReason = BulkIdErrorReason.DUPLICATE
-) -> str | None:
-    """Why one entry of a bulk response failed, or None when it did not. `done`
-    is the error that says the work was already done, and is not a failure: an
-    add of an id that was already there is a 'duplicate'."""
-    if r.success or r.error == done:
+def bulk_failure(r: BulkIdResponseDto) -> str | None:
+    """Why one entry of a bulk response failed, or None when it did not. An id
+    that was already there comes back as a 'duplicate' failure, and is not one."""
+    if r.success or r.error == BulkIdErrorReason.DUPLICATE:
         return None
     return f"{r.error.value if r.error else 'unknown'}: {r.error_message or 'no detail'}"
 

@@ -90,7 +90,8 @@ reports the reason and exits 1.
 
 The command does not move a photo from an external library. With an asset id,
 it gives the reason and exits 1. `--all` leaves these photos where they are,
-and it takes none out of the dropbox. Only a pass does that.
+and it takes none out of the dropbox. Only a pass does that. `--all` logs how
+many it left in the dropbox.
 
 The command looks up one id directly, so the age of the photo does not matter.
 If the photo is in no family album, the command checks whether it is a

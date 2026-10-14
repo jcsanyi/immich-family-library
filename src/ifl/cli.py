@@ -147,6 +147,12 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
                 log.warning("skipping %s: %s", b.what, b.reason)
             for s in scan.skipped_reuploads:
                 log.info("skipping re-upload %s", s)
+            if scan.removals:
+                log.info(
+                    "leaving %d external-library photos in %r for the next pass to take out",
+                    len(scan.removals),
+                    cfg.dropbox_album,
+                )
             many = await move_assets(accounts, opts, scan.moves, limit=cfg.assets_per_pass)
             log.info("%s", many)
             return 1 if many.failed else 0

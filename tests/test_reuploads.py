@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from fakes import ALICE, BOB, EDITOR, FAMILY, FakeAsset, make_accounts, patch_world
 
-from ifl.observer import REUPLOAD_MARGIN, describe_assets, scan_assets
+from ifl.observer import REUPLOAD_MARGIN, describe_assets, reuploads_among, scan_assets
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)  # older than the window
 T1 = datetime(2026, 10, 9, tzinfo=UTC)  # inside it
@@ -142,3 +142,26 @@ async def test_a_family_copy_from_elsewhere_makes_no_claim_on_a_members_photo(wo
         "fair.jpg from alice: the family's copy did not come from them",
         "lake.jpg from alice: the family's copy did not come from them",
     ]
+
+
+async def test_an_external_library_photo_is_never_a_reupload(world):
+    accounts = make_accounts()
+    family_has(world, "nas", origin=ALICE)
+    nas = world.add_asset(
+        FakeAsset(
+            uuid4(),
+            ALICE,
+            checksum="nas",
+            original_file_name="nas.jpg",
+            created_at=T1,
+            library_id=uuid4(),
+        )
+    )
+
+    scan = await scan_assets(accounts, "Drop", now=NOW)
+    one = await reuploads_among(
+        accounts, [(accounts.by_user_id()[ALICE], world.find_asset(nas.id))]
+    )
+
+    assert not scan.moves and not scan.skipped_reuploads
+    assert not one.moves and not one.skipped_reuploads

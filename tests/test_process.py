@@ -117,8 +117,35 @@ async def test_a_pass_takes_external_library_photos_out_of_the_dropbox(world, ca
         "the service doesn't support moving these",
     ]
 
+    before = len(world.writes)
     again = await run_pass(accounts, cfg)
-    assert again.dropbox is None and not [w for w in world.writes[-3:] if w[0] == "remove"]
+    assert again.dropbox is None and not [w for w in world.writes[before:] if w[0] == "remove"]
+
+
+async def test_a_photo_already_out_of_the_dropbox_is_neither_taken_out_nor_failed(world, caplog):
+    accounts = make_accounts()
+    cfg = parse_config(RAW)
+    a = world.add_asset(FakeAsset(uuid4(), ALICE, "a", "a.jpg", library_id=uuid4()))
+    b = world.add_asset(FakeAsset(uuid4(), ALICE, "b", "b.jpg", library_id=uuid4()))
+    drop = world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR}, assets=[a, b])
+    real = world.remove_album_assets
+
+    # Alice takes one out by hand between the scan and the removal.
+    async def alice_first(client, album_id, ids):
+        world.assets[drop.id].remove(a)
+        return await real(client, album_id, ids)
+
+    with pytest.MonkeyPatch.context() as mp, caplog.at_level("INFO", logger="ifl"):
+        mp.setattr("ifl.move.remove_album_assets", alice_first)
+        result = await run_pass(accounts, cfg)
+
+    assert result.dropbox.removed == {"alice": 1} and not result.failed
+    assert "a.jpg was already out of 'Drop'" in caplog.text
+    assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == [
+        "alice: 1 photo from an external library taken out of 'Drop'; "
+        "the service doesn't support moving these",
+    ]
+    assert str(result).endswith("; dropbox: took out 1, failed 0")
 
 
 async def test_a_photo_the_dropbox_wont_release_fails_the_pass_and_is_tried_again(world, caplog):
