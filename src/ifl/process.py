@@ -10,8 +10,9 @@ scans":
 3. Queue check under the admin key, if there is one. A backlog on the sidecar or
    metadata queues means the moves wait for the next pass, and so does the
    re-upload mark.
-4. Asset scan, re-uploads included, then moves, up to `assets_per_pass`. The
-   re-upload mark then advances, unless a re-upload was left unfinished.
+4. Asset scan, re-uploads included. External-library photos come out of the
+   dropbox, then the moves, up to `assets_per_pass`. The re-upload mark then
+   advances, unless a re-upload was left unfinished.
 
 Nothing here is a loop, and nothing is kept between passes: the caller holds
 the mark. The daemon calls this once per interval; `ifl process` calls it once.
@@ -28,8 +29,10 @@ from ifl.accounts import Accounts
 from ifl.config import Config
 from ifl.convert import ConvertManyResult, convert_albums
 from ifl.move import (
+    DropboxResult,
     MoveManyResult,
     MoveOptions,
+    clear_dropbox,
     move_assets,
     pass_backlog,
 )
@@ -53,6 +56,7 @@ class PassResult:
     backlog: dict[str, int] | None  # queues that stopped the moves, if any
     moved: MoveManyResult | None  # None when the backlog stopped them
     mark: datetime | None = None  # where the next pass's re-upload scan starts
+    dropbox: DropboxResult | None = None  # None when nothing had to come out of it
 
     @property
     def failed(self) -> bool:
@@ -60,6 +64,7 @@ class PassResult:
             self.converted.failed
             or (self.reconciled and self.reconciled.failed)
             or (self.moved and self.moved.failed)
+            or (self.dropbox and self.dropbox.failed)
         )
 
     def __str__(self) -> str:
@@ -72,6 +77,8 @@ class PassResult:
             parts.append(f"assets: skipped, Immich has jobs waiting: {self.backlog}")
         else:
             parts.append(f"assets: {self.moved}")
+        if self.dropbox:
+            parts.append(f"dropbox: {self.dropbox}")
         return "; ".join(parts)
 
 
@@ -95,7 +102,7 @@ async def run_pass(
     reconciled = await reconcile(accounts, fixes, cfg.webhook) if fixes else None
 
     backlog = await pass_backlog(accounts)
-    moved = None
+    moved = dropbox = None
     if backlog:
         log.warning("not moving anything this pass: Immich has jobs waiting: %s", backlog)
     else:
@@ -104,6 +111,7 @@ async def run_pass(
             log.warning("not moving %s: %s", b.what, b.reason)
         for s in assets.skipped_reuploads:
             log.info("skipping re-upload %s", s)
+        dropbox = await clear_dropbox(assets) if assets.removals else None
         opts = MoveOptions.from_config(cfg)
         moved = await move_assets(
             accounts,
@@ -113,7 +121,7 @@ async def run_pass(
             in_flight=in_flight,
         )
         mark = _advance_mark(mark, assets, moved)
-    return PassResult(converted, reconciled, backlog, moved, mark)
+    return PassResult(converted, reconciled, backlog, moved, mark, dropbox)
 
 
 def _advance_mark(mark: datetime | None, scan: AssetScan, moved: MoveManyResult) -> datetime | None:

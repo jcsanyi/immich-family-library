@@ -192,6 +192,19 @@ async def add_album_assets(
     return await client.albums.add_assets_to_album(id=album_id, bulk_ids_dto=BulkIdsDto(ids=ids))
 
 
+async def remove_album_assets(
+    client: AsyncClient, album_id: UUID, asset_ids: Iterable[UUID]
+) -> list[BulkIdResponseDto]:
+    """One result per id. The assets leave the album and are otherwise untouched.
+    An asset that was not in the album comes back as a 'not_found' failure."""
+    ids = list(asset_ids)
+    if not ids:
+        return []
+    return await client.albums.remove_asset_from_album(
+        id=album_id, bulk_ids_dto=BulkIdsDto(ids=ids)
+    )
+
+
 class Failure(Exception):
     """Something the service found wrong and can say in its own words: a refusal
     from Immich that it checked for, or a condition it tested. The text is the
@@ -378,6 +391,11 @@ def bulk_failure(r: BulkIdResponseDto) -> str | None:
     that was already there comes back as a 'duplicate' failure, and is not one."""
     if r.success or r.error == BulkIdErrorReason.DUPLICATE:
         return None
+    return bulk_error(r)
+
+
+def bulk_error(r: BulkIdResponseDto) -> str:
+    """The reason Immich gave for one failed entry of a bulk response."""
     return f"{r.error.value if r.error else 'unknown'}: {r.error_message or 'no detail'}"
 
 

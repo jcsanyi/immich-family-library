@@ -125,6 +125,7 @@ async def test_rerun_after_upload_finishes_without_uploading_again(world):
         (lambda w, a: setattr(a, "updated_at", NOW - timedelta(seconds=10)), "settling"),
         (lambda w, a: setattr(a, "visibility", AssetVisibility.LOCKED), "visibility is locked"),
         (lambda w, a: setattr(a, "live_photo_video_id", str(uuid4())), "live photo"),
+        (lambda w, a: setattr(a, "library_id", uuid4()), "in an external library"),
         (lambda w, a: w.shared_links.__setitem__(ALICE, {a.id}), "shared links"),
         (
             lambda w, a: w.album("Theirs", STRANGER, roles={ALICE: VIEWER}, assets=[a]),

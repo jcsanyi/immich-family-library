@@ -368,6 +368,7 @@ def test_bulk_failure_reads_an_entry_whatever_immich_left_out():
     assert immich.bulk_failure(entry(success=True)) is None
     dup = entry(success=False, error=BulkIdErrorReason.DUPLICATE)
     assert immich.bulk_failure(dup) is None  # already there
+    assert immich.bulk_error(dup) == "duplicate: no detail"  # for a caller with no "done"
     denied = entry(success=False, error=BulkIdErrorReason.NO_PERMISSION, error_message="nope")
     assert immich.bulk_failure(denied) == "no_permission: nope"
     # A failure with no reason, and one with no message, still read as failures.
@@ -537,6 +538,7 @@ async def test_album_writes_send_what_the_client_takes():
             "create_album": [fam],
             "add_users_to_album": [None],
             "add_assets_to_album": [[BulkIdResponseDto(id=a1, success=True)]],
+            "remove_asset_from_album": [[BulkIdResponseDto(id=a1, success=True)]],
             "delete_album": [None],
             "get_all_albums": [[fam]],
         },
@@ -548,6 +550,9 @@ async def test_album_writes_send_what_the_client_takes():
     assert await immich.add_album_assets(client, album_id, []) == []
     (res,) = await immich.add_album_assets(client, album_id, [a1])
     assert res.id == a1 and res.success
+    assert await immich.remove_album_assets(client, album_id, []) == []
+    (out,) = await immich.remove_album_assets(client, album_id, [a1])
+    assert out.id == a1 and out.success
     await immich.delete_album(client, album_id)
     assert [s.id for s in await immich.list_albums(client)] == [fam.id]
     assert [s.id for s in await immich.albums_containing(client, a1)] == [fam.id]
@@ -557,6 +562,7 @@ async def test_album_writes_send_what_the_client_takes():
         "create_album",
         "add_users_to_album",
         "add_assets_to_album",
+        "remove_asset_from_album",
         "delete_album",
         "get_all_albums",
         "get_all_albums",
@@ -570,8 +576,9 @@ async def test_album_writes_send_what_the_client_takes():
         (BOB, VIEWER),
     ]
     assert calls[2][2]["id"] == album_id and calls[2][2]["bulk_ids_dto"].ids == [a1]
-    assert calls[3][2] == {"id": album_id}
-    assert calls[4][2] == {} and calls[5][2] == {"asset_id": a1}
+    assert calls[3][2]["id"] == album_id and calls[3][2]["bulk_ids_dto"].ids == [a1]
+    assert calls[4][2] == {"id": album_id}
+    assert calls[5][2] == {} and calls[6][2] == {"asset_id": a1}
 
 
 async def test_asset_writes_send_what_the_client_takes():

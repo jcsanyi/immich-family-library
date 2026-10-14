@@ -101,7 +101,7 @@ facial recognition reset is needed. Do not rely on faces or on people sharing.
 - `src/ifl/accounts.py`: one client per account, and the startup checks.
 - `src/ifl/immich.py`: thin helpers over the generated client. Every Immich call the service makes is here.
 - `src/ifl/observer.py`: the three scans, read-only. `observe` reports them. `process` acts on them.
-- `src/ifl/convert.py`, `reconcile.py`, `move.py`: the three actions. `sidecar.py` is the XMP tag rewrite.
+- `src/ifl/convert.py`, `reconcile.py`, `move.py`: the three actions. `move.py` also takes photos from an external library out of the dropbox. `sidecar.py` is the XMP tag rewrite.
 - `src/ifl/process.py`: one pass. `daemon.py`: the pass on an interval, plus the webhook receiver.
 - `src/ifl/lock.py`: the run lock.
 - `src/ifl/cli.py`: argument parsing and the commands.
@@ -187,10 +187,11 @@ when the service corrects the failure itself and no person has to act.
 
 Two levels catch errors, and each has one job.
 
-- **One piece of work.** One album, one fix, one photo, or one webhook asset.
+- **One piece of work.** One album, one fix, one photo, the photos of one
+  member in the dropbox, or one webhook asset.
   The loop catches every error, records it in its result, and continues with
   the next piece. The loops are `convert_albums`, `reconcile`, `move_assets`,
-  and `Daemon.handle_batch`.
+  `clear_dropbox`, and `Daemon.handle_batch`.
 - **One process.** `main` in `cli.py` maps an error to an exit code. The two
   loops of the daemon log an error and continue.
 

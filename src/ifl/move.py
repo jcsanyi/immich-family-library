@@ -46,6 +46,7 @@ from pathlib import Path
 from uuid import UUID
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
+from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 
 from ifl.accounts import Account, Accounts
 from ifl.config import Config, ConfigError
@@ -56,6 +57,7 @@ from ifl.immich import (
     ImmichError,
     add_album_assets,
     albums_containing,
+    bulk_error,
     bulk_failure,
     download_asset_file,
     download_original,
@@ -67,6 +69,7 @@ from ifl.immich import (
     list_partner_ids,
     log_failure,
     queue_backlog,
+    remove_album_assets,
     restore_assets,
     set_asset_edits,
     set_asset_metadata,
@@ -76,7 +79,7 @@ from ifl.immich import (
     upload_asset,
     upsert_tag,
 )
-from ifl.observer import MoveAsset, unmovable
+from ifl.observer import EXTERNAL, AssetScan, DropboxRemoval, MoveAsset, external, unmovable
 from ifl.sidecar import tags_in, with_only_tag
 
 log = logging.getLogger(__name__)
@@ -301,6 +304,62 @@ class MoveManyResult:
         )
 
 
+@dataclass
+class DropboxResult:
+    removed: dict[str, int] = field(default_factory=dict)  # member name -> photos taken out
+    failed: list[tuple[str, str]] = field(default_factory=list)  # (file name, error)
+
+    def __str__(self) -> str:
+        return f"took out {sum(self.removed.values())}, failed {len(self.failed)}"
+
+
+async def clear_dropbox(scan: AssetScan) -> DropboxResult:
+    """Take the external-library photos back out of the dropbox, each with its
+    owner's key, and warn each member once with their count.
+
+    The photo is untouched: it only leaves the album. Nothing is uploaded, so no
+    limit applies. One that Immich won't release is still there for the next pass.
+    One that is already gone, because the member took it out first, counts as
+    neither: the warning names only what the service did."""
+    out = DropboxResult()
+    dropbox = scan.dropbox
+    by_owner: dict[UUID, list[DropboxRemoval]] = {}
+    for r in scan.removals:
+        by_owner.setdefault(r.owner.user_id, []).append(r)
+    for items in by_owner.values():
+        owner = items[0].owner
+        names = {r.asset_id: r.file_name for r in items}
+        try:
+            results = await remove_album_assets(owner.client, dropbox.id, names)
+        except Exception as e:  # noqa: BLE001 - one member's photos; the rest go on
+            what = f"photos of {owner.name} not taken out of {dropbox.name!r}"
+            why = log_failure(log, what, e)
+            out.failed += [(name, why) for name in names.values()]
+            continue
+        removed = 0
+        for r in results:
+            name = names.get(r.id, str(r.id))
+            if r.success:
+                removed += 1
+            elif r.error == BulkIdErrorReason.NOT_FOUND:
+                log.info("%s was already out of %r", name, dropbox.name)
+            else:
+                why = bulk_error(r)
+                log.error("%s not taken out of %r: %s", name, dropbox.name, why)
+                out.failed.append((name, why))
+        if removed:
+            out.removed[owner.name] = removed
+            log.warning(
+                "%s: %d %s from an external library taken out of %r; "
+                "the service doesn't support moving these",
+                owner.name,
+                removed,
+                "photo" if removed == 1 else "photos",
+                dropbox.name,
+            )
+    return out
+
+
 async def move_assets(
     accounts: Accounts,
     opts: MoveOptions,
@@ -401,6 +460,8 @@ async def move_asset(
     asset = await get_asset(owner.client, asset_id)
     if asset.owner_id != owner.user_id:
         raise MoveError(f"{asset.original_file_name} is not owned by {owner.name}")
+    if external(asset):
+        raise MoveBlocked(EXTERNAL)
     if why := unmovable(asset):
         raise MoveBlocked(why)
 

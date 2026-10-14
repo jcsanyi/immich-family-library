@@ -30,6 +30,15 @@ are listed here so that the next Immich upgrade knows what to re-check.
   or partner on the asset (`AssetShare`). This is why the family
   partner-shares with every member: it is what lets a member put a family
   copy into their own album. Confirmed on dev with alice's and bob's keys.
+- Removing an asset from an album needs the `albumAsset.delete` permission.
+  An editor on the album can remove their own asset. The asset stays in its
+  other albums, and nothing else about it changes. Confirmed on dev with
+  alice's key on a family album. Whether an editor can remove the asset of
+  another user is not tested, and the service does not do it.
+- An id that is not in the album comes back from the removal as
+  `success: false` with the error `not_found`, and the album does not change.
+  This is so for an asset that the caller owns and for an id that does not
+  exist. Confirmed on dev with alice's key on a family album.
 - `GET /albums?assetId=` returns only the albums that the caller owns or is
   on. A partner of an asset's owner can add the asset to an album that the
   owner is not on. The owner's key then does not list that album. This is why
@@ -120,9 +129,10 @@ are listed here so that the next Immich upgrade knows what to re-check.
   sidecar attached, the sidecar part was checked as a `.jpg` and rejected
   ("Unsupported file type"). The service sends no `filename` field. Each part
   names itself.
-- The `checksum` of an asset is the SHA-1 of its original file, in base64. The
-  move makes the same checksum from the file that it downloaded, and compares
-  the two before the upload. Confirmed on dev with three photos.
+- The `checksum` of an uploaded asset is the SHA-1 of its original file, in
+  base64. The move makes the same checksum from the file that it downloaded,
+  and compares the two before the upload. Confirmed on dev with three photos.
+  An asset in an external library is different. See "External libraries".
 - The duplicate check is per owner, and trashed assets count. Re-uploading a
   moved photo is a no-op until the member's trash is emptied.
 - `POST /assets/bulk-upload-check` answers whether an account has a checksum,
@@ -154,6 +164,21 @@ are listed here so that the next Immich upgrade knows what to re-check.
 - `POST /trash/restore/assets` brings a trashed asset back, with memberships
   and metadata intact. The service uses it when a member shares a photo the
   family had deleted.
+
+## External libraries (`services/library.service.ts`)
+
+The service does not move an asset that is in an external library. These
+points are what it relies on to find one and to leave it alone.
+
+- The asset response gives `libraryId` for an asset in an external library,
+  and null for an uploaded asset. A search by album with the family's key
+  returns the field. The asset scan and the move use it. Confirmed on dev.
+- The `checksum` of such an asset is not a hash of its file. It is the SHA-1
+  of the text `path:` and then the path of the file. Confirmed in the source
+  and on dev: the value was equal to the hash of the path.
+- Such an asset goes into an album as an uploaded asset does. Confirmed on
+  dev: a conversion put one into the family album with the key of its owner,
+  and the asset stayed with that owner.
 
 ## Search
 

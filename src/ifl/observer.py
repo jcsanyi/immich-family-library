@@ -104,10 +104,20 @@ class MoveAsset:
     reupload: bool = False
 
 
+@dataclass(frozen=True)
+class DropboxRemoval:
+    """A photo the dropbox can do nothing for, to be taken back out of it."""
+
+    asset_id: UUID
+    owner: Account
+    file_name: str
+
+
 @dataclass
 class AssetScan:
     moves: list[MoveAsset] = field(default_factory=list)
     blocked: list[Blocked] = field(default_factory=list)
+    removals: list[DropboxRemoval] = field(default_factory=list)
     dropbox: AlbumSummary | None = None
     scanned_at: datetime | None = None  # when the re-upload scan looked
     skipped_reuploads: list[str] = field(default_factory=list)  # matches left alone, with why
@@ -129,6 +139,15 @@ def unmovable(asset: AssetResponseDto) -> str | None:
     if asset.live_photo_video_id is not None:
         return "live photo; not handled yet"
     return None
+
+
+EXTERNAL = "in an external library, which the service doesn't support moving"
+
+
+def external(asset: AssetResponseDto) -> bool:
+    """Whether the file lives in a member's own folder, outside Immich's storage.
+    The service doesn't support moving these."""
+    return asset.library_id is not None
 
 
 def _names(accounts: Accounts) -> UserNames:
@@ -242,10 +261,29 @@ async def scan_assets(
     seen: set[UUID] = set()
     for album in albums:
         async for asset in iter_album_assets(family.client, album.id):
-            if asset.owner_id == family.user_id or asset.id in seen or asset.is_trashed:
+            if asset.owner_id == family.user_id or asset.is_trashed:
+                continue
+            owner = by_id.get(asset.owner_id)
+            if owner is not None and external(asset):
+                # Not a block: nothing the member does will change it. In an
+                # album it is shared with the family where it sits. The dropbox
+                # is for photos that end up in no album, so there it only
+                # looks as if it worked, and it comes back out.
+                if scan.dropbox is not None and album.id == scan.dropbox.id:
+                    scan.removals.append(DropboxRemoval(asset.id, owner, asset.original_file_name))
+                elif asset.id not in seen:
+                    log.debug(
+                        "leaving %s from %s in %r: %s",
+                        asset.original_file_name,
+                        owner.name,
+                        album.name,
+                        EXTERNAL,
+                    )
+                seen.add(asset.id)
+                continue
+            if asset.id in seen:
                 continue
             seen.add(asset.id)
-            owner = by_id.get(asset.owner_id)
             if owner is None:
                 who = await names.describe(asset.owner_id, album)
                 scan.blocked.append(
@@ -345,10 +383,10 @@ async def reupload_items(
     A copy the family got some other way, by a direct upload or from another
     member, makes no claim on this member's photo. Only a family album does.
     Those, and the ones whose family copy is in the trash, are listed as
-    skipped."""
+    skipped. An external-library photo is never a re-upload."""
     family = accounts.family
     for member, assets in candidates:
-        recent = {a.checksum: a for a in assets if a.owner_id == member.user_id}
+        recent = {a.checksum: a for a in assets if a.owner_id == member.user_id and not external(a)}
         if not recent:
             continue
         owned = await owned_checksums(family.client, recent)
@@ -419,6 +457,11 @@ def describe_assets(scan: AssetScan) -> list[str]:
         tag = " [dropbox]" if scan.dropbox and m.album and m.album.id == scan.dropbox.id else ""
         name = m.album.name if m.album else "?"
         lines.append(f"MOVE {m.file_name} from {m.owner.name}, in {name!r}{tag}")
+    lines += [
+        f"REMOVE {r.file_name} from {r.owner.name}, out of {scan.dropbox.name!r}: {EXTERNAL}"
+        for r in scan.removals
+        if scan.dropbox
+    ]
     lines += [f"SKIP re-upload {s}" for s in scan.skipped_reuploads]
     lines += [f"BLOCKED {b.what}: {b.reason}" for b in scan.blocked]
     return lines or ["no assets to move"]

@@ -127,6 +127,35 @@ def test_move_one_exits_1_when_blocked_or_not_movable_and_0_when_done(world, con
     assert run(path, "move", str(a.id)) == 0 and a.is_trashed
 
 
+def test_move_one_refuses_an_external_library_photo_and_says_why(world, config, caplog):
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+    nas = world.add_asset(FakeAsset(uuid4(), ALICE, "pp", "nas.jpg", library_id=uuid4()))
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[nas])
+
+    assert run(path, "move", str(nas.id)) == 1
+    assert run(path, "move", "--all") == 0
+    assert run(path, "process") == 0
+    assert not nas.is_trashed and not nas.tags and not world.uploads
+    assert (
+        "not moving nas.jpg from alice: "
+        "in an external library, which the service doesn't support moving" in caplog.text
+    )
+
+
+def test_move_all_says_it_left_external_photos_in_the_dropbox(world, config, caplog):
+    path = config()
+    nas = world.add_asset(FakeAsset(uuid4(), ALICE, "pp", "nas.jpg", library_id=uuid4()))
+    drop = world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR}, assets=[nas])
+
+    with caplog.at_level("INFO", logger="ifl"):
+        assert run(path, "move", "--all") == 0
+    assert world.assets[drop.id] == [nas]
+    assert "leaving 1 external-library photo in 'Drop' for the next pass to take out" in (
+        caplog.text
+    )
+
+
 def test_move_all_exits_1_only_for_failures_not_blocks(world, config):
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})

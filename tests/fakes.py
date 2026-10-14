@@ -211,6 +211,29 @@ class FakeWorld:
         )
         return on_album and on_asset
 
+    async def remove_album_assets(self, client, album_id, asset_ids):
+        """Immich lets the album's owner or an editor take a photo out. Verified
+        for an editor and their own photo."""
+        ids = list(asset_ids)
+        if not ids:
+            return []
+        self.writes.append(("remove", client.user_id, album_id, set(ids)))
+        album = self.albums[album_id]
+        allowed = album.owner_id == client.user_id or album.roles.get(client.user_id) == EDITOR
+        out = []
+        for i in ids:
+            held = [a for a in self.assets[album_id] if a.id == i]
+            if not allowed:
+                error = BulkIdErrorReason.NO_PERMISSION
+            elif not held:
+                error = BulkIdErrorReason.NOT_FOUND
+            else:
+                self.assets[album_id].remove(held[0])
+                out.append(BulkIdResponseDto(id=i, success=True))
+                continue
+            out.append(BulkIdResponseDto(id=i, success=False, error=error))
+        return out
+
     async def add_album_assets(self, client, album_id, asset_ids):
         ids = list(asset_ids)
         if not ids:
@@ -479,6 +502,7 @@ WRITE_HELPERS = (
     "create_album",
     "add_album_users",
     "add_album_assets",
+    "remove_album_assets",
     "delete_album",
     "set_album_user_role",
     "list_partner_ids",

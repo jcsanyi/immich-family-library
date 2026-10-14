@@ -36,7 +36,8 @@ it starts the next:
    converted album as family-owned.
 2. **Family albums.** The consistency invariant, below, is restored.
 3. **Assets.** Member-owned photos in family-owned albums get moved. So do
-   re-uploads, below.
+   re-uploads, below. Photos from an external library are the exception:
+   they're never moved, and any in the dropbox are taken back out.
 
 `observe` runs the same three scans and only reports. `process` runs them and
 acts. The daemon runs `process` on an interval.
@@ -171,6 +172,32 @@ on the next run.
 One family album, named in the config, that behaves like any other except the
 copy isn't added back to it. It's for photos that belong in the family
 timeline and in no album.
+
+## External libraries
+
+The service isn't meant for photos in an Immich external library, and it
+doesn't support moving them. An external library is a folder of the member's
+own that Immich reads in place. A photo from one is never moved to the family
+account.
+
+It can still be shared with the family:
+
+- In a family album, it stays. Everyone on the album sees it there, as they
+  would any album photo. It's still the member's, so it isn't in the family's
+  library, and partner sharing doesn't bring it into anyone's timeline.
+- In a member's album that gets shared with the family, conversion carries it
+  into the family album with the rest, and it stays there in the same way.
+  The other photos in the album move as usual.
+
+The asset scan passes over such a photo without a word. It isn't a block,
+since nothing the member does would change it.
+
+The dropbox is where this doesn't work. The dropbox puts a photo into the
+family's library and into no album, and that can't happen here. So a pass
+takes an external-library photo back out of the dropbox, with its owner's key.
+The photo itself isn't touched, and it stays in any other album it's in. Each
+member whose photos came out gets one warning for the pass, with the count.
+Nothing is uploaded, so no cap applies.
 
 ## Re-uploads
 
