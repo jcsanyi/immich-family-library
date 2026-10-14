@@ -50,12 +50,33 @@ Keep instance-specific values (hostnames, emails, network names) out of
 tracked files. This is a public project. Examples use example.com.
 
 Once a change has been completed and tested, the user will request that you
-create a PR for merging the changes to `main`. Use the PR description to
-summarize the changes, especially focusing on the WHY for the change: what
-it fixes or what visible behaviour is affected. For a squash-merged PR, the
+create a PR for merging the changes to `main`. "Issues and pull requests"
+below says what the description holds. For a squash-merged PR, the
 title will become the commit message, so keep it short and assume it will be
 displayed alongside a link to the PR details themselves. Occasionally, the
 user may ask to set up the PR for a rebase merge instead. In that case,
 propose a logical order for the final commits, and offer to rebase the branch
 to set it up.
 
+## Issues and pull requests
+
+Keep them short. A reader must be able to learn what to do and why it
+matters, and no more.
+
+An issue says what is wrong or missing, why it matters, and what a fix looks
+like if that is known. Aim for less than 200 words, unless the issue must
+explain something that the reader cannot get from the code. Examples are
+behaviour of Immich that is not confirmed, and a failure that makes sense
+only when its steps are given. Do not explain how the code works now: the
+reader will read the code. Do not list the steps of the work or a test plan,
+unless a step is one that a person would get wrong.
+
+A pull request description says why the change was made and what a person
+will see that is different. Aim for less than 400 words. Do not retell how
+the branch got to its final form. That is in the commits. Detail that a later
+reader needs belongs in `docs/`, and the description points to it.
+
+A comment that records a decision can be as long as the decision needs.
+
+Use a heading only when the text has parts that a reader would look for
+separately.
