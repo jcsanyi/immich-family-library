@@ -110,8 +110,9 @@ facial recognition reset is needed. Do not rely on faces or on people sharing.
 
 ### Where an error from Immich gets its type
 
-`open_account` wraps each client in `guard` (`immich.py`). The wrapper puts
-every call into the client inside `immich_call`. Whatever the call raises
+Each `Account` wraps its client in `guard` (`immich.py`) when it is made, so
+no account holds a bare client. The wrapper puts every call into the client
+inside `immich_call`. Whatever the call raises
 comes out as one type, `ImmichError`. That covers an error answer from
 Immich, a reply that the client cannot read, and a network failure. The
 wrapper finds the methods of the client as the code uses them, so a new
@@ -127,7 +128,10 @@ of a client or network error.
 An `ImmichError` holds the client method (`call`), the status if Immich
 answered (`status`), the line of the service that wanted the call (`place`),
 and the original error as its cause. `reason` is the same report without the
-call and the place, for a message that already gives them. Its text is one line:
+call and the place, for a message that already gives them. `refused` is true
+when Immich answered with a 4xx status: Immich understood the request and
+said no. An outage, a 5xx status and a reply that cannot be read are not
+refusals. Its text is one line:
 `Immich answered 403 to albums.get_all_albums: Forbidden (observer.py:148 in scan_albums)`.
 
 The place is the nearest line outside `immich.py`. One client method can
@@ -142,8 +146,12 @@ the wrapper looks it up, and is a fault for the same reason.
 
 Two cases need to be known:
 
-- The two transfer helpers read the body of a response without a client
-  method. They use `immich_call` directly for those lines.
+- The two transfer helpers do not go through the wrapper. They use parts of
+  the client that the client does not check, so a wrong argument there would
+  look like an error from Immich. Each helper builds its request outside
+  `immich_call`, and puts the send and the read of the response inside it.
+  Each reports under one name, `the download of an original` or
+  `the upload of an asset`.
 - During an upload, the client reads the temporary file of the service while
   it sends it. If the disk fails at that moment, the error comes out of a
   client call, and the log names Immich. The place of an error cannot show
@@ -190,11 +198,14 @@ Some errors are answers. When Immich refuses to add a photo to an album with
 one key, the refusal tells the move to try the next key
 (`_relink_member_album`). When Immich answers 400 for an asset, the answer
 tells the lookup that this member cannot read it (`get_asset_if_readable`).
+When Immich refuses a key at startup, the refusal is the result of the key
+check (`open_account`).
 A catch of that kind is correct, on two conditions:
 
-- It catches only the errors that carry the answer: `ImmichError`, or one
-  status of it. It does not catch `Exception`. A fault in the service is not
-  an answer, and it must keep its traceback.
+- It catches only the errors that carry the answer. That is an `ImmichError`
+  that is `refused`, or one exact status. An outage is not an answer to the
+  question, so it must rise: a key that got no reply was not refused. A fault
+  in the service is not an answer either, and it must keep its traceback.
 - The code acts on the answer. If no key is accepted, the move raises a
   `MoveError` that lists what each key was told.
 

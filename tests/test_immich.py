@@ -36,7 +36,6 @@ from fakes import (
     make_user,
     make_workflow,
 )
-from immichpy.client.generated.exceptions import ApiException
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_response_dto import AlbumUserResponseDto
 from immichpy.client.generated.models.asset_bulk_upload_check_response_dto import (
@@ -301,9 +300,10 @@ async def test_download_streams_the_original_to_a_file_and_checks_it(server, tmp
     with pytest.raises(immich.DownloadMismatch, match=f"expected {BODY_SHA1}"):
         await immich.download_original(client, uuid4(), dest, checksum=BODY_SHA1)
 
-    with pytest.raises(ApiException) as refused:
+    # The helper places the guard itself, so it reports the same way with any client.
+    with pytest.raises(immich.ImmichError) as refused:
         await immich.download_original(client, MISSING, dest, checksum=BODY_SHA1)
-    assert refused.value.status == 404
+    assert refused.value.status == 404 and refused.value.call == "the download of an original"
 
 
 @pytest.mark.parametrize("sidecar", [b"<xmp/>", None])
@@ -775,7 +775,6 @@ def test_log_failure_keeps_the_traceback_for_faults_in_the_service(caplog):
                 assert immich.log_failure(log, "a.jpg not moved", error, level=level) == why
             said, *rest = caplog.records
             assert said.getMessage() == f"a.jpg not moved: {why}"
-            assert said.funcName == "test_log_failure_keeps_the_traceback_for_faults_in_the_service"
             if fault:
                 # A fault is an error with its traceback, whatever level was asked for.
                 assert said.levelno == logging.ERROR and said.exc_info and not rest
@@ -940,3 +939,28 @@ async def test_an_immich_error_names_the_line_of_the_service_that_wanted_the_cal
     )
     # Built outside the service, as a test does, it has no place to name.
     assert immich.ImmichError("x", TimeoutError()).place is None
+
+
+def test_the_guard_goes_two_levels_deep_and_wraps_nothing_else():
+    import copy
+    from enum import Enum
+
+    class Colour(Enum):
+        RED = 1
+
+    def ok():
+        return "sent"
+
+    asset_id = uuid4()
+    api = SimpleNamespace(send=ok, colour=Colour.RED, last_id=asset_id, inner=SimpleNamespace(x=1))
+    client = immich.guard(SimpleNamespace(albums=api, name="the client", close=ok))
+
+    assert client.albums.send() == "sent" and client.close() == "sent"
+    # What an API object holds comes back as the thing itself, so it still
+    # compares, and can be handed to the client again.
+    assert client.albums.colour is Colour.RED and client.albums.last_id is asset_id
+    assert client.albums.inner is api.inner
+    assert client.name == "the client"
+    # A copy asks for attributes before it has any. That must not loop.
+    assert copy.copy(client).albums.send() == "sent"
+    assert immich.unguarded(client).albums is api

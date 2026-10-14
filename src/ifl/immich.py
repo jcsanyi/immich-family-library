@@ -208,9 +208,10 @@ class ImmichError(Failure):
 
     def __init__(self, call: str, cause: Exception):
         self.call = call
-        self.status = cause.status if isinstance(cause, ApiException) else None
+        self.status = None
         self.place = _calling_place()
         if isinstance(cause, ApiException):
+            self.status = cause.status
             # The client's own text runs to four lines and carries every
             # response header. The status and Immich's message are the news.
             try:
@@ -228,6 +229,13 @@ class ImmichError(Failure):
             self.reason = f"no usable answer from Immich: {_one_short_line(describe_error(cause))}"
             text = f"{call} got {self.reason}"
         super().__init__(f"{text} ({self.place})" if self.place else text)
+
+    @property
+    def refused(self) -> bool:
+        """Immich understood the request and said no. An outage, a server error
+        and a reply that could not be read are not this. Immich answers 400, not
+        403, for a key with no access, so the whole of 4xx counts."""
+        return self.status is not None and 400 <= self.status < 500
 
 
 def _one_short_line(text: str, limit: int = 300) -> str:
@@ -284,23 +292,26 @@ _PLAIN_VALUES = (str, bytes, int, float, bool, type(None), dict, list, tuple, se
 
 
 class _Guarded:
-    """The client, or one of the objects it is made of, with every call into
-    it inside `immich_call`. Methods are found as they are used, so a new
-    client version needs nothing here."""
+    """The client, or one of its API objects, with every method called inside
+    `immich_call`. Methods are found as they are used, so a new client version
+    needs nothing here. It goes two levels deep and no further, which is where
+    the methods are: `client.albums.get_all_albums`. Anything else that an API
+    object holds is returned as it is."""
 
     def __init__(self, target: Any, path: str = ""):
-        self._target = target
-        self._path = path
+        self._guard_target = target
+        self._guard_path = path
 
     def __getattr__(self, name: str) -> Any:
-        attr = getattr(self._target, name)
-        path = f"{self._path}.{name}" if self._path else name
-        if isinstance(attr, _PLAIN_VALUES) and not callable(attr):
+        if name.startswith("_guard_"):
+            raise AttributeError(name)  # asked for before __init__ ran, as a copy does
+        attr = getattr(self._guard_target, name)
+        path = f"{self._guard_path}.{name}" if self._guard_path else name
+        if callable(attr):
+            return _guarded_call(attr, path)
+        if self._guard_path or isinstance(attr, _PLAIN_VALUES):
             return attr
-        guarded = _guarded_call(attr, path) if callable(attr) else _Guarded(attr, path)
-        # Kept on the instance, so the next use does not come through here.
-        self.__dict__[name] = guarded
-        return guarded
+        return _Guarded(attr, path)
 
 
 def _guarded_call(fn: Callable[..., Any], path: str) -> Callable[..., Any]:
@@ -321,8 +332,15 @@ def _guarded_call(fn: Callable[..., Any], path: str) -> Callable[..., Any]:
 
 
 def guard(client: AsyncClient) -> AsyncClient:
-    """The client as the service uses it: see `immich_call`."""
-    return _Guarded(client)  # type: ignore[return-value]
+    """The client as the service uses it: see `immich_call`. A client that is
+    guarded already is returned as it is."""
+    return client if isinstance(client, _Guarded) else _Guarded(client)  # type: ignore[return-value]
+
+
+def unguarded(client: AsyncClient) -> AsyncClient:
+    """The client underneath, for the two transfers. They use parts of the
+    client that it does not check, so they place `immich_call` themselves."""
+    return client._guard_target if isinstance(client, _Guarded) else client
 
 
 def describe_error(e: BaseException) -> str:
@@ -341,12 +359,11 @@ def log_failure(log: logging.Logger, what: str, e: Exception, *, level: int = lo
     the traceback goes to debug. Anything else is a fault in the service, and
     is an error with its traceback whatever the level."""
     why = describe_error(e)
-    # stacklevel: each record names the caller's line, not this function's.
     if isinstance(e, Failure):
-        log.log(level, "%s: %s", what, why, stacklevel=2)
-        log.debug("the traceback of %s", what, exc_info=e, stacklevel=2)
+        log.log(level, "%s: %s", what, why)
+        log.debug("the traceback of %s", what, exc_info=e)
     else:
-        log.error("%s: %s", what, why, exc_info=e, stacklevel=2)
+        log.error("%s: %s", what, why, exc_info=e)
     return why
 
 
@@ -420,6 +437,7 @@ async def download_asset_file(client: AsyncClient, file_id: UUID) -> bytes:
 # helpers call the builders and hand aiohttp a stream.
 CHUNK = 1 << 20
 # A download is cut off when the server sends nothing for this long.
+DOWNLOAD, UPLOAD = "the download of an original", "the upload of an asset"
 DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=300)
 # aiohttp's read timeout would fire while a long upload is still being sent, so
 # an upload gets a total instead: five minutes, plus its size at this rate.
@@ -435,7 +453,9 @@ async def download_original(
 ) -> None:
     """Write the asset's original file to `dest`, and make sure it arrived whole:
     the upload that follows is what the original gets trashed for."""
-    api = client.assets
+    api = unguarded(client).assets
+    # Built outside `immich_call`: an argument that the builder refuses is the
+    # service's own mistake, and the client does not check these itself.
     request = api._download_asset_serialize(
         id=asset_id,
         edited=None,
@@ -446,12 +466,13 @@ async def download_original(
         _headers=None,
         _host_index=0,
     )
-    res = await api.api_client.call_api(*request, _request_timeout=DOWNLOAD_TIMEOUT)
+    with immich_call(DOWNLOAD):
+        res = await api.api_client.call_api(*request, _request_timeout=DOWNLOAD_TIMEOUT)
     try:
         if res.status != 200:
-            with immich_call("the download of an original"):
+            with immich_call(DOWNLOAD):
                 await res.read()
-            api.api_client.response_deserialize(res, {"200": "bytes"})  # raises for the status
+                api.api_client.response_deserialize(res, {"200": "bytes"})  # raises for the status
         digest = hashlib.sha1(usedforsecurity=False)
 
         def keep(chunk: bytes) -> None:
@@ -459,11 +480,11 @@ async def download_original(
             digest.update(chunk)
 
         with dest.open("wb") as f:
-            # The body arrives outside any client method, so the guard on the
-            # client does not see it. Writing the file is the service's own work.
+            # Reading the body is Immich's part. Writing the file is the
+            # service's own, so it stays outside.
             chunks = res.response.content.iter_chunked(CHUNK)
             while True:
-                with immich_call("the download of an original"):
+                with immich_call(DOWNLOAD):
                     chunk = await anext(chunks, None)
                 if chunk is None:
                     break
@@ -539,7 +560,7 @@ async def upload_asset(
     """Upload the file at `path` plus sidecar. Returns (asset id, created). A
     duplicate of something this account already has returns that asset's id and
     False."""
-    api = client.assets
+    api = unguarded(client).assets
     timeout = aiohttp.ClientTimeout(total=300 + path.stat().st_size / SLOWEST_UPLOAD)
     with path.open("rb") as f:
         # No `filename` form field: the server applies it to every part, so the
@@ -563,11 +584,12 @@ async def upload_asset(
             _headers=None,
             _host_index=0,
         )
-        res = await api.api_client.call_api(*request, _request_timeout=timeout)
-        with immich_call("the upload of an asset"):
+        with immich_call(UPLOAD):
+            res = await api.api_client.call_api(*request, _request_timeout=timeout)
             await res.read()
     types = {"200": "AssetMediaResponseDto", "201": "AssetMediaResponseDto"}
-    made = api.api_client.response_deserialize(res, types).data
+    with immich_call(UPLOAD):
+        made = api.api_client.response_deserialize(res, types).data
     return made.id, made.status.value == "created"
 
 

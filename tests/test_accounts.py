@@ -156,15 +156,27 @@ async def test_missing_permissions_are_named_and_all_covers_everything(stub):
     assert not a.client.closed
 
 
-async def test_a_failing_call_becomes_an_account_error_and_closes_the_client(stub):
-    stub.KEYS["k1"] = {"raise": ConnectionError("no route to host")}
+async def test_only_a_refusal_from_immich_is_a_failed_key_check(stub):
+    from immichpy.client.generated.exceptions import UnauthorizedException
+
+    from ifl.immich import ImmichError
+
+    # Immich looked at the key and said no: the key is wrong.
+    stub.KEYS["k1"] = {
+        "raise": UnauthorizedException(status=401, body='{"message": "Invalid API key"}')
+    }
     with pytest.raises(
         AccountError,
-        match=r"\[alice\] key check failed: users.get_my_user got no usable answer from "
-        r"Immich: ConnectionError: no route to host",
+        match=r"\[alice\] key check failed: Immich answered 401 to users.get_my_user: Invalid",
     ):
         await open_account(URL, AccountConfig("alice", "k1", "alice@x"), required=set())
     assert stub.made[0].closed
+
+    # No answer says nothing about the key. It is an outage, and reads as one.
+    stub.KEYS["k1"] = {"raise": ConnectionError("no route to host")}
+    with pytest.raises(ImmichError, match="users.get_my_user got no usable answer from Immich"):
+        await open_account(URL, AccountConfig("alice", "k1", "alice@x"), required=set())
+    assert stub.made[1].closed
 
 
 async def test_the_server_must_be_at_least_the_minimum_version(stub):
@@ -298,8 +310,10 @@ async def test_a_fault_during_the_key_check_is_not_reported_as_a_wrong_key(monke
     assert closed == [True]
 
 
-async def test_a_reply_the_client_cannot_read_is_a_failed_key_check(monkeypatch):
+async def test_a_reply_the_client_cannot_read_is_not_a_failed_key_check(monkeypatch):
     import pydantic
+
+    from ifl.immich import ImmichError
 
     class Client:
         def __init__(self, **kwargs):
@@ -314,17 +328,17 @@ async def test_a_reply_the_client_cannot_read_is_a_failed_key_check(monkeypatch)
 
     monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
 
-    with pytest.raises(AccountError) as failed:
+    with pytest.raises(ImmichError) as failed:
         await open_account("https://x.example", AccountConfig("alice", "k"), required=set())
     text = str(failed.value)
     assert text.startswith(
-        "[alice] key check failed: users.get_my_user got no usable answer from Immich: "
+        "users.get_my_user got no usable answer from Immich: "
         "ValidationError: 18 validation errors for UserAdminResponseDto"
     )
     # One line, cut short: the eighteen fields are in the debug traceback.
-    assert "\n" not in text and len(text) < 460
+    assert "\n" not in text and len(text) < 440
     assert re.search(r" \.\.\. \(accounts\.py:\d+ in open_account\)$", text)
-    assert isinstance(failed.value.__cause__.__cause__, pydantic.ValidationError)
+    assert isinstance(failed.value.__cause__, pydantic.ValidationError)
 
 
 async def test_a_client_that_will_not_close_changes_nothing(monkeypatch):
@@ -348,14 +362,36 @@ async def test_a_client_that_will_not_close_changes_nothing(monkeypatch):
     await close_client(client("again", fails=True))
 
 
-async def test_an_outage_at_the_version_check_is_a_startup_error_too():
+async def test_the_version_check_reports_as_the_key_check_does():
+    from fakes import outage, refusal
+
     from ifl.immich import ImmichError
 
-    async def down():
-        raise ImmichError("server.get_server_version", TimeoutError())
+    answers = []
 
-    client = SimpleNamespace(server=SimpleNamespace(get_server_version=down))
-    with pytest.raises(
-        AccountError, match="server version check failed: server.get_server_version"
-    ):
+    async def version():
+        raise answers.pop(0)
+
+    client = SimpleNamespace(server=SimpleNamespace(get_server_version=version))
+
+    answers.append(refusal("server.get_server_version", status=403))
+    with pytest.raises(AccountError, match="server version check failed: Immich answered 403"):
         await acc.check_server(client)
+
+    answers.append(outage("server.get_server_version"))
+    with pytest.raises(ImmichError, match="got no usable answer from Immich"):
+        await acc.check_server(client)
+
+
+def test_an_account_never_holds_a_bare_client():
+    from immichpy import AsyncClient
+
+    from ifl.accounts import Account
+    from ifl.immich import guard, unguarded
+
+    bare = AsyncClient(base_url="https://immich.example", api_key="unused")
+    account = Account("alice", "a@x", uuid4(), bare)
+    assert account.client is not bare and unguarded(account.client) is bare
+    # Guarding twice changes nothing.
+    assert guard(account.client) is account.client
+    assert Account("bob", "b@x", uuid4(), account.client).client is account.client

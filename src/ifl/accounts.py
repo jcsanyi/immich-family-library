@@ -77,6 +77,12 @@ class Account:
     user_id: UUID
     client: AsyncClient
 
+    def __post_init__(self) -> None:
+        # The helpers catch `ImmichError` and nothing else, so no account may
+        # hold a bare client, whoever built the account.
+        if isinstance(self.client, AsyncClient):
+            self.client = guard(self.client)
+
     def __str__(self) -> str:
         return f"{self.name} <{self.email}>"
 
@@ -132,7 +138,8 @@ async def open_account(
     except BaseException as e:
         await close_client(client)
         # Immich's answer to a key is the check itself: a refusal is a wrong key.
-        if isinstance(e, ImmichError):
+        # An outage says nothing about the key, and rises as itself.
+        if isinstance(e, ImmichError) and e.refused:
             raise AccountError(f"[{cfg.name}] key check failed: {e}") from e
         raise
     log.info("account ok: %s (%s)", cfg.name, me.email)
@@ -143,6 +150,8 @@ async def check_server(client: AsyncClient) -> str:
     try:
         v = await client.server.get_server_version()
     except ImmichError as e:
+        if not e.refused:
+            raise
         # Still the startup check, so it reports as the key check beside it does.
         raise AccountError(f"server version check failed: {e}") from e
     version = (v.major, v.minor, v.patch)

@@ -18,6 +18,10 @@ Immich 3.3 or later. If any of this fails, the command exits with code 2
 before it touches anything. A config pointed at the wrong server fails the
 same way, which is why the emails are checked.
 
+If Immich does not answer during these checks, the command exits with code 1.
+No answer says nothing about a key. A `url` that names a host that does not
+exist fails this way too, and the message names the host.
+
 While `readonly` is true in the config, every command that writes to Immich
 refuses to start. `observe` and `show-config` still work.
 
@@ -142,9 +146,10 @@ do.
 - `0`: everything asked for was done.
 - `1`: something was blocked or failed. The log says what. For `--all`,
   `reconcile-albums` and `process`, only failures count, not blocks. If Immich
-  stops answering during a scan, the command stops with one line and exits 1.
-- `2`: the config or a key is wrong, or `readonly` refused the command, or
-  the run lock cannot be opened.
+  does not answer, at startup or during a scan, the command stops with one
+  line and exits 1.
+- `2`: the config is wrong, or Immich refused a key, or `readonly` refused the
+  command, or the run lock cannot be opened.
 - `3`: the daemon or another writing command holds the run lock. Wait for
   it, or stop the daemon.
 

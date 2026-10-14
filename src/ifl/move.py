@@ -240,13 +240,15 @@ async def _relink_member_album(
     key that Immich accepts.
 
     A key that Immich refuses is an answer, not a failure: it says to try the
-    next key. So an error from outside is caught here and acted on. A fault in
-    the service is no such answer, and is left to rise with its traceback."""
+    next key. Nothing else is that answer. An outage rises as itself, and so
+    does a fault in the service, with its traceback."""
     failures = []
     for who in _relink_keys(accounts, album, asset_owner):
         try:
             why = await _add_refusal(who.client, album, family_id)
         except ImmichError as e:
+            if not e.refused:
+                raise  # an outage is not a refused key
             why = e.reason
         if why is None:
             log.info("re-linked into %r with %s's key", album.name, who.name)

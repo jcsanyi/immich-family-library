@@ -15,6 +15,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import aiohttp
+from immichpy.client.generated.exceptions import ApiException
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_response_dto import AlbumUserResponseDto
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
@@ -506,6 +507,12 @@ WRITE_HELPERS = (
     "create_workflow",
     "update_workflow",
 )
+
+
+def refusal(call: str = "albums.get_all_albums", status: int = 400) -> ImmichError:
+    """What a helper raises when Immich says no to a key."""
+    body = '{"message": "Not found or no access"}'
+    return ImmichError(call, ApiException(status=status, reason="Bad Request", body=body))
 
 
 def outage(call: str = "albums.get_all_albums") -> ImmichError:
