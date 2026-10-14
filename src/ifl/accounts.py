@@ -15,6 +15,7 @@ from uuid import UUID
 from immichpy.client.main import AsyncClient
 
 from ifl.config import AccountConfig, Config
+from ifl.immich import ImmichError, describe_error, guard
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +77,12 @@ class Account:
     user_id: UUID
     client: AsyncClient
 
+    def __post_init__(self) -> None:
+        # The helpers catch `ImmichError` and nothing else, so no account may
+        # hold a bare client, whoever built the account.
+        if isinstance(self.client, AsyncClient):
+            self.client = guard(self.client)
+
     def __str__(self) -> str:
         return f"{self.name} <{self.email}>"
 
@@ -94,7 +101,16 @@ class Accounts:
 
     async def close(self) -> None:
         for a in [self.family, *self.members.values(), *([self.admin] if self.admin else [])]:
-            await a.client.close()
+            await close_client(a.client)
+
+
+async def close_client(client: AsyncClient) -> None:
+    """Closing is housekeeping at the end. A client that will not close must not
+    stop the others from closing, or change what the command reports."""
+    try:
+        await client.close()
+    except Exception as e:  # noqa: BLE001 - see above; there is nothing to do about it either
+        log.debug("could not close a client: %s", describe_error(e))
 
 
 async def open_account(
@@ -103,9 +119,15 @@ async def open_account(
     *,
     required: set[str],
     must_be_admin: bool = False,
+    check_version: bool = False,
 ) -> Account:
-    client = AsyncClient(base_url=url, api_key=cfg.api_key)
+    client = guard(AsyncClient(base_url=url, api_key=cfg.api_key))
     try:
+        if check_version:
+            # Before anything else. An Immich that is too old answers the key
+            # check with a reply the client cannot read, and the version is
+            # what explains that.
+            log.info("server %s at %s", await check_server(client), url)
         me = await client.users.get_my_user()
         if cfg.email is not None and me.email.lower() != cfg.email.lower():
             raise AccountError(
@@ -119,18 +141,25 @@ async def open_account(
         missing = required - have if "all" not in have else set()
         if missing:
             raise AccountError(f"[{cfg.name}] key is missing permissions: {sorted(missing)}")
-    except AccountError:
-        await client.close()
+    except BaseException as e:
+        await close_client(client)
+        # Immich's answer to a key is the check itself: a refusal is a wrong key.
+        # An outage says nothing about the key, and rises as itself.
+        if isinstance(e, ImmichError) and e.refused:
+            raise AccountError(f"[{cfg.name}] key check failed: {e}") from e
         raise
-    except Exception as e:
-        await client.close()
-        raise AccountError(f"[{cfg.name}] key check failed: {e}") from e
     log.info("account ok: %s (%s)", cfg.name, me.email)
     return Account(name=cfg.name, email=me.email, user_id=me.id, client=client)
 
 
 async def check_server(client: AsyncClient) -> str:
-    v = await client.server.get_server_version()
+    try:
+        v = await client.server.get_server_version()
+    except ImmichError as e:
+        if not e.refused:
+            raise
+        # Still the startup check, so it reports as the key check beside it does.
+        raise AccountError(f"server version check failed: {e}") from e
     version = (v.major, v.minor, v.patch)
     if version < MIN_SERVER:
         raise AccountError(
@@ -149,10 +178,10 @@ async def check_server(client: AsyncClient) -> str:
 async def open_accounts(cfg: Config) -> Accounts:
     opened: list[Account] = []
     try:
-        family = await open_account(cfg.immich_url, cfg.family, required=FAMILY_PERMISSIONS)
+        family = await open_account(
+            cfg.immich_url, cfg.family, required=FAMILY_PERMISSIONS, check_version=True
+        )
         opened.append(family)
-        version = await check_server(family.client)
-        log.info("server %s at %s", version, cfg.immich_url)
         members: dict[str, Account] = {}
         # The config compares emails as written; Immich's user id is what counts.
         # The admin key is left out: it may be the family's or a member's.
@@ -175,6 +204,6 @@ async def open_accounts(cfg: Config) -> Accounts:
             opened.append(admin)
     except Exception:
         for a in opened:
-            await a.client.close()
+            await close_client(a.client)
         raise
     return Accounts(family=family, members=members, admin=admin)

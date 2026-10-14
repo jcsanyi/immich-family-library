@@ -52,6 +52,8 @@ from ifl.config import Config, ConfigError
 from ifl.immich import (
     PROVENANCE_KEY,
     AlbumSummary,
+    Failure,
+    ImmichError,
     add_album_assets,
     albums_containing,
     bulk_failure,
@@ -63,6 +65,7 @@ from ifl.immich import (
     get_asset_edits,
     get_asset_metadata_value,
     list_partner_ids,
+    log_failure,
     queue_backlog,
     restore_assets,
     set_asset_edits,
@@ -90,7 +93,7 @@ class MoveTimedOut(MoveBlocked):
     """Blocked after a wait on Immich, so the try cost the pass real time."""
 
 
-class MoveError(Exception):
+class MoveError(Failure):
     """Something failed partway. Running the move again resumes it."""
 
 
@@ -197,10 +200,12 @@ async def _fresh_sidecar(owner: Account, asset_id: UUID, tag: str, timeout: floa
         await asyncio.sleep(0.5)
 
 
-async def _add_to_album(client, album: AlbumSummary, asset_id: UUID) -> None:
+async def _add_refusal(client, album: AlbumSummary, asset_id: UUID) -> str | None:
+    """Add the asset to the album. Why Immich refused, or None when it is in."""
     for r in await add_album_assets(client, album.id, [asset_id]):
         if why := bulk_failure(r):
-            raise RuntimeError(why)
+            return why
+    return None
 
 
 async def _albums_holding(accounts: Accounts, asset_id: UUID) -> list[AlbumSummary]:
@@ -232,15 +237,23 @@ async def _relink_member_album(
     accounts: Accounts, album: AlbumSummary, asset_owner: Account, family_id: UUID
 ) -> None:
     """Add the family copy to an album the family doesn't own, with the first
-    key that Immich accepts."""
+    key that Immich accepts.
+
+    A key that Immich refuses is an answer, not a failure: it says to try the
+    next key. Nothing else is that answer. An outage rises as itself, and so
+    does a fault in the service, with its traceback."""
     failures = []
     for who in _relink_keys(accounts, album, asset_owner):
         try:
-            await _add_to_album(who.client, album, family_id)
+            why = await _add_refusal(who.client, album, family_id)
+        except ImmichError as e:
+            if not e.refused:
+                raise  # an outage is not a refused key
+            why = e.reason
+        if why is None:
             log.info("re-linked into %r with %s's key", album.name, who.name)
             return
-        except Exception as e:  # noqa: BLE001 - any refusal means try the next key
-            failures.append(f"{who.name}: {e}")
+        failures.append(f"{who.name}: {why}")
     raise MoveError(
         f"could not re-link the copy into {album.name!r} ({'; '.join(failures) or 'no key can'});"
         " original left in place"
@@ -349,15 +362,8 @@ async def move_assets(
             out.unfinished.add(m.asset_id)
             slots_used += slot * isinstance(e, MoveTimedOut)
             continue
-        except MoveError as e:
-            log.error("%s not moved: %s", m.file_name, e)
-            out.failed.append((m.file_name, str(e)))
-            out.unfinished.add(m.asset_id)
-            slots_used += slot
-            continue
         except Exception as e:  # noqa: BLE001 - the move stops before the trash; the rest go on
-            log.exception("%s not moved", m.file_name)
-            out.failed.append((m.file_name, f"{type(e).__name__}: {e}"))
+            out.failed.append((m.file_name, log_failure(log, f"{m.file_name} not moved", e)))
             out.unfinished.add(m.asset_id)
             slots_used += slot
             continue
@@ -529,7 +535,8 @@ async def move_asset(
     for a in family_albums:
         if a.name == opts.dropbox_album:
             continue
-        await _add_to_album(family.client, a, family_id)
+        if why := await _add_refusal(family.client, a, family_id):
+            raise MoveError(f"could not add the copy to {a.name!r}: {why}")
         relinked.append(a.name)
     relinked_member = []
     for a in other_albums:

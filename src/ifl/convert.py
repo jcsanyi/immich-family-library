@@ -26,6 +26,7 @@ from immichpy.client.main import AsyncClient
 from ifl.accounts import Account, Accounts
 from ifl.immich import (
     AlbumSummary,
+    Failure,
     add_album_assets,
     add_album_users,
     bulk_failure,
@@ -33,13 +34,14 @@ from ifl.immich import (
     delete_album,
     iter_album_assets,
     list_albums,
+    log_failure,
 )
 from ifl.observer import ConvertAlbum
 
 log = logging.getLogger(__name__)
 
 
-class ConvertError(Exception):
+class ConvertError(Failure):
     """The conversion stopped before deleting the original. Running it again resumes."""
 
 
@@ -119,7 +121,7 @@ async def _add_assets(
 @dataclass
 class ConvertManyResult:
     done: list[ConvertResult]
-    failed: list[tuple[ConvertAlbum, ConvertError]]
+    failed: list[tuple[ConvertAlbum, str]]  # (album, reason)
     remaining: int  # convertible albums left untouched because of the limit
 
 
@@ -136,12 +138,9 @@ async def convert_albums(
     for conv in todo:
         try:
             out.done.append(await convert_album(accounts, conv))
-        except ConvertError as e:
-            log.error("album %r not converted: %s", conv.album.name, e)
-            out.failed.append((conv, e))
         except Exception as e:  # noqa: BLE001 - the original is only deleted last; the rest go on
-            log.exception("album %r not converted", conv.album.name)
-            out.failed.append((conv, ConvertError(f"{type(e).__name__}: {e}")))
+            why = log_failure(log, f"album {conv.album.name!r} not converted", e)
+            out.failed.append((conv, why))
     if out.remaining:
         log.info("%d more albums to convert; limit is %d per pass", out.remaining, limit)
     return out

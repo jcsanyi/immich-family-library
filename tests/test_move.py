@@ -291,14 +291,16 @@ async def test_relink_failure_keeps_the_original(world):
     world.album("Bobs", BOB, roles={ALICE: VIEWER}, assets=[a])  # alice can't add, bob unpartnered
     world.partners[FAMILY] = set()
 
-    with pytest.raises(MoveError, match="could not re-link the copy into 'Bobs'"):
+    with pytest.raises(MoveError, match="could not re-link the copy into 'Bobs'") as failed:
         await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
 
+    assert str(failed.value).count("'Bobs'") == 1  # each key's refusal is the bare reason
+    assert "move.py" not in str(failed.value)
     assert not a.is_trashed
     assert len(world.uploads) == 1  # the copy exists; a rerun after fixing the share finishes
     # A refused add that Immich gives no reason for still reads as a refusal.
     world.fail_adds[world.uploads[0]["id"]] = None
-    with pytest.raises(RuntimeError, match="unknown: nope"):
+    with pytest.raises(MoveError, match="could not add the copy to 'Trip': unknown: nope"):
         await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
     assert not a.is_trashed
     world.fail_adds.clear()
@@ -817,3 +819,51 @@ async def test_reuploads_never_use_the_limit(world, monkeypatch):
     ]
     assert [f[0] for f in result.failed] == ["re1.jpg"] and result.remaining == 1
     assert result.unfinished == {plain[1].asset_id, reuploads[1].asset_id}
+
+
+async def test_relink_tries_the_next_key_only_when_immich_refused_this_one(world, monkeypatch):
+    from fakes import outage, refusal
+
+    from ifl.immich import ImmichError
+
+    accounts = make_accounts()
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR})
+    bobs = world.album("Bobs", BOB, roles={ALICE: EDITOR})
+    world.partners[FAMILY] = {ALICE, BOB}  # so alice's key can add the family's copy
+    real = world.add_album_assets
+    answers = {}
+
+    async def add(client, album_id, asset_ids):
+        if album_id == bobs.id and client.user_id in answers:
+            raise answers[client.user_id]
+        return await real(client, album_id, asset_ids)
+
+    monkeypatch.setattr("ifl.move.add_album_assets", add)
+
+    def shared(checksum):
+        photo = world.add_asset(
+            FakeAsset(uuid4(), ALICE, checksum=checksum, original_file_name=f"{checksum}.jpg")
+        )
+        world.assets[bobs.id].append(photo)
+        return photo
+
+    # Immich says no to bob's key, the album owner's: alice's is tried next.
+    a = shared("sha-a")
+    answers[BOB] = refusal("albums.add_assets_to_album")
+    result = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+    assert result.relinked_member == ["Bobs"] and a.is_trashed
+
+    # No answer at all is not a refused key. It is not tried past: the next
+    # key would only wait out the same outage, and the report would blame the keys.
+    b = shared("sha-b")
+    answers[BOB] = outage("albums.add_assets_to_album")
+    with pytest.raises(ImmichError, match="got no usable answer from Immich"):
+        await move_asset(accounts, OPTS, b.id, accounts.members["alice"], now=NOW)
+    assert not b.is_trashed
+
+    # A fault in the service is no refusal either, and is not reworded.
+    c = shared("sha-c")
+    answers[BOB] = KeyError("owner")
+    with pytest.raises(KeyError):
+        await move_asset(accounts, OPTS, c.id, accounts.members["alice"], now=NOW)
+    assert not c.is_trashed

@@ -293,3 +293,16 @@ def test_webhook_and_interval_settings():
         assert cfg.webhook.bind == bind and cfg.webhook.path == "/"
     with pytest.raises(ConfigError, match="interval_seconds"):
         parse_config({**GOOD, "service": {"interval_seconds": 0}})
+
+
+def test_a_config_file_that_cannot_be_read_is_a_config_error(tmp_path):
+    from ifl.config import load_config
+
+    with pytest.raises(ConfigError, match="config file not found"):
+        load_config(tmp_path / "missing.toml")
+    with pytest.raises(ConfigError, match="cannot read the config file"):
+        load_config(tmp_path)  # a directory
+    binary = tmp_path / "config.toml"
+    binary.write_bytes(b"\xff\xfe not text")
+    with pytest.raises(ConfigError, match="cannot read the config file"):
+        load_config(binary)

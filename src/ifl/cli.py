@@ -16,11 +16,11 @@ import tomli_w
 
 from ifl.accounts import AccountError, Accounts, open_accounts
 from ifl.config import Config, ConfigError, load_config, to_raw
-from ifl.convert import ConvertError, convert_albums
+from ifl.convert import convert_albums
 from ifl.daemon import Daemon
+from ifl.immich import Failure, log_failure
 from ifl.lock import Locked, LockError, hold_lock
 from ifl.move import (
-    MoveError,
     MoveOptions,
     move_assets,
     pass_backlog,
@@ -164,15 +164,11 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
 async def _reupload_target(accounts: Accounts, asset_id: UUID) -> list[MoveAsset]:
     """The move item for a member's asset that is in no family album but that
     the family already has, or nothing, with the reason logged."""
-    try:
-        found = await member_asset(accounts, asset_id)
-        if found is None:
-            log.error("asset %s is not a member's asset, or it is in the trash", asset_id)
-            return []
-        one = await reuploads_among(accounts, [found])
-    except Exception as e:  # noqa: BLE001 - whatever Immich did, say it in one line
-        log.error("could not look up asset %s: %s: %s", asset_id, type(e).__name__, e)
+    found = await member_asset(accounts, asset_id)
+    if found is None:
+        log.error("asset %s is not a member's asset, or it is in the trash", asset_id)
         return []
+    one = await reuploads_among(accounts, [found])
     for s in one.skipped_reuploads:
         log.error("not moving %s", s)
     if not one.moves and not one.skipped_reuploads:
@@ -267,12 +263,14 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError, AccountError, LockError) as e:
         log.error("%s", e)
         return 2
-    except (ConvertError, MoveError) as e:
-        log.error("%s", e)
-        return 1
     except Locked as e:
         log.error("%s", e)
         return 3
+    except Failure as e:
+        # Each batch of work reports its own failures and goes on. What gets
+        # here stopped the command outright: a scan that Immich did not answer.
+        log_failure(log, "the command stopped", e)
+        return 1
     except KeyboardInterrupt:
         return 130
 

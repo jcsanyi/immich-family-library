@@ -39,8 +39,8 @@ from uuid import UUID
 from aiohttp import web
 
 from ifl.accounts import Accounts
-from ifl.config import Config
-from ifl.immich import TOKEN_HEADER
+from ifl.config import Config, ConfigError
+from ifl.immich import TOKEN_HEADER, log_failure
 from ifl.move import MoveManyResult, MoveOptions, move_assets
 from ifl.observer import describe_assets, member_asset, reuploads_among
 from ifl.process import run_pass
@@ -67,12 +67,15 @@ class Daemon:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self.stopping.set)
-        tasks = [asyncio.create_task(self.passes(), name="passes")]
+        tasks = []
         runner = None
         try:
             if self.cfg.webhook:
-                tasks.append(asyncio.create_task(self.drain(), name="webhook-drain"))
+                # Before any pass starts: an address that cannot be bound is a
+                # config error, and must stop the daemon with nothing touched.
                 runner = await self.serve()
+                tasks.append(asyncio.create_task(self.drain(), name="webhook-drain"))
+            tasks.append(asyncio.create_task(self.passes(), name="passes"))
             await self.stopping.wait()
             log.info("stopping")
         finally:
@@ -96,8 +99,8 @@ class Daemon:
                 log.info("pass done: %s", result)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                log.exception("pass failed; next one in %ds", self.cfg.interval_seconds)
+            except Exception as e:  # noqa: BLE001 - the daemon outlives any one pass
+                log_failure(log, f"pass failed; next one in {self.cfg.interval_seconds}s", e)
             # Outside the try: the webhook keeps counting while passes fail, and
             # the report is the one signal for a looping phone.
             self.report()
@@ -143,7 +146,13 @@ class Daemon:
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         host, port = self.cfg.webhook.bind
-        await web.TCPSite(runner, host, port).start()
+        try:
+            await web.TCPSite(runner, host, port).start()
+        except OSError as e:
+            await runner.cleanup()
+            raise ConfigError(
+                f"[webhook] cannot listen on {self.cfg.webhook.listen}: {e}"
+            ) from None
         log.info("webhook listening on %s%s", self.cfg.webhook.listen, self.cfg.webhook.path)
         return runner
 
@@ -177,8 +186,8 @@ class Daemon:
                 await self.handle_batch(batch)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                log.exception("webhook batch failed; the next pass will catch anything missed")
+            except Exception as e:  # noqa: BLE001 - the receiver outlives any one batch
+                log_failure(log, "webhook batch failed, left for the next pass", e)
 
     async def handle_batch(self, batch: list[tuple[UUID, UUID | None]]) -> None:
         found = []
@@ -186,11 +195,12 @@ class Daemon:
             try:
                 one = await member_asset(self.accounts, asset_id, owner_id)
             except Exception as e:  # noqa: BLE001 - one unreadable asset must not cost the batch
-                log.warning(
-                    "webhook: could not read asset %s (%s: %s); the next pass looks again",
-                    asset_id,
-                    type(e).__name__,
+                # A warning: the next pass reads the asset again, and nobody need act.
+                log_failure(
+                    log,
+                    f"webhook: asset {asset_id} not read, left for the next pass",
                     e,
+                    level=logging.WARNING,
                 )
                 continue
             if one is not None:

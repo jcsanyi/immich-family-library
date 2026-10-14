@@ -106,6 +106,113 @@ facial recognition reset is needed. Do not rely on faces or on people sharing.
 - `src/ifl/lock.py`: the run lock.
 - `src/ifl/cli.py`: argument parsing and the commands.
 
+## Errors
+
+### Where an error from Immich gets its type
+
+Each `Account` wraps its client in `guard` (`immich.py`) when it is made, so
+no account holds a bare client. The wrapper puts every call into the client
+inside `immich_call`. Whatever the call raises
+comes out as one type, `ImmichError`. That covers an error answer from
+Immich, a reply that the client cannot read, and a network failure. The
+wrapper finds the methods of the client as the code uses them, so a new
+client version needs no change here.
+
+The reason is that the type of an error does not say where the error came
+from. A timeout, an `OSError` and a validation error can each come from
+Immich or from a mistake in the service. The place does say it: an error
+that comes out of a call to the client is from Immich. So that decision is
+made one time, at the call, and no code above `immich.py` examines the type
+of a client or network error.
+
+An `ImmichError` holds the client method (`call`), the status if Immich
+answered (`status`), the line of the service that wanted the call (`place`),
+and the original error as its cause. `reason` is the same report without the
+call and the place, for a message that already gives them. `refused` is true
+when Immich answered 400, 401 or 403: Immich understood the request and said
+no to the key. An outage, a 5xx status and a reply that cannot be read are
+not refusals. Another 4xx status is not one either, because a proxy in front
+of Immich can send it. Its text is one line:
+`Immich answered 403 to albums.get_all_albums: Forbidden (observer.py:148 in scan_albums)`.
+
+The place is the nearest line outside `immich.py`. One client method can
+serve some parts of the service, and the method alone does not say which part
+made the call.
+
+An argument that the client refuses is the one error from inside a call
+that is not from Immich. The client checks the arguments of a method before
+it sends a request. The wrapper lets that error through unchanged, so it is a
+fault with a traceback. A method name that does not exist fails earlier, when
+the wrapper looks it up, and is a fault for the same reason.
+
+Three cases need to be known:
+
+- The two transfer helpers do not go through the wrapper. They use parts of
+  the client that the client does not check, so a wrong argument there would
+  look like an error from Immich. Each helper builds its request outside
+  `immich_call`, and puts the send and the read of the response inside it.
+  Each reports under one name, `the download of an original` or
+  `the upload of an asset`.
+- An argument that passes the checks of the client can still fail when the
+  client builds the request. That error comes out of a client call, and the
+  log names Immich. The text of the error names the argument.
+- During an upload, the client reads the temporary file of the service while
+  it sends it. If the disk fails at that moment, the error comes out of a
+  client call, and the log names Immich. The place of an error cannot show
+  this case. Look at the cause in the debug traceback.
+
+Closing a client is not a piece of work. `close_client` logs a failure at
+debug and continues, so that a client that does not close cannot change the
+result of a command.
+
+### Failures and faults
+
+`Failure` is the base class for a condition that the service found and can
+describe. `ImmichError`, `MoveError`, `ConvertError` and `DownloadMismatch`
+derive from it. When Immich refuses something that the code checks for, raise
+a `Failure`, not a `RuntimeError`.
+
+Any error that is not a `Failure` is a fault in the service.
+
+- `log_failure` logs one piece of work that failed. A `Failure` is one line,
+  and its traceback goes to the debug log, so `-v` shows it. A fault is an
+  error with its traceback.
+- `describe_error` gives one line for any error. Use it when an error goes
+  into a message.
+
+The default level of `log_failure` is error. Give it `level=logging.WARNING`
+when the service corrects the failure itself and no person has to act.
+
+### Where to catch
+
+Two levels catch errors, and each has one job.
+
+- **One piece of work.** One album, one fix, one photo, or one webhook asset.
+  The loop catches every error, records it in its result, and continues with
+  the next piece. The loops are `convert_albums`, `reconcile`, `move_assets`,
+  and `Daemon.handle_batch`.
+- **One process.** `main` in `cli.py` maps an error to an exit code. The two
+  loops of the daemon log an error and continue.
+
+Between these two levels, catch an error only when the code does something
+with it other than report it. An error that only needs a log line or a
+different wording must rise to one of the two levels, which report it once.
+
+Some errors are answers. When Immich refuses to add a photo to an album with
+one key, the refusal tells the move to try the next key
+(`_relink_member_album`). When Immich answers 400 for an asset, the answer
+tells the lookup that this member cannot read it (`get_asset_if_readable`).
+When Immich refuses a key at startup, the refusal is the result of the key
+check (`open_account`).
+A catch of that kind is correct, on two conditions:
+
+- It catches only the errors that carry the answer. That is an `ImmichError`
+  that is `refused`, or one exact status. An outage is not an answer to the
+  question, so it must rise: a key that got no reply was not refused. A fault
+  in the service is not an answer either, and it must keep its traceback.
+- The code acts on the answer. If no key is accepted, the move raises a
+  `MoveError` that lists what each key was told.
+
 ## Tests
 
 The tests use no network. `tests/fakes.py` is a fake Immich: albums with

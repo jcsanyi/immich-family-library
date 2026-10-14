@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -155,11 +156,27 @@ async def test_missing_permissions_are_named_and_all_covers_everything(stub):
     assert not a.client.closed
 
 
-async def test_a_failing_call_becomes_an_account_error_and_closes_the_client(stub):
-    stub.KEYS["k1"] = {"raise": ConnectionError("no route to host")}
-    with pytest.raises(AccountError, match=r"\[alice\] key check failed: no route to host"):
+async def test_only_a_refusal_from_immich_is_a_failed_key_check(stub):
+    from immichpy.client.generated.exceptions import UnauthorizedException
+
+    from ifl.immich import ImmichError
+
+    # Immich looked at the key and said no: the key is wrong.
+    stub.KEYS["k1"] = {
+        "raise": UnauthorizedException(status=401, body='{"message": "Invalid API key"}')
+    }
+    with pytest.raises(
+        AccountError,
+        match=r"\[alice\] key check failed: Immich answered 401 to users.get_my_user: Invalid",
+    ):
         await open_account(URL, AccountConfig("alice", "k1", "alice@x"), required=set())
     assert stub.made[0].closed
+
+    # No answer says nothing about the key. It is an outage, and reads as one.
+    stub.KEYS["k1"] = {"raise": ConnectionError("no route to host")}
+    with pytest.raises(ImmichError, match="users.get_my_user got no usable answer from Immich"):
+        await open_account(URL, AccountConfig("alice", "k1", "alice@x"), required=set())
+    assert stub.made[1].closed
 
 
 async def test_the_server_must_be_at_least_the_minimum_version(stub):
@@ -269,3 +286,142 @@ async def test_the_admin_key_may_belong_to_the_family_or_a_member(stub, shared_w
     owner = opened.family if shared_with == "kf" else opened.members["alice"]
     assert opened.admin.user_id == owner.user_id and len(opened.by_user_id()) == 3
     await opened.close()
+
+
+async def test_a_fault_during_the_key_check_is_not_reported_as_a_wrong_key(monkeypatch):
+    closed = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.users = SimpleNamespace(get_my_user=self.me)
+
+        async def me(self):
+            return SimpleNamespace(email=None)  # the check then trips over it, in its own code
+
+        async def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
+
+    with pytest.raises(AttributeError):
+        await open_account(
+            "https://x.example", AccountConfig("alice", "k", "alice@x"), required=set()
+        )
+    assert closed == [True]
+
+
+async def test_a_reply_the_client_cannot_read_is_not_a_failed_key_check(monkeypatch):
+    import pydantic
+
+    from ifl.immich import ImmichError
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.users = SimpleNamespace(get_my_user=self.unreadable)
+
+        async def unreadable(self):
+            # What the generated client raises for a body of another Immich version.
+            UserAdminResponseDto.model_validate({"id": "not a user"})
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
+
+    with pytest.raises(ImmichError) as failed:
+        await open_account("https://x.example", AccountConfig("alice", "k"), required=set())
+    text = str(failed.value)
+    assert text.startswith(
+        "users.get_my_user got no usable answer from Immich: "
+        "ValidationError: 18 validation errors for UserAdminResponseDto"
+    )
+    # One line, cut short: the eighteen fields are in the debug traceback.
+    assert "\n" not in text and len(text) < 440
+    assert re.search(r" \.\.\. \(accounts\.py:\d+ in open_account\)$", text)
+    assert isinstance(failed.value.__cause__, pydantic.ValidationError)
+
+
+async def test_a_client_that_will_not_close_changes_nothing(monkeypatch):
+    from ifl.accounts import Account, Accounts, close_client
+
+    closed = []
+
+    def client(name, fails=False):
+        async def close():
+            closed.append(name)
+            if fails:
+                raise OSError("session already gone")
+
+        return SimpleNamespace(close=close)
+
+    family = Account("family", "f@x", uuid4(), client("family", fails=True))
+    alice = Account("alice", "a@x", uuid4(), client("alice"))
+    await Accounts(family=family, members={"alice": alice}, admin=None).close()
+    assert closed == ["family", "alice"]  # the second is still closed, and nothing is raised
+
+    await close_client(client("again", fails=True))
+
+
+async def test_the_version_check_reports_as_the_key_check_does():
+    from fakes import outage, refusal
+
+    from ifl.immich import ImmichError
+
+    answers = []
+
+    async def version():
+        raise answers.pop(0)
+
+    client = SimpleNamespace(server=SimpleNamespace(get_server_version=version))
+
+    answers.append(refusal("server.get_server_version", status=403))
+    with pytest.raises(AccountError, match="server version check failed: Immich answered 403"):
+        await acc.check_server(client)
+
+    answers.append(outage("server.get_server_version"))
+    with pytest.raises(ImmichError, match="got no usable answer from Immich"):
+        await acc.check_server(client)
+
+
+def test_an_account_never_holds_a_bare_client():
+    from immichpy import AsyncClient
+
+    from ifl.accounts import Account
+    from ifl.immich import guard, unguarded
+
+    bare = AsyncClient(base_url="https://immich.example", api_key="unused")
+    account = Account("alice", "a@x", uuid4(), bare)
+    assert account.client is not bare and unguarded(account.client) is bare
+    # Guarding twice changes nothing.
+    assert guard(account.client) is account.client
+    assert Account("bob", "b@x", uuid4(), account.client).client is account.client
+
+
+async def test_the_version_is_checked_before_the_first_key(monkeypatch):
+    """A server that is too old answers the key check with a reply the client
+    cannot read. The version is what explains that, so it has to come first."""
+    asked = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.server = SimpleNamespace(get_server_version=self.version)
+            self.users = SimpleNamespace(get_my_user=self.me)
+
+        async def version(self):
+            asked.append("version")
+            return SimpleNamespace(major=3, minor=0, patch=4)
+
+        async def me(self):
+            asked.append("key")
+            UserAdminResponseDto.model_validate({"id": "an older shape"})
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
+
+    with pytest.raises(AccountError, match=r"server is 3\.0\.4, need 3\.3"):
+        await open_account(
+            "https://x.example", AccountConfig("family", "k"), required=set(), check_version=True
+        )
+    assert asked == ["version"]

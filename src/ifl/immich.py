@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import hashlib
-from collections.abc import AsyncIterator, Iterable
+import inspect
+import json
+import logging
+import os
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +19,7 @@ from typing import Any
 from uuid import UUID
 
 import aiohttp
-from immichpy.client.generated.exceptions import BadRequestException
+from immichpy.client.generated.exceptions import ApiException
 from immichpy.client.generated.models.add_users_dto import AddUsersDto
 from immichpy.client.generated.models.album_response_dto import AlbumResponseDto
 from immichpy.client.generated.models.album_user_add_dto import AlbumUserAddDto
@@ -107,7 +113,11 @@ class UserNames:
         try:
             user = await self.client.users.get_user(id=user_id)
             self.cache[user_id] = user.email
-        except Exception:
+        except ImmichError as e:
+            if not e.refused:
+                raise
+            # Immich will not show this user to the family. The name is for a
+            # message only, so the id will do.
             self.cache[user_id] = str(user_id)
         return self.cache[user_id]
 
@@ -182,6 +192,187 @@ async def add_album_assets(
     return await client.albums.add_assets_to_album(id=album_id, bulk_ids_dto=BulkIdsDto(ids=ids))
 
 
+class Failure(Exception):
+    """Something the service found wrong and can say in its own words: a refusal
+    from Immich that it checked for, or a condition it tested. The text is the
+    whole report, so it needs no traceback. The move and the conversion have
+    their own kinds."""
+
+
+class ImmichError(Failure):
+    """A call to Immich did not work: Immich answered with an error, sent a
+    reply the client could not read, or could not be reached. The error that
+    the client raised is the cause.
+
+    `call` is the client method, `status` is Immich's answer when there was
+    one, and `place` is the line of the service that wanted the call. `reason`
+    is what went wrong without the call and the place, for a message that
+    already says them."""
+
+    def __init__(self, call: str, cause: Exception):
+        self.call = call
+        self.status = None
+        self.place = _calling_place()
+        if isinstance(cause, ApiException):
+            self.status = cause.status
+            # The client's own text runs to four lines and carries every
+            # response header. The status and Immich's message are the news.
+            try:
+                message = json.loads(cause.body or "").get("message")
+            except (ValueError, AttributeError, TypeError):
+                message = None
+            if isinstance(message, list):
+                message = "; ".join(str(m) for m in message)
+            answered = f"Immich answered {cause.status or 'with no status'}"
+            detail = _one_short_line(str(message or cause.reason or "no detail"))
+            self.reason, text = f"{answered}: {detail}", f"{answered} to {call}: {detail}"
+        else:
+            # A reply that fails validation lists every field. The start says
+            # which model, and the rest is in the debug traceback.
+            self.reason = f"no usable answer from Immich: {_one_short_line(describe_error(cause))}"
+            text = f"{call} got {self.reason}"
+        super().__init__(f"{text} ({self.place})" if self.place else text)
+
+    @property
+    def refused(self) -> bool:
+        """Immich understood the request and said no. These are the three answers
+        it gives to a key: 400 for no access to the thing asked for, 401 for a
+        key it does not know, 403 for a permission the key lacks. An outage, a
+        server error and a reply that could not be read are not refusals, and
+        nor is another 4xx, which a proxy in front of Immich is as likely to
+        have sent: 404 with no backend, 408 or 429 when it is busy."""
+        return self.status in (400, 401, 403)
+
+
+def _one_short_line(text: str, limit: int = 300) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit] + " ..."
+
+
+_THIS_FILE = __file__
+_PACKAGE = os.path.dirname(__file__)
+
+
+def _calling_place() -> str | None:
+    """The nearest line of the service outside this module, as the stack stands
+    now. One client method serves several parts of the service, so the method
+    alone does not say which part was at work. The helpers here are skipped:
+    each is one call, and the line that wanted it is the news."""
+    frame = inspect.currentframe()
+    while frame is not None:
+        file = frame.f_code.co_filename
+        if file != _THIS_FILE and os.path.dirname(file) == _PACKAGE:
+            return f"{os.path.basename(file)}:{frame.f_lineno} in {frame.f_code.co_name}"
+        frame = frame.f_back
+    return None
+
+
+@contextmanager
+def immich_call(name: str) -> Iterator[None]:
+    """Whatever the block raises comes out as an `ImmichError` that names the
+    call. What counts as Immich's doing is decided here, by where the error
+    came from, and nowhere by its type: the same types are raised by the
+    service's own mistakes.
+
+    Two things raised in the block are the service's own. A `Failure` is its
+    own finding. And an argument that the client refused never reached Immich."""
+    try:
+        yield
+    except Failure:
+        raise
+    except Exception as e:
+        if _refused_argument(e, name):
+            raise
+        raise ImmichError(name, e) from e
+
+
+def _refused_argument(e: Exception, call: str) -> bool:
+    """The client checks the arguments of a method before it sends anything, and
+    reports a bad one as a validation error titled with the method. A reply it
+    cannot read is the same type of error, titled with the model of the reply."""
+    title = getattr(e, "title", None)
+    return isinstance(title, str) and title.rsplit(".", 1)[-1] == call.rsplit(".", 1)[-1]
+
+
+_PLAIN_VALUES = (str, bytes, int, float, bool, type(None), dict, list, tuple, set)
+
+
+class _Guarded:
+    """The client, or one of its API objects, with every method called inside
+    `immich_call`. Methods are found as they are used, so a new client version
+    needs nothing here. It goes two levels deep and no further, which is where
+    the methods are: `client.albums.get_all_albums`. Anything else that an API
+    object holds is returned as it is."""
+
+    def __init__(self, target: Any, path: str = ""):
+        self._guard_target = target
+        self._guard_path = path
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_guard_"):
+            raise AttributeError(name)  # asked for before __init__ ran, as a copy does
+        attr = getattr(self._guard_target, name)
+        path = f"{self._guard_path}.{name}" if self._guard_path else name
+        if callable(attr):
+            return _guarded_call(attr, path)
+        if self._guard_path or isinstance(attr, _PLAIN_VALUES):
+            return attr
+        return _Guarded(attr, path)
+
+
+def _guarded_call(fn: Callable[..., Any], path: str) -> Callable[..., Any]:
+    @functools.wraps(fn)
+    def call(*args: Any, **kwargs: Any) -> Any:
+        with immich_call(path):
+            result = fn(*args, **kwargs)
+        if not inspect.isawaitable(result):
+            return result
+
+        async def answer() -> Any:
+            with immich_call(path):
+                return await result
+
+        return answer()
+
+    return call
+
+
+def guard(client: AsyncClient) -> AsyncClient:
+    """The client as the service uses it: see `immich_call`. A client that is
+    guarded already is returned as it is."""
+    return client if isinstance(client, _Guarded) else _Guarded(client)  # type: ignore[return-value]
+
+
+def unguarded(client: AsyncClient) -> AsyncClient:
+    """The client underneath, for the two transfers. They use parts of the
+    client that it does not check, so they place `immich_call` themselves."""
+    return client._guard_target if isinstance(client, _Guarded) else client
+
+
+def describe_error(e: BaseException) -> str:
+    """Any error as one line, for a log line or a result. A `Failure` is its
+    own text. Anything else is its type and its text."""
+    text = " ".join(str(e).split())
+    if isinstance(e, Failure):
+        return text
+    return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
+def log_failure(log: logging.Logger, what: str, e: Exception, *, level: int = logging.ERROR) -> str:
+    """Log one piece of work that failed, and return the reason as one line.
+
+    A `Failure` is one line at `level`: the reason is all there is to know, and
+    the traceback goes to debug. Anything else is a fault in the service, and
+    is an error with its traceback whatever the level."""
+    why = describe_error(e)
+    if isinstance(e, Failure):
+        log.log(level, "%s: %s", what, why)
+        log.debug("the traceback of %s", what, exc_info=e)
+    else:
+        log.error("%s: %s", what, why, exc_info=e)
+    return why
+
+
 def bulk_failure(r: BulkIdResponseDto) -> str | None:
     """Why one entry of a bulk response failed, or None when it did not. An id
     that was already there comes back as a 'duplicate' failure, and is not one."""
@@ -216,7 +407,9 @@ async def get_asset_if_readable(client: AsyncClient, asset_id: UUID) -> AssetRes
     access to. Any other failure is raised."""
     try:
         return await get_asset(client, asset_id)
-    except BadRequestException:
+    except ImmichError as e:
+        if e.status != 400:
+            raise
         return None
 
 
@@ -249,6 +442,7 @@ async def download_asset_file(client: AsyncClient, file_id: UUID) -> bytes:
 # return bytes only. The request builders beneath them don't care, so these two
 # helpers call the builders and hand aiohttp a stream.
 CHUNK = 1 << 20
+DOWNLOAD, UPLOAD = "the download of an original", "the upload of an asset"
 # A download is cut off when the server sends nothing for this long.
 DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=300)
 # aiohttp's read timeout would fire while a long upload is still being sent, so
@@ -256,7 +450,7 @@ DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=
 SLOWEST_UPLOAD = 125_000  # bytes a second
 
 
-class DownloadMismatch(Exception):
+class DownloadMismatch(Failure):
     """The bytes that arrived are not the asset Immich says it has."""
 
 
@@ -265,7 +459,9 @@ async def download_original(
 ) -> None:
     """Write the asset's original file to `dest`, and make sure it arrived whole:
     the upload that follows is what the original gets trashed for."""
-    api = client.assets
+    api = unguarded(client).assets
+    # Built outside `immich_call`: an argument that the builder refuses is the
+    # service's own mistake, and the client does not check these itself.
     request = api._download_asset_serialize(
         id=asset_id,
         edited=None,
@@ -276,11 +472,13 @@ async def download_original(
         _headers=None,
         _host_index=0,
     )
-    res = await api.api_client.call_api(*request, _request_timeout=DOWNLOAD_TIMEOUT)
+    with immich_call(DOWNLOAD):
+        res = await api.api_client.call_api(*request, _request_timeout=DOWNLOAD_TIMEOUT)
     try:
         if res.status != 200:
-            await res.read()
-            api.api_client.response_deserialize(res, {"200": "bytes"})  # raises for the status
+            with immich_call(DOWNLOAD):
+                await res.read()
+                api.api_client.response_deserialize(res, {"200": "bytes"})  # raises for the status
         digest = hashlib.sha1(usedforsecurity=False)
 
         def keep(chunk: bytes) -> None:
@@ -288,7 +486,14 @@ async def download_original(
             digest.update(chunk)
 
         with dest.open("wb") as f:
-            async for chunk in res.response.content.iter_chunked(CHUNK):
+            # Reading the body is Immich's part. Writing the file is the
+            # service's own, so it stays outside.
+            chunks = res.response.content.iter_chunked(CHUNK)
+            while True:
+                with immich_call(DOWNLOAD):
+                    chunk = await anext(chunks, None)
+                if chunk is None:
+                    break
                 await asyncio.to_thread(keep, chunk)
     finally:
         res.response.release()
@@ -342,7 +547,7 @@ async def tag_asset(client: AsyncClient, tag_id: UUID, asset_id: UUID) -> None:
     results = await client.tags.tag_assets(id=tag_id, bulk_ids_dto=BulkIdsDto(ids=[asset_id]))
     for r in results:
         if why := bulk_failure(r):
-            raise RuntimeError(f"tagging failed: {why}")
+            raise Failure(f"tagging failed: {why}")
 
 
 async def upload_asset(
@@ -361,7 +566,7 @@ async def upload_asset(
     """Upload the file at `path` plus sidecar. Returns (asset id, created). A
     duplicate of something this account already has returns that asset's id and
     False."""
-    api = client.assets
+    api = unguarded(client).assets
     timeout = aiohttp.ClientTimeout(total=300 + path.stat().st_size / SLOWEST_UPLOAD)
     with path.open("rb") as f:
         # No `filename` form field: the server applies it to every part, so the
@@ -385,10 +590,12 @@ async def upload_asset(
             _headers=None,
             _host_index=0,
         )
-        res = await api.api_client.call_api(*request, _request_timeout=timeout)
-        await res.read()
+        with immich_call(UPLOAD):
+            res = await api.api_client.call_api(*request, _request_timeout=timeout)
+            await res.read()
     types = {"200": "AssetMediaResponseDto", "201": "AssetMediaResponseDto"}
-    made = api.api_client.response_deserialize(res, types).data
+    with immich_call(UPLOAD):
+        made = api.api_client.response_deserialize(res, types).data
     return made.id, made.status.value == "created"
 
 

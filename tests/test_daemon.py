@@ -11,7 +11,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
-from fakes import ALICE, BOB, FAMILY, TEMP_DIR, FakeAsset, make_accounts, patch_world
+from fakes import ALICE, BOB, FAMILY, TEMP_DIR, FakeAsset, make_accounts, outage, patch_world
 
 from ifl.config import parse_config
 from ifl.daemon import Daemon
@@ -130,25 +130,27 @@ async def test_drain_coalesces_events(world, daemon, monkeypatch):
     assert seen == [ids]
 
 
-async def test_a_server_that_fails_to_start_takes_the_pass_task_down_with_it(
+async def test_a_server_that_fails_to_start_stops_the_daemon_before_any_pass(
     world, daemon, monkeypatch
 ):
-    started = asyncio.Event()
+    passes = []
 
-    async def pass_forever(*a, **kw):
-        started.set()
+    async def a_pass(*a, **kw):
+        passes.append(1)
         await asyncio.sleep(3600)
 
     async def cannot_bind(self):
-        await started.wait()  # the pass task is already running when the bind fails
+        await asyncio.sleep(0)  # give a pass every chance to start, if one were waiting
         raise OSError("address already in use")
 
-    monkeypatch.setattr("ifl.daemon.run_pass", pass_forever)
+    monkeypatch.setattr("ifl.daemon.run_pass", a_pass)
     monkeypatch.setattr(Daemon, "serve", cannot_bind)
 
     with pytest.raises(OSError, match="address already in use"):
-        await daemon.run()
+        await asyncio.wait_for(daemon.run(), 5)
 
+    # Nothing was touched: no pass ran, and no task is left behind.
+    assert passes == []
     left = [
         t.get_name() for t in asyncio.all_tasks() if t.get_name() in ("passes", "webhook-drain")
     ]
@@ -346,7 +348,7 @@ async def test_one_asset_that_cannot_be_read_does_not_cost_the_batch(
 
     async def flaky(client, asset_id):
         if asset_id == lost:
-            raise RuntimeError("immich went away")
+            raise outage("assets.get_asset_info")
         return await real(client, asset_id)
 
     monkeypatch.setattr("ifl.observer.get_asset_if_readable", flaky)
@@ -355,7 +357,11 @@ async def test_one_asset_that_cannot_be_read_does_not_cost_the_batch(
         await daemon.handle_batch([(lost, ALICE), (re.id, ALICE)])
 
     # Not "no member has it": the failure is said, and the rest of the batch goes on.
-    assert f"could not read asset {lost} (RuntimeError: immich went away)" in caplog.text
+    assert (
+        f"webhook: asset {lost} not read, left for the next pass: assets.get_asset_info got "
+        "no usable answer from Immich: ClientConnectionError: immich went away"
+    ) in caplog.text
+    assert "Traceback" not in caplog.text  # Immich failing is no fault of the service
     assert re.is_trashed and daemon.tally == {ALICE: 1}
 
 
@@ -374,3 +380,19 @@ async def test_a_clean_stop_reports_the_tally_it_would_otherwise_lose(world, mon
 
     assert "alice re-uploaded 2 photos the family already has since" in caplog.text
     assert daemon.tally == {}
+
+
+async def test_a_listen_address_that_is_taken_is_a_config_error(world):
+    import socket
+
+    from ifl.config import ConfigError
+
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        daemon = local_daemon()
+        webhook = replace(daemon.cfg.webhook, listen=f"127.0.0.1:{taken.getsockname()[1]}")
+        daemon.cfg = replace(daemon.cfg, webhook=webhook)
+
+        with pytest.raises(ConfigError, match=r"\[webhook\] cannot listen on 127\.0\.0\.1:\d+"):
+            await daemon.serve()

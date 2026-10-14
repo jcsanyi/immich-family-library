@@ -232,17 +232,44 @@ def test_a_lock_that_cannot_be_opened_exits_2_without_a_traceback(world, config,
     assert run(config(), "observe") == 0
 
 
-def test_move_one_reports_an_immich_failure_in_one_line(world, config, monkeypatch, caplog):
+def test_an_immich_failure_stops_a_command_with_one_line_and_exit_1(
+    world, config, monkeypatch, caplog
+):
+    from fakes import outage
+
     path = config()
     world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
 
-    async def down(client, asset_id):
-        raise RuntimeError("immich went away")
+    async def down(*args, **kwargs):
+        raise outage()
 
+    # In the one lookup that `move <id>` makes outside a batch of work.
     monkeypatch.setattr("ifl.observer.get_asset_if_readable", down)
-    asset_id = uuid4()
-
     with caplog.at_level("ERROR", logger="ifl"):
-        assert run(path, "move", str(asset_id)) == 1
+        assert run(path, "move", str(uuid4())) == 1
+    assert (
+        "the command stopped: albums.get_all_albums got no usable answer from Immich: "
+        "ClientConnectionError: immich went away"
+    ) in caplog.text
 
-    assert f"could not look up asset {asset_id}: RuntimeError: immich went away" in caplog.text
+    # And in a scan, for a command that reads and for one that writes.
+    monkeypatch.setattr("ifl.observer.list_albums", down)
+    caplog.clear()
+    with caplog.at_level("ERROR", logger="ifl"):
+        assert run(path, "observe") == 1
+        assert run(path, "process") == 1
+    assert caplog.text.count("the command stopped: albums.get_all_albums got no usable") == 2
+    assert "Traceback" not in caplog.text
+
+
+def test_a_fault_in_the_service_is_not_dressed_up_as_an_immich_failure(world, config, monkeypatch):
+    path = config()
+    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR})
+
+    async def broken(*args, **kwargs):
+        raise KeyError("owner")
+
+    monkeypatch.setattr("ifl.observer.list_albums", broken)
+
+    with pytest.raises(KeyError):
+        run(path, "observe")

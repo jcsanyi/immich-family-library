@@ -12,6 +12,8 @@ the family is a manual job.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from immichpy.client.generated.models.album_user_role import AlbumUserRole
@@ -24,6 +26,7 @@ from ifl.immich import (
     create_album,
     create_partner,
     create_workflow,
+    log_failure,
     set_album_user_role,
     update_workflow,
 )
@@ -54,13 +57,6 @@ class ReconcileResult:
         return "; ".join(parts)
 
 
-def _failed(result: ReconcileResult, what: str, e: Exception) -> None:
-    """One fix raised. Log it, list it, and let the others run; the scan finds
-    this one again next pass."""
-    log.exception("could not %s", what)
-    result.failed.append(f"{what}: {type(e).__name__}: {e}")
-
-
 async def reconcile(
     accounts: Accounts, scan: ReconcileScan, webhook: WebhookConfig | None = None
 ) -> ReconcileResult:
@@ -71,8 +67,17 @@ async def reconcile(
     names = {m.user_id: m.name for m in accounts.members.values()}
     result = ReconcileResult(created_dropbox=None, shared=0, promoted=0)
 
-    if scan.create_dropbox:
+    @contextmanager
+    def attempt(what: str) -> Iterator[None]:
+        """One fix. If it raises, list it and let the others run: the scan finds
+        it again next pass."""
         try:
+            yield
+        except Exception as e:  # noqa: BLE001 - every fix is independent and idempotent
+            result.failed.append(f"{what}: {log_failure(log, f'could not {what}', e)}")
+
+    if scan.create_dropbox:
+        with attempt(f"create dropbox {scan.create_dropbox!r}"):
             album = await create_album(family.client, scan.create_dropbox)
             result.created_dropbox = album
             await add_album_users(family.client, album.id, editors)
@@ -83,36 +88,28 @@ async def reconcile(
                 album.id,
                 len(editors),
             )
-        except Exception as e:  # noqa: BLE001 - every fix is independent and idempotent
-            _failed(result, f"create dropbox {scan.create_dropbox!r}", e)
 
     for fix in scan.fixes:
         if fix.add:
-            try:
+            with attempt(f"share {fix.album.name!r}"):
                 await add_album_users(family.client, fix.album.id, {u: editors[u] for u in fix.add})
                 result.shared += len(fix.add)
                 log.info("shared %r with %d more members", fix.album.name, len(fix.add))
-            except Exception as e:  # noqa: BLE001
-                _failed(result, f"share {fix.album.name!r}", e)
         for u in fix.promote:
-            try:
+            with attempt(f"promote {names.get(u, u)} on {fix.album.name!r}"):
                 await set_album_user_role(family.client, fix.album.id, u, AlbumUserRole.EDITOR)
                 result.promoted += 1
                 log.info("promoted %s to editor on %r", names.get(u, u), fix.album.name)
-            except Exception as e:  # noqa: BLE001
-                _failed(result, f"promote {names.get(u, u)} on {fix.album.name!r}", e)
 
     for uid in scan.partner_with:
-        try:
+        with attempt(f"partner-share with {names.get(uid, uid)}"):
             await create_partner(family.client, uid)
             result.partnered += 1
             log.info("partner-shared the family library with %s", names.get(uid, uid))
-        except Exception as e:  # noqa: BLE001
-            _failed(result, f"partner-share with {names.get(uid, uid)}", e)
 
     if webhook is not None:
         for fix in scan.workflows:
-            try:
+            with attempt(f"set up the webhook workflow for {fix.member.name}"):
                 if fix.existing is None:
                     await create_workflow(
                         fix.member.client, WORKFLOW_NAME, webhook.url, webhook.token
@@ -124,6 +121,4 @@ async def reconcile(
                     )
                     log.info("fixed the webhook workflow for %s", fix.member.name)
                 result.workflows += 1
-            except Exception as e:  # noqa: BLE001
-                _failed(result, f"set up the webhook workflow for {fix.member.name}", e)
     return result
