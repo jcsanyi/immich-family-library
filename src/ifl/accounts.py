@@ -15,7 +15,7 @@ from uuid import UUID
 from immichpy.client.main import AsyncClient
 
 from ifl.config import AccountConfig, Config
-from ifl.immich import describe_error
+from ifl.immich import EXPECTED_ERRORS, describe_error
 
 log = logging.getLogger(__name__)
 
@@ -120,12 +120,13 @@ async def open_account(
         missing = required - have if "all" not in have else set()
         if missing:
             raise AccountError(f"[{cfg.name}] key is missing permissions: {sorted(missing)}")
-    except AccountError:
-        await client.close()
-        raise
-    except Exception as e:
+    except EXPECTED_ERRORS as e:
+        # Immich's answer to a key is the check itself: a refusal is a wrong key.
         await client.close()
         raise AccountError(f"[{cfg.name}] key check failed: {describe_error(e)}") from e
+    except BaseException:
+        await client.close()
+        raise
     log.info("account ok: %s (%s)", cfg.name, me.email)
     return Account(name=cfg.name, email=me.email, user_id=me.id, client=client)
 

@@ -679,8 +679,17 @@ async def test_user_names_fall_back_from_config_to_album_to_lookup_to_the_id():
     assert await names.describe(carol) == "carol@x"  # cached, no second lookup
     assert calls == [("get_user", (), {"id": carol})]
 
-    failing = stub_client([], users={"get_user": [None]})
+    # A user Immich will not show: the id stands in. A fault is not hidden that way.
+    from immichpy.client.generated.exceptions import BadRequestException
+
+    async def refused(**kwargs):
+        raise BadRequestException(status=400)
+
+    failing = SimpleNamespace(users=SimpleNamespace(get_user=refused))
     assert await immich.UserNames(failing, {}).describe(dave) == str(dave)
+    broken = stub_client([], users={"get_user": [None]})
+    with pytest.raises(AttributeError):
+        await immich.UserNames(broken, {}).describe(dave)
 
 
 async def test_get_asset_if_readable_takes_only_a_400_to_mean_no_access(monkeypatch):
@@ -722,6 +731,11 @@ def test_describe_error_gives_one_line_for_any_error():
     assert immich.describe_error(gateway) == "Immich answered 502: Bad Gateway"
     assert immich.describe_error(ServiceException(status=500)) == "Immich answered 500: no detail"
 
+    # Whatever Immich puts in the message, the result is one line.
+    odd = BadRequestException(status=None, body='{"message":{"id":"must be\\na UUID"}}')
+    assert "\n" not in immich.describe_error(odd)
+    assert immich.describe_error(odd).startswith("Immich answered with no status: ")
+
     assert immich.describe_error(RuntimeError("went\naway")) == "RuntimeError: went away"
     assert immich.describe_error(TimeoutError()) == "TimeoutError"
 
@@ -743,13 +757,50 @@ def test_log_failure_keeps_the_traceback_for_faults_in_the_service(caplog):
         ),
         (aiohttp.ClientConnectionError("refused"), "ClientConnectionError: refused", False),
         (TimeoutError(), "TimeoutError", False),
+        (ConnectionResetError("reset by peer"), "ConnectionResetError: reset by peer", False),
         (KeyError("owner"), "KeyError: 'owner'", True),
     ]
-    for error, why, traceback in cases:
-        caplog.clear()
-        with caplog.at_level(logging.ERROR, logger="ifl.test"):
-            assert immich.log_failure(log, "a.jpg not moved", error) == why
-        (record,) = caplog.records
-        assert record.getMessage() == f"a.jpg not moved: {why}"
-        assert bool(record.exc_info) is traceback
-        assert record.funcName == "test_log_failure_keeps_the_traceback_for_faults_in_the_service"
+    for error, why, fault in cases:
+        for level in (logging.ERROR, logging.WARNING):
+            caplog.clear()
+            with caplog.at_level(logging.DEBUG, logger="ifl.test"):
+                assert immich.log_failure(log, "a.jpg not moved", error, level=level) == why
+            said, *rest = caplog.records
+            assert said.getMessage() == f"a.jpg not moved: {why}"
+            assert said.funcName == "test_log_failure_keeps_the_traceback_for_faults_in_the_service"
+            if fault:
+                # A fault is an error with its traceback, whatever level was asked for.
+                assert said.levelno == logging.ERROR and said.exc_info and not rest
+            else:
+                # Anything expected is one line at that level; the traceback is for debug.
+                assert said.levelno == level and not said.exc_info
+                assert [r.levelno for r in rest] == [logging.DEBUG] and rest[0].exc_info
+
+
+async def test_an_error_from_outside_says_which_call_and_where_it_was_made():
+    import re
+
+    import aiohttp
+
+    from ifl.accounts import Account, Accounts
+    from ifl.observer import member_asset
+
+    async def down(**kwargs):
+        raise aiohttp.ClientConnectionError("immich went away")
+
+    client = SimpleNamespace(assets=SimpleNamespace(get_asset_info=down))
+    alice = Account(name="alice", email="a@x", user_id=uuid4(), client=client)
+    accounts = Accounts(family=alice, members={"alice": alice}, admin=None)
+
+    with pytest.raises(aiohttp.ClientConnectionError) as failed:
+        await member_asset(accounts, uuid4())
+
+    # The Immich call, then the line of the service that made it.
+    assert re.fullmatch(
+        r"ClientConnectionError: immich went away "
+        r"\(get_asset at observer\.py:\d+ in member_asset\)",
+        immich.locate_error(failed.value),
+    )
+    # A failure the service names itself, and a fault, are left as they are.
+    assert immich.locate_error(immich.Failure("no copy")) == "no copy"
+    assert immich.locate_error(KeyError("x")) == "KeyError: 'x'"

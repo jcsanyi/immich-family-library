@@ -117,7 +117,21 @@ Two levels catch errors, and each has one job.
 - **One process.** `main` in `cli.py` maps an error to an exit code. The two
   loops of the daemon log an error and continue.
 
-Do not catch an error between these two levels. Let it rise.
+Between these two levels, catch an error only when the code does something
+with it other than report it. An error that only needs a log line or a
+different wording must rise to one of the two levels, which report it once.
+
+Some errors are answers. When Immich refuses to add a photo to an album with
+one key, the refusal tells the move to try the next key
+(`_relink_member_album`). When Immich answers 400 for an asset, the answer
+tells the lookup that this member cannot read it (`get_asset_if_readable`).
+A catch of that kind is correct, on two conditions:
+
+- It catches only the errors that carry the answer: a named status, or
+  `EXPECTED_ERRORS`. It does not catch `Exception`. A fault in the service is
+  not an answer, and it must keep its traceback.
+- The code acts on the answer. If no key is accepted, the move raises a
+  `MoveError` that lists what each key was told.
 
 Three things in `immich.py` keep the reports the same everywhere:
 
@@ -126,11 +140,19 @@ Three things in `immich.py` keep the reports the same everywhere:
   When Immich refuses something that the code checks for, raise a `Failure`,
   not a `RuntimeError`.
 - `log_failure` logs one piece of work that failed. A `Failure`, or an error
-  from Immich or the network (`IMMICH_ERRORS`), is one line. Any other error
-  is a fault in the service, and the log keeps its traceback.
+  from outside the service (`OUTSIDE_ERRORS`: Immich, the network, the disk),
+  is one line. Any other error is a fault in the service, and the log keeps
+  its traceback. The traceback of an expected error goes to the debug log, so
+  `-v` shows it.
 - `describe_error` gives one line for any error. Use it when an error goes
   into a message. The text of the client for an Immich error has four lines
   and all the response headers.
+- `locate_error` adds the place to an error from outside: the Immich call and
+  the line of the service that made it. `log_failure` and `main` use it,
+  because without a traceback nothing else says where the error came from.
+
+The default level of `log_failure` is error. Give it `level=logging.WARNING`
+when the service corrects the failure itself and no person has to act.
 
 ## Tests
 

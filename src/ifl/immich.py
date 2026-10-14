@@ -7,6 +7,7 @@ import base64
 import hashlib
 import json
 import logging
+import traceback
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -109,7 +110,8 @@ class UserNames:
         try:
             user = await self.client.users.get_user(id=user_id)
             self.cache[user_id] = user.email
-        except Exception:
+        except EXPECTED_ERRORS:
+            # The name is for a message only. Without one, the id will do.
             self.cache[user_id] = str(user_id)
         return self.cache[user_id]
 
@@ -191,9 +193,12 @@ class Failure(Exception):
     their own kinds."""
 
 
-# Immich answered with an error, or could not be reached. Like a `Failure`,
-# this says nothing about the service's own code.
-IMMICH_ERRORS = (ApiException, aiohttp.ClientError, TimeoutError)
+# Immich answered with an error, or the network or the disk failed. Like a
+# `Failure`, none of these says anything about the service's own code.
+OUTSIDE_ERRORS = (ApiException, aiohttp.ClientError, OSError)
+EXPECTED_ERRORS = (Failure, *OUTSIDE_ERRORS)
+
+_OWN_CODE = Path(__file__).parent
 
 
 def describe_error(e: BaseException) -> str:
@@ -212,21 +217,43 @@ def describe_error(e: BaseException) -> str:
             message = None
         if isinstance(message, list):
             message = "; ".join(str(m) for m in message)
-        return f"Immich answered {e.status}: {message or e.reason or 'no detail'}"
+        detail = " ".join(str(message or e.reason or "no detail").split())
+        return f"Immich answered {e.status or 'with no status'}: {detail}"
     text = " ".join(str(e).split())
     return f"{type(e).__name__}: {text}" if text else type(e).__name__
 
 
-def log_failure(log: logging.Logger, what: str, e: Exception) -> str:
+def locate_error(e: BaseException) -> str:
+    """`describe_error`, and for an error from outside, where the service was
+    when it happened: the Immich call, and the line that made it. That is what
+    a traceback would have said, kept to the one line. A `Failure` already
+    says what it found, and a fault keeps its whole traceback."""
+    why = describe_error(e)
+    if isinstance(e, Failure) or not isinstance(e, OUTSIDE_ERRORS):
+        return why
+    own = [f for f in traceback.extract_tb(e.__traceback__) if Path(f.filename).parent == _OWN_CODE]
+    if not own:
+        return why
+    call = own[-1]
+    caller = next((f for f in reversed(own) if Path(f.filename) != Path(__file__)), call)
+    at = f"{Path(caller.filename).name}:{caller.lineno} in {caller.name}"
+    return f"{why} ({at})" if call is caller else f"{why} ({call.name} at {at})"
+
+
+def log_failure(log: logging.Logger, what: str, e: Exception, *, level: int = logging.ERROR) -> str:
     """Log one piece of work that failed, and return the reason as one line.
 
-    A `Failure` or an Immich error is one error line: the reason is all there
-    is to know. Anything else is a fault in the service, and its traceback
-    goes with it."""
-    why = describe_error(e)
-    # stacklevel: the record names the caller's line, not this one.
-    expected = isinstance(e, (Failure, *IMMICH_ERRORS))
-    log.error("%s: %s", what, why, exc_info=not expected, stacklevel=2)
+    A `Failure` or an error from outside is one line at `level`: the reason
+    and the place are all there is to know, and the traceback goes to debug.
+    Anything else is a fault in the service, and is an error with its
+    traceback whatever the level."""
+    why = locate_error(e)
+    # stacklevel: each record names the caller's line, not this function's.
+    if isinstance(e, EXPECTED_ERRORS):
+        log.log(level, "%s: %s", what, why, stacklevel=2)
+        log.debug("the traceback of %s", what, exc_info=e, stacklevel=2)
+    else:
+        log.error("%s: %s", what, why, exc_info=e, stacklevel=2)
     return why
 
 

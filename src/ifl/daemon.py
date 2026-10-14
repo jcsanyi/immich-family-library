@@ -186,7 +186,13 @@ class Daemon:
             try:
                 one = await member_asset(self.accounts, asset_id, owner_id)
             except Exception as e:  # noqa: BLE001 - one unreadable asset must not cost the batch
-                log_failure(log, f"webhook: asset {asset_id} not read, left for the next pass", e)
+                # A warning: the next pass reads the asset again, and nobody need act.
+                log_failure(
+                    log,
+                    f"webhook: asset {asset_id} not read, left for the next pass",
+                    e,
+                    level=logging.WARNING,
+                )
                 continue
             if one is not None:
                 found.append(one)

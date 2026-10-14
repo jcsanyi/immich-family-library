@@ -291,9 +291,10 @@ async def test_relink_failure_keeps_the_original(world):
     world.album("Bobs", BOB, roles={ALICE: VIEWER}, assets=[a])  # alice can't add, bob unpartnered
     world.partners[FAMILY] = set()
 
-    with pytest.raises(MoveError, match="could not re-link the copy into 'Bobs'"):
+    with pytest.raises(MoveError, match="could not re-link the copy into 'Bobs'") as failed:
         await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
 
+    assert str(failed.value).count("'Bobs'") == 1  # each key's refusal is the bare reason
     assert not a.is_trashed
     assert len(world.uploads) == 1  # the copy exists; a rerun after fixing the share finishes
     # A refused add that Immich gives no reason for still reads as a refusal.
@@ -817,3 +818,34 @@ async def test_reuploads_never_use_the_limit(world, monkeypatch):
     ]
     assert [f[0] for f in result.failed] == ["re1.jpg"] and result.remaining == 1
     assert result.unfinished == {plain[1].asset_id, reuploads[1].asset_id}
+
+
+async def test_relink_takes_an_outside_error_as_a_refusal_and_lets_a_fault_rise(world, monkeypatch):
+    import aiohttp
+
+    accounts = make_accounts()
+    a = alice_asset(world)
+    world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    bobs = world.album("Bobs", BOB, roles={ALICE: EDITOR}, assets=[a])
+    world.partners[FAMILY] = {ALICE, BOB}  # so alice's key can add the family's copy
+    real = world.add_album_assets
+    answers = {BOB: aiohttp.ClientConnectionError("immich went away")}
+
+    async def add(client, album_id, asset_ids):
+        if album_id == bobs.id and client.user_id in answers:
+            raise answers[client.user_id]
+        return await real(client, album_id, asset_ids)
+
+    monkeypatch.setattr("ifl.move.add_album_assets", add)
+
+    # Bob's key, the album owner's, gets no answer from Immich: alice's is tried next.
+    result = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+    assert result.relinked_member == ["Bobs"] and a.is_trashed
+
+    # A fault in the service is no refusal. It is not tried past, and not reworded.
+    b = world.add_asset(FakeAsset(uuid4(), ALICE, checksum="sha-2", original_file_name="b.jpg"))
+    world.assets[bobs.id].append(b)
+    answers[BOB] = KeyError("owner")
+    with pytest.raises(KeyError):
+        await move_asset(accounts, OPTS, b.id, accounts.members["alice"], now=NOW)
+    assert not b.is_trashed

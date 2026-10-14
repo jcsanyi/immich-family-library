@@ -93,3 +93,23 @@ async def test_one_failing_fix_does_not_stop_the_others(world, monkeypatch):
     assert result.partnered == 0 and len(result.failed) == 2
     assert all("immich went away" in f for f in result.failed)
     assert "failed 2" in str(result)
+
+
+async def test_a_fix_that_cannot_even_be_built_is_one_failed_fix(world):
+    from dataclasses import replace
+    from uuid import uuid4
+
+    accounts = make_accounts()
+    handmade = world.album("Handmade", FAMILY)
+    world.partners[FAMILY] = set()
+    scan = await scan_reconcile(accounts, "Drop")
+    # A scan that names a user who is not a member: the share cannot be put together.
+    (fix,) = scan.fixes
+    scan = replace(scan, fixes=[replace(fix, add=fix.add | {uuid4()})])
+
+    result = await reconcile(accounts, scan)
+
+    assert len(result.failed) == 1 and result.failed[0].startswith("share 'Handmade': KeyError")
+    assert world.albums[handmade.id].roles == {FAMILY: OWNER}
+    # The fixes after it still ran.
+    assert result.created_dropbox is not None and result.partnered == 2

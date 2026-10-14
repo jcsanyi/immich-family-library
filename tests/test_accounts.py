@@ -271,3 +271,25 @@ async def test_the_admin_key_may_belong_to_the_family_or_a_member(stub, shared_w
     owner = opened.family if shared_with == "kf" else opened.members["alice"]
     assert opened.admin.user_id == owner.user_id and len(opened.by_user_id()) == 3
     await opened.close()
+
+
+async def test_a_fault_during_the_key_check_is_not_reported_as_a_wrong_key(monkeypatch):
+    closed = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.users = SimpleNamespace(get_my_user=self.broken)
+
+        async def broken(self):
+            raise KeyError("owner")
+
+        async def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
+
+    with pytest.raises(KeyError):
+        await open_account(
+            "https://x.example", AccountConfig(name="alice", api_key="k"), required=set()
+        )
+    assert closed == [True]

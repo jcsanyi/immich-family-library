@@ -50,6 +50,7 @@ from immichpy.client.generated.models.album_user_role import AlbumUserRole
 from ifl.accounts import Account, Accounts
 from ifl.config import Config, ConfigError
 from ifl.immich import (
+    EXPECTED_ERRORS,
     PROVENANCE_KEY,
     AlbumSummary,
     Failure,
@@ -200,10 +201,12 @@ async def _fresh_sidecar(owner: Account, asset_id: UUID, tag: str, timeout: floa
         await asyncio.sleep(0.5)
 
 
-async def _add_to_album(client, album: AlbumSummary, asset_id: UUID) -> None:
+async def _add_refusal(client, album: AlbumSummary, asset_id: UUID) -> str | None:
+    """Add the asset to the album. Why Immich refused, or None when it is in."""
     for r in await add_album_assets(client, album.id, [asset_id]):
         if why := bulk_failure(r):
-            raise MoveError(f"could not add the copy to {album.name!r}: {why}")
+            return why
+    return None
 
 
 async def _albums_holding(accounts: Accounts, asset_id: UUID) -> list[AlbumSummary]:
@@ -235,15 +238,21 @@ async def _relink_member_album(
     accounts: Accounts, album: AlbumSummary, asset_owner: Account, family_id: UUID
 ) -> None:
     """Add the family copy to an album the family doesn't own, with the first
-    key that Immich accepts."""
+    key that Immich accepts.
+
+    A key that Immich refuses is an answer, not a failure: it says to try the
+    next key. So an error from outside is caught here and acted on. A fault in
+    the service is no such answer, and is left to rise with its traceback."""
     failures = []
     for who in _relink_keys(accounts, album, asset_owner):
         try:
-            await _add_to_album(who.client, album, family_id)
+            why = await _add_refusal(who.client, album, family_id)
+        except EXPECTED_ERRORS as e:
+            why = describe_error(e)
+        if why is None:
             log.info("re-linked into %r with %s's key", album.name, who.name)
             return
-        except Exception as e:  # noqa: BLE001 - any refusal means try the next key
-            failures.append(f"{who.name}: {describe_error(e)}")
+        failures.append(f"{who.name}: {why}")
     raise MoveError(
         f"could not re-link the copy into {album.name!r} ({'; '.join(failures) or 'no key can'});"
         " original left in place"
@@ -525,7 +534,8 @@ async def move_asset(
     for a in family_albums:
         if a.name == opts.dropbox_album:
             continue
-        await _add_to_album(family.client, a, family_id)
+        if why := await _add_refusal(family.client, a, family_id):
+            raise MoveError(f"could not add the copy to {a.name!r}: {why}")
         relinked.append(a.name)
     relinked_member = []
     for a in other_albums:
