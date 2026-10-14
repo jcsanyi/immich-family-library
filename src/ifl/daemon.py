@@ -67,12 +67,15 @@ class Daemon:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self.stopping.set)
-        tasks = [asyncio.create_task(self.passes(), name="passes")]
+        tasks = []
         runner = None
         try:
             if self.cfg.webhook:
-                tasks.append(asyncio.create_task(self.drain(), name="webhook-drain"))
+                # Before any pass starts: an address that cannot be bound is a
+                # config error, and must stop the daemon with nothing touched.
                 runner = await self.serve()
+                tasks.append(asyncio.create_task(self.drain(), name="webhook-drain"))
+            tasks.append(asyncio.create_task(self.passes(), name="passes"))
             await self.stopping.wait()
             log.info("stopping")
         finally:

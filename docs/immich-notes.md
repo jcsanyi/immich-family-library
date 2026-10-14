@@ -55,6 +55,10 @@ are listed here so that the next Immich upgrade knows what to re-check.
   for another user's asset, live or trashed. The service takes a 400 to mean
   "not this member's" and treats any other failure as an error. Confirmed on
   dev.
+- A key that adds an asset to an album it has no access to gets a 400 with
+  the message "Not found or no albumAsset.create access". Nothing is added.
+  The re-link takes this answer to mean "try the next key". Confirmed on dev
+  with the key of a member who is not on the album.
 - A member's key can read a partner's asset. The family partner-shares with
   every member, so a member's key reads family assets. The caller checks the
   owner. Confirmed on dev.

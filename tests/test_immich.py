@@ -964,3 +964,34 @@ def test_the_guard_goes_two_levels_deep_and_wraps_nothing_else():
     # A copy asks for attributes before it has any. That must not loop.
     assert copy.copy(client).albums.send() == "sent"
     assert immich.unguarded(client).albums is api
+
+
+def test_only_the_three_answers_immich_gives_a_key_are_refusals():
+    from immichpy.client.generated.exceptions import ApiException
+
+    def refused(status):
+        return immich.ImmichError("albums.get_all_albums", ApiException(status=status)).refused
+
+    assert [s for s in (400, 401, 403, 404, 408, 409, 429, 500, 502) if refused(s)] == [
+        400,
+        401,
+        403,
+    ]
+    assert not immich.ImmichError("albums.get_all_albums", TimeoutError()).refused
+
+
+async def test_a_name_lookup_falls_back_only_when_immich_refuses_to_show_the_user():
+    from fakes import outage, refusal
+
+    answers = [refusal("users.get_user"), outage("users.get_user")]
+
+    async def get_user(**kwargs):
+        raise answers.pop(0)
+
+    names = immich.UserNames(SimpleNamespace(users=SimpleNamespace(get_user=get_user)), {})
+    hidden, unknown = uuid4(), uuid4()
+    assert await names.describe(hidden) == str(hidden)
+    # An outage is not "this user has no name". It is not remembered as one.
+    with pytest.raises(immich.ImmichError):
+        await names.describe(unknown)
+    assert unknown not in names.cache

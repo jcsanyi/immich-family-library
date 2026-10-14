@@ -11,16 +11,18 @@ stdout.
 
 ## Startup
 
-Every command except `show-config` opens every account first. The key must
-work, belong to the configured email, and carry the permissions the service
-needs (listed in [configuration.md](configuration.md)). The server must be
-Immich 3.3 or later. If any of this fails, the command exits with code 2
-before it touches anything. A config pointed at the wrong server fails the
-same way, which is why the emails are checked.
+Every command except `show-config` checks the server and opens every account
+first. The server must be Immich 3.3 or later, and this is checked before any
+key. Each key must work, belong to the configured email, and carry the
+permissions the service needs (listed in [configuration.md](configuration.md)).
+If any of this fails, the command exits with code 2 before it touches
+anything. A config pointed at another Immich server fails the same way, which
+is why the emails are checked.
 
 If Immich does not answer during these checks, the command exits with code 1.
 No answer says nothing about a key. A `url` that names a host that does not
-exist fails this way too, and the message names the host.
+exist fails this way too, and the message names the host. So does a `url`
+that names a server that is not Immich.
 
 While `readonly` is true in the config, every command that writes to Immich
 refuses to start. `observe` and `show-config` still work.

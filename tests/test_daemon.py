@@ -130,25 +130,27 @@ async def test_drain_coalesces_events(world, daemon, monkeypatch):
     assert seen == [ids]
 
 
-async def test_a_server_that_fails_to_start_takes_the_pass_task_down_with_it(
+async def test_a_server_that_fails_to_start_stops_the_daemon_before_any_pass(
     world, daemon, monkeypatch
 ):
-    started = asyncio.Event()
+    passes = []
 
-    async def pass_forever(*a, **kw):
-        started.set()
+    async def a_pass(*a, **kw):
+        passes.append(1)
         await asyncio.sleep(3600)
 
     async def cannot_bind(self):
-        await started.wait()  # the pass task is already running when the bind fails
+        await asyncio.sleep(0)  # give a pass every chance to start, if one were waiting
         raise OSError("address already in use")
 
-    monkeypatch.setattr("ifl.daemon.run_pass", pass_forever)
+    monkeypatch.setattr("ifl.daemon.run_pass", a_pass)
     monkeypatch.setattr(Daemon, "serve", cannot_bind)
 
     with pytest.raises(OSError, match="address already in use"):
-        await daemon.run()
+        await asyncio.wait_for(daemon.run(), 5)
 
+    # Nothing was touched: no pass ran, and no task is left behind.
+    assert passes == []
     left = [
         t.get_name() for t in asyncio.all_tasks() if t.get_name() in ("passes", "webhook-drain")
     ]

@@ -119,9 +119,15 @@ async def open_account(
     *,
     required: set[str],
     must_be_admin: bool = False,
+    check_version: bool = False,
 ) -> Account:
     client = guard(AsyncClient(base_url=url, api_key=cfg.api_key))
     try:
+        if check_version:
+            # Before anything else. An Immich that is too old answers the key
+            # check with a reply the client cannot read, and the version is
+            # what explains that.
+            log.info("server %s at %s", await check_server(client), url)
         me = await client.users.get_my_user()
         if cfg.email is not None and me.email.lower() != cfg.email.lower():
             raise AccountError(
@@ -172,10 +178,10 @@ async def check_server(client: AsyncClient) -> str:
 async def open_accounts(cfg: Config) -> Accounts:
     opened: list[Account] = []
     try:
-        family = await open_account(cfg.immich_url, cfg.family, required=FAMILY_PERMISSIONS)
+        family = await open_account(
+            cfg.immich_url, cfg.family, required=FAMILY_PERMISSIONS, check_version=True
+        )
         opened.append(family)
-        version = await check_server(family.client)
-        log.info("server %s at %s", version, cfg.immich_url)
         members: dict[str, Account] = {}
         # The config compares emails as written; Immich's user id is what counts.
         # The admin key is left out: it may be the family's or a member's.

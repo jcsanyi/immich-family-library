@@ -395,3 +395,33 @@ def test_an_account_never_holds_a_bare_client():
     # Guarding twice changes nothing.
     assert guard(account.client) is account.client
     assert Account("bob", "b@x", uuid4(), account.client).client is account.client
+
+
+async def test_the_version_is_checked_before_the_first_key(monkeypatch):
+    """A server that is too old answers the key check with a reply the client
+    cannot read. The version is what explains that, so it has to come first."""
+    asked = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.server = SimpleNamespace(get_server_version=self.version)
+            self.users = SimpleNamespace(get_my_user=self.me)
+
+        async def version(self):
+            asked.append("version")
+            return SimpleNamespace(major=3, minor=0, patch=4)
+
+        async def me(self):
+            asked.append("key")
+            UserAdminResponseDto.model_validate({"id": "an older shape"})
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
+
+    with pytest.raises(AccountError, match=r"server is 3\.0\.4, need 3\.3"):
+        await open_account(
+            "https://x.example", AccountConfig("family", "k"), required=set(), check_version=True
+        )
+    assert asked == ["version"]

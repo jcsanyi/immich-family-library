@@ -129,9 +129,10 @@ An `ImmichError` holds the client method (`call`), the status if Immich
 answered (`status`), the line of the service that wanted the call (`place`),
 and the original error as its cause. `reason` is the same report without the
 call and the place, for a message that already gives them. `refused` is true
-when Immich answered with a 4xx status: Immich understood the request and
-said no. An outage, a 5xx status and a reply that cannot be read are not
-refusals. Its text is one line:
+when Immich answered 400, 401 or 403: Immich understood the request and said
+no to the key. An outage, a 5xx status and a reply that cannot be read are
+not refusals. Another 4xx status is not one either, because a proxy in front
+of Immich can send it. Its text is one line:
 `Immich answered 403 to albums.get_all_albums: Forbidden (observer.py:148 in scan_albums)`.
 
 The place is the nearest line outside `immich.py`. One client method can
@@ -144,7 +145,7 @@ it sends a request. The wrapper lets that error through unchanged, so it is a
 fault with a traceback. A method name that does not exist fails earlier, when
 the wrapper looks it up, and is a fault for the same reason.
 
-Two cases need to be known:
+Three cases need to be known:
 
 - The two transfer helpers do not go through the wrapper. They use parts of
   the client that the client does not check, so a wrong argument there would
@@ -152,6 +153,9 @@ Two cases need to be known:
   `immich_call`, and puts the send and the read of the response inside it.
   Each reports under one name, `the download of an original` or
   `the upload of an asset`.
+- An argument that passes the checks of the client can still fail when the
+  client builds the request. That error comes out of a client call, and the
+  log names Immich. The text of the error names the argument.
 - During an upload, the client reads the temporary file of the service while
   it sends it. If the disk fails at that moment, the error comes out of a
   client call, and the log names Immich. The place of an error cannot show

@@ -113,8 +113,11 @@ class UserNames:
         try:
             user = await self.client.users.get_user(id=user_id)
             self.cache[user_id] = user.email
-        except ImmichError:
-            # The name is for a message only. Without one, the id will do.
+        except ImmichError as e:
+            if not e.refused:
+                raise
+            # Immich will not show this user to the family. The name is for a
+            # message only, so the id will do.
             self.cache[user_id] = str(user_id)
         return self.cache[user_id]
 
@@ -232,10 +235,13 @@ class ImmichError(Failure):
 
     @property
     def refused(self) -> bool:
-        """Immich understood the request and said no. An outage, a server error
-        and a reply that could not be read are not this. Immich answers 400, not
-        403, for a key with no access, so the whole of 4xx counts."""
-        return self.status is not None and 400 <= self.status < 500
+        """Immich understood the request and said no. These are the three answers
+        it gives to a key: 400 for no access to the thing asked for, 401 for a
+        key it does not know, 403 for a permission the key lacks. An outage, a
+        server error and a reply that could not be read are not refusals, and
+        nor is another 4xx, which a proxy in front of Immich is as likely to
+        have sent: 404 with no backend, 408 or 429 when it is busy."""
+        return self.status in (400, 401, 403)
 
 
 def _one_short_line(text: str, limit: int = 300) -> str:
@@ -436,8 +442,8 @@ async def download_asset_file(client: AsyncClient, file_id: UUID) -> bytes:
 # return bytes only. The request builders beneath them don't care, so these two
 # helpers call the builders and hand aiohttp a stream.
 CHUNK = 1 << 20
-# A download is cut off when the server sends nothing for this long.
 DOWNLOAD, UPLOAD = "the download of an original", "the upload of an asset"
+# A download is cut off when the server sends nothing for this long.
 DOWNLOAD_TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=300)
 # aiohttp's read timeout would fire while a long upload is still being sent, so
 # an upload gets a total instead: five minutes, plus its size at this rate.
