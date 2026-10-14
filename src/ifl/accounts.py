@@ -15,7 +15,7 @@ from uuid import UUID
 from immichpy.client.main import AsyncClient
 
 from ifl.config import AccountConfig, Config
-from ifl.immich import ImmichError, guard
+from ifl.immich import ImmichError, describe_error, guard
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +95,16 @@ class Accounts:
 
     async def close(self) -> None:
         for a in [self.family, *self.members.values(), *([self.admin] if self.admin else [])]:
-            await a.client.close()
+            await close_client(a.client)
+
+
+async def close_client(client: AsyncClient) -> None:
+    """Closing is housekeeping at the end. A client that will not close must not
+    stop the others from closing, or change what the command reports."""
+    try:
+        await client.close()
+    except Exception as e:  # noqa: BLE001 - see above; there is nothing to do about it either
+        log.debug("could not close a client: %s", describe_error(e))
 
 
 async def open_account(
@@ -121,7 +130,7 @@ async def open_account(
         if missing:
             raise AccountError(f"[{cfg.name}] key is missing permissions: {sorted(missing)}")
     except BaseException as e:
-        await client.close()
+        await close_client(client)
         # Immich's answer to a key is the check itself: a refusal is a wrong key.
         if isinstance(e, ImmichError):
             raise AccountError(f"[{cfg.name}] key check failed: {e}") from e
@@ -131,7 +140,11 @@ async def open_account(
 
 
 async def check_server(client: AsyncClient) -> str:
-    v = await client.server.get_server_version()
+    try:
+        v = await client.server.get_server_version()
+    except ImmichError as e:
+        # Still the startup check, so it reports as the key check beside it does.
+        raise AccountError(f"server version check failed: {e}") from e
     version = (v.major, v.minor, v.patch)
     if version < MIN_SERVER:
         raise AccountError(
@@ -176,6 +189,6 @@ async def open_accounts(cfg: Config) -> Accounts:
             opened.append(admin)
     except Exception:
         for a in opened:
-            await a.client.close()
+            await close_client(a.client)
         raise
     return Accounts(family=family, members=members, admin=admin)

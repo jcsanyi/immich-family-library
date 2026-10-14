@@ -126,20 +126,32 @@ of a client or network error.
 
 An `ImmichError` holds the client method (`call`), the status if Immich
 answered (`status`), the line of the service that wanted the call (`place`),
-and the original error as its cause. Its text is one line:
+and the original error as its cause. `reason` is the same report without the
+call and the place, for a message that already gives them. Its text is one line:
 `Immich answered 403 to albums.get_all_albums: Forbidden (observer.py:148 in scan_albums)`.
 
 The place is the nearest line outside `immich.py`. One client method can
 serve some parts of the service, and the method alone does not say which part
 made the call.
 
-Two things are outside the wrapper:
+An argument that the client refuses is the one error from inside a call
+that is not from Immich. The client checks the arguments of a method before
+it sends a request. The wrapper lets that error through unchanged, so it is a
+fault with a traceback. A method name that does not exist fails earlier, when
+the wrapper looks it up, and is a fault for the same reason.
 
-- `TypeError`, `AttributeError` and `NameError` pass through it unchanged. A
-  wrong argument or a wrong name is a fault in the service, even when it shows
-  inside a client call.
+Two cases need to be known:
+
 - The two transfer helpers read the body of a response without a client
   method. They use `immich_call` directly for those lines.
+- During an upload, the client reads the temporary file of the service while
+  it sends it. If the disk fails at that moment, the error comes out of a
+  client call, and the log names Immich. The place of an error cannot show
+  this case. Look at the cause in the debug traceback.
+
+Closing a client is not a piece of work. `close_client` logs a failure at
+debug and continues, so that a client that does not close cannot change the
+result of a command.
 
 ### Failures and faults
 

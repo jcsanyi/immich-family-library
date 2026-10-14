@@ -247,7 +247,7 @@ async def _relink_member_album(
         try:
             why = await _add_refusal(who.client, album, family_id)
         except ImmichError as e:
-            why = str(e)
+            why = e.reason
         if why is None:
             log.info("re-linked into %r with %s's key", album.name, who.name)
             return

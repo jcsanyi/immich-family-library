@@ -325,3 +325,37 @@ async def test_a_reply_the_client_cannot_read_is_a_failed_key_check(monkeypatch)
     assert "\n" not in text and len(text) < 460
     assert re.search(r" \.\.\. \(accounts\.py:\d+ in open_account\)$", text)
     assert isinstance(failed.value.__cause__.__cause__, pydantic.ValidationError)
+
+
+async def test_a_client_that_will_not_close_changes_nothing(monkeypatch):
+    from ifl.accounts import Account, Accounts, close_client
+
+    closed = []
+
+    def client(name, fails=False):
+        async def close():
+            closed.append(name)
+            if fails:
+                raise OSError("session already gone")
+
+        return SimpleNamespace(close=close)
+
+    family = Account("family", "f@x", uuid4(), client("family", fails=True))
+    alice = Account("alice", "a@x", uuid4(), client("alice"))
+    await Accounts(family=family, members={"alice": alice}, admin=None).close()
+    assert closed == ["family", "alice"]  # the second is still closed, and nothing is raised
+
+    await close_client(client("again", fails=True))
+
+
+async def test_an_outage_at_the_version_check_is_a_startup_error_too():
+    from ifl.immich import ImmichError
+
+    async def down():
+        raise ImmichError("server.get_server_version", TimeoutError())
+
+    client = SimpleNamespace(server=SimpleNamespace(get_server_version=down))
+    with pytest.raises(
+        AccountError, match="server version check failed: server.get_server_version"
+    ):
+        await acc.check_server(client)

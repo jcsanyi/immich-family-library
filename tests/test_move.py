@@ -295,6 +295,7 @@ async def test_relink_failure_keeps_the_original(world):
         await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
 
     assert str(failed.value).count("'Bobs'") == 1  # each key's refusal is the bare reason
+    assert "move.py" not in str(failed.value)
     assert not a.is_trashed
     assert len(world.uploads) == 1  # the copy exists; a rerun after fixing the share finishes
     # A refused add that Immich gives no reason for still reads as a refusal.

@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pydantic
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
@@ -66,6 +67,7 @@ from immichpy.client.generated.models.search_asset_response_dto import SearchAss
 from immichpy.client.generated.models.search_response_dto import SearchResponseDto
 from immichpy.client.generated.models.shared_link_response_dto import SharedLinkResponseDto
 from immichpy.client.generated.models.shared_link_type import SharedLinkType
+from immichpy.client.generated.models.user_admin_response_dto import UserAdminResponseDto
 from immichpy.client.generated.models.user_avatar_color import UserAvatarColor
 from immichpy.client.generated.models.workflow_trigger import WorkflowTrigger
 from immichpy.client.main import AsyncClient
@@ -855,14 +857,61 @@ async def test_the_transfers_work_through_the_guarded_client(server, tmp_path):
         await immich.download_original(client, uuid4(), dest, checksum="not-it")
 
 
-def test_immich_call_leaves_the_services_own_errors_alone():
-    for own in (immich.Failure("no copy"), TypeError("bad argument"), AttributeError("x")):
-        with pytest.raises(type(own)) as raised, immich.immich_call("albums.get_all_albums"):
-            raise own
-        assert raised.value is own
-    with pytest.raises(immich.ImmichError) as raised, immich.immich_call("albums.get_all_albums"):
-        raise OSError("connection reset")
-    assert isinstance(raised.value.__cause__, OSError)
+def test_immich_call_decides_by_place_and_not_by_type():
+    # The service's own finding passes through.
+    own = immich.Failure("no copy")
+    with pytest.raises(immich.Failure) as raised, immich.immich_call("albums.get_all_albums"):
+        raise own
+    assert raised.value is own
+
+    # Anything else raised in the call is Immich's, whatever its type. A reply
+    # of a strange shape can make the client raise a TypeError as easily as an
+    # outage raises an OSError.
+    for cause in (
+        OSError("connection reset"),
+        TypeError("NoneType is not iterable"),
+        KeyError("x"),
+    ):
+        with (
+            pytest.raises(immich.ImmichError) as raised,
+            immich.immich_call("albums.get_all_albums"),
+        ):
+            raise cause
+        assert raised.value.__cause__ is cause
+
+
+async def test_an_argument_the_client_refuses_is_the_services_own_mistake():
+    """The client checks arguments before it sends anything, with the same type
+    of error that it raises for a reply it cannot read. Only the second is
+    Immich's doing."""
+    client = immich.guard(AsyncClient(base_url="http://127.0.0.1:9", api_key="unused"))
+    try:
+        for wrong in ({"id": 123}, {"id": uuid4(), "no_such_argument": 1}, {}):
+            with pytest.raises(pydantic.ValidationError):
+                await client.users.get_user(**wrong)
+        # A method that does not exist fails before any call is made.
+        assert not hasattr(client.users, "no_such_call")
+    finally:
+        await client.close()
+
+    def unreadable_reply():
+        UserAdminResponseDto.model_validate({"id": "not a user"})
+
+    with pytest.raises(immich.ImmichError), immich.immich_call("users.get_user"):
+        unreadable_reply()
+
+
+def test_an_immich_error_keeps_a_long_message_short_and_has_a_reason_without_the_place():
+    from immichpy.client.generated.exceptions import BadRequestException
+
+    long = BadRequestException(status=400, body='{"message": "' + "too many words " * 100 + '"}')
+    error = immich.ImmichError("albums.add_assets_to_album", long)
+    assert len(str(error)) < 380 and str(error).endswith(" ...")
+    assert error.reason.startswith("Immich answered 400: too many words")
+    assert "add_assets_to_album" not in error.reason
+
+    down = immich.ImmichError("albums.add_assets_to_album", TimeoutError())
+    assert down.reason == "no usable answer from Immich: TimeoutError"
 
 
 async def test_an_immich_error_names_the_line_of_the_service_that_wanted_the_call():

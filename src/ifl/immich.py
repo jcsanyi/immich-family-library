@@ -9,6 +9,7 @@ import hashlib
 import inspect
 import json
 import logging
+import os
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -197,10 +198,13 @@ class Failure(Exception):
 
 class ImmichError(Failure):
     """A call to Immich did not work: Immich answered with an error, sent a
-    reply the client could not read, or could not be reached. `call` is the
-    client method, `status` is Immich's answer when there was one, and `place`
-    is the line of the service that wanted the call. The error that the client
-    raised is the cause."""
+    reply the client could not read, or could not be reached. The error that
+    the client raised is the cause.
+
+    `call` is the client method, `status` is Immich's answer when there was
+    one, and `place` is the line of the service that wanted the call. `reason`
+    is what went wrong without the call and the place, for a message that
+    already says them."""
 
     def __init__(self, call: str, cause: Exception):
         self.call = call
@@ -215,17 +219,24 @@ class ImmichError(Failure):
                 message = None
             if isinstance(message, list):
                 message = "; ".join(str(m) for m in message)
-            detail = message or cause.reason or "no detail"
-            text = f"Immich answered {cause.status or 'with no status'} to {call}: {detail}"
+            answered = f"Immich answered {cause.status or 'with no status'}"
+            detail = _one_short_line(str(message or cause.reason or "no detail"))
+            self.reason, text = f"{answered}: {detail}", f"{answered} to {call}: {detail}"
         else:
             # A reply that fails validation lists every field. The start says
             # which model, and the rest is in the debug traceback.
-            why = describe_error(cause)
-            why = why if len(why) <= 300 else why[:300] + " ..."
-            text = f"{call} got no usable answer from Immich: {why}"
-        if self.place:
-            text += f" ({self.place})"
-        super().__init__(" ".join(text.split()))
+            self.reason = f"no usable answer from Immich: {_one_short_line(describe_error(cause))}"
+            text = f"{call} got {self.reason}"
+        super().__init__(f"{text} ({self.place})" if self.place else text)
+
+
+def _one_short_line(text: str, limit: int = 300) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit] + " ..."
+
+
+_THIS_FILE = __file__
+_PACKAGE = os.path.dirname(__file__)
 
 
 def _calling_place() -> str | None:
@@ -233,19 +244,13 @@ def _calling_place() -> str | None:
     now. One client method serves several parts of the service, so the method
     alone does not say which part was at work. The helpers here are skipped:
     each is one call, and the line that wanted it is the news."""
-    here, package = Path(__file__), Path(__file__).parent
     frame = inspect.currentframe()
     while frame is not None:
-        file = Path(frame.f_code.co_filename)
-        if file != here and file.parent == package:
-            return f"{file.name}:{frame.f_lineno} in {frame.f_code.co_name}"
+        file = frame.f_code.co_filename
+        if file != _THIS_FILE and os.path.dirname(file) == _PACKAGE:
+            return f"{os.path.basename(file)}:{frame.f_lineno} in {frame.f_code.co_name}"
         frame = frame.f_back
     return None
-
-
-# A wrong argument or a wrong name is the service's own fault, even when it
-# shows up inside a call to the client. These are never read as Immich's doing.
-_OWN_FAULTS = (TypeError, AttributeError, NameError)
 
 
 @contextmanager
@@ -253,13 +258,26 @@ def immich_call(name: str) -> Iterator[None]:
     """Whatever the block raises comes out as an `ImmichError` that names the
     call. What counts as Immich's doing is decided here, by where the error
     came from, and nowhere by its type: the same types are raised by the
-    service's own mistakes."""
+    service's own mistakes.
+
+    Two things raised in the block are the service's own. A `Failure` is its
+    own finding. And an argument that the client refused never reached Immich."""
     try:
         yield
-    except (Failure, *_OWN_FAULTS):
+    except Failure:
         raise
     except Exception as e:
+        if _refused_argument(e, name):
+            raise
         raise ImmichError(name, e) from e
+
+
+def _refused_argument(e: Exception, call: str) -> bool:
+    """The client checks the arguments of a method before it sends anything, and
+    reports a bad one as a validation error titled with the method. A reply it
+    cannot read is the same type of error, titled with the model of the reply."""
+    title = getattr(e, "title", None)
+    return isinstance(title, str) and title.rsplit(".", 1)[-1] == call.rsplit(".", 1)[-1]
 
 
 _PLAIN_VALUES = (str, bytes, int, float, bool, type(None), dict, list, tuple, set)
@@ -277,11 +295,12 @@ class _Guarded:
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._target, name)
         path = f"{self._path}.{name}" if self._path else name
-        if callable(attr):
-            return _guarded_call(attr, path)
-        if isinstance(attr, _PLAIN_VALUES):
+        if isinstance(attr, _PLAIN_VALUES) and not callable(attr):
             return attr
-        return _Guarded(attr, path)
+        guarded = _guarded_call(attr, path) if callable(attr) else _Guarded(attr, path)
+        # Kept on the instance, so the next use does not come through here.
+        self.__dict__[name] = guarded
+        return guarded
 
 
 def _guarded_call(fn: Callable[..., Any], path: str) -> Callable[..., Any]:
@@ -430,7 +449,8 @@ async def download_original(
     res = await api.api_client.call_api(*request, _request_timeout=DOWNLOAD_TIMEOUT)
     try:
         if res.status != 200:
-            await res.read()
+            with immich_call("the download of an original"):
+                await res.read()
             api.api_client.response_deserialize(res, {"200": "bytes"})  # raises for the status
         digest = hashlib.sha1(usedforsecurity=False)
 
