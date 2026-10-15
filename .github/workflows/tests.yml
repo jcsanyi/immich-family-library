@@ -26,6 +26,18 @@ jobs:
       - name: Lint
         run: bin/lint
 
+      # The image's build stage lacks whatever .dockerignore lists. A tracked
+      # file missing there leaves git's tree dirty, and every image then gets
+      # a development version, a release included.
+      - name: Check that .dockerignore lists no tracked file
+        run: |
+          files="$(git ls-files -ci --exclude-from=.dockerignore)"
+          if [[ -n "$files" ]]; then
+            echo "::error::.dockerignore lists tracked files, so every image gets a development version:"
+            echo "$files"
+            exit 1
+          fi
+
       - name: Run tests
         run: bin/tests --cov-report=term --cov-report=html
 
