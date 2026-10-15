@@ -9,6 +9,7 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.resources import files
 from pathlib import Path
 from uuid import UUID
 
@@ -219,6 +220,20 @@ def run_show_config(config_path: Path, minimal: bool) -> int:
     return 0
 
 
+def run_example_config() -> int:
+    """Print the annotated example config that ships in the package. No network."""
+    example = files("ifl").joinpath("config.example.toml")
+    if not example.is_file():
+        # An editable install, as in a checkout, has no packaged copy.
+        log.error(
+            "this install has no packaged example config; "
+            "copy config.example.toml from the repository"
+        )
+        return 1
+    sys.stdout.write(example.read_text())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ifl")
     parser.add_argument("-c", "--config", type=Path, default=Path("config.toml"))
@@ -253,6 +268,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("daemon", help="run passes on an interval and receive Immich's upload webhooks")
     show = sub.add_parser("show-config", help="print the effective config, secrets redacted")
     show.add_argument("--minimal", action="store_true", help="only what differs from the defaults")
+    sub.add_parser(
+        "example-config", help="print an annotated example config to start a config.toml"
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -273,6 +291,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "show-config":
             return run_show_config(args.config, args.minimal)
+        if args.command == "example-config":
+            return run_example_config()
         return asyncio.run(commands[args.command]())
     except (ConfigError, AccountError, LockError) as e:
         log.error("%s", e)

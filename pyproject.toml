@@ -39,6 +39,11 @@ source = "vcs"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ifl"]
 
+# `ifl example-config` prints the example from inside the package, so an
+# operator without a checkout can start a config.
+[tool.hatch.build.targets.wheel.force-include]
+"config.example.toml" = "ifl/config.example.toml"
+
 [tool.uv]
 # The version comes from git, so a new commit or tag must rebuild the project.
 cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]

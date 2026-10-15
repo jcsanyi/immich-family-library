@@ -24,7 +24,33 @@ There is one extra Immich user, the family account, and it owns the family libra
 
 ## Running it
 
-The service is one container next to Immich, on the same docker network, with a volume for its run lock. `compose.yml` is the deployment and `config.example.toml` is the annotated configuration. [docs/deployment.md](docs/deployment.md) has the steps. Before you upgrade, read [CHANGELOG.md](CHANGELOG.md).
+The service is one more container in the Immich compose stack. These are the short steps. [docs/deployment.md](docs/deployment.md) has the details and the alternatives.
+
+1. Create the family user in Immich. Get an API key from the family user and from each member, with the permissions in [docs/configuration.md](docs/configuration.md).
+2. In the directory of Immich's `docker-compose.yml`, make a directory `ifl`. Add the service to `docker-compose.override.yml` in the same directory. If the file does not exist, make it:
+
+   ```yaml
+   services:
+     ifl:
+       image: jcsanyi/immich-family-library:0.1
+       restart: always
+       depends_on:
+         - immich-server
+       volumes:
+         - ./ifl:/config:ro
+         - ifl-data:/data
+         - /etc/localtime:/etc/localtime:ro
+
+   volumes:
+     ifl-data:
+   ```
+
+3. Get the annotated example config: `docker compose run --rm -T ifl example-config > ifl/config.toml`. Fill in the keys, and keep `readonly = true`.
+4. Run `docker compose run --rm ifl observe`. It reports what the service will do, and changes nothing.
+5. When the report is what you expect, set `readonly = false` in `ifl/config.toml`.
+6. Run `docker compose run --rm ifl reconcile-albums`. Then run `docker compose up -d`.
+
+Before you upgrade, read [CHANGELOG.md](CHANGELOG.md).
 
 ## Documentation
 
