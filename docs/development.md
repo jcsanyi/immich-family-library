@@ -410,20 +410,19 @@ requests, issues and comments carry no tool attribution.
 
 ## Writing style
 
-Each doc follows one of two rule sets, depending on who reads it and why:
+The docs use the plain-english plugin for Claude Code
+(https://github.com/b1rdmania/claude-plain-english-skill). The plugin has two
+skills, and each doc uses one of them:
 
-- `how-it-works.md`, `for-members.md`, and the opening of `README.md` are
-  plain English in the Orwell and Gowers tradition: active voice, concrete
-  nouns, the condition before the command, no AI vocabulary. These docs
-  explain, so voice and rhythm matter.
-- `cli.md`, `configuration.md`, `deployment.md`, `immich-notes.md`, this file,
-  the rest of `README.md`, and `AGENTS.md` follow ASD-STE100 Simplified
-  Technical English, in pragmatic mode: sentences of 20 words for procedures
-  and 25 for descriptions, the imperative for steps, no contractions, no
-  "should", one name per thing. These docs are reference and procedure.
+- `plain-english`: `how-it-works.md`, `for-members.md`, the opening of
+  `README.md`, and `CHANGELOG.md`. In `CHANGELOG.md`, the steps under
+  `### Upgrade notes` use `simple-english`.
+- `simple-english`: `cli.md`, `configuration.md`, `deployment.md`,
+  `immich-notes.md`, this file, the rest of `README.md`, and `AGENTS.md`.
 
-The Claude Code plugin at https://github.com/b1rdmania/claude-plain-english-skill
-has one skill for each set and applies the rules. Either set is fine to write
-by hand. When a doc's style is wrong, re-author it rather than patch it. Then
-compare the result against the old text claim by claim, so that no fact is
-lost.
+The docs use Canadian spelling, for example "behaviour" and "colour". This
+replaces the spelling rule of the `simple-english` skill.
+
+You can write a doc without the plugin. When the style of a doc is wrong,
+write the doc again with its skill. Do not patch it. Then compare the result
+with the old text claim by claim, so that no fact is lost.
