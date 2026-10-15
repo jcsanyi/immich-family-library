@@ -269,6 +269,12 @@ updates to the GitHub Actions and to the Python dependencies in `uv.lock`,
 transitive dependencies included. Minor and patch updates to Python packages
 come as one grouped pull request. A major release gets its own pull request.
 
+The `Dockerfile` pins the Python base image and the uv image by version and
+digest, so that a build is repeatable. Dependabot also updates these pins. For
+the Python image, it offers only a new patch release. A new Python minor
+version is a change to `.python-version`, `requires-python` and the
+`Dockerfile` together.
+
 ## Versions and the changelog
 
 The version comes from the git tags, through hatch-vcs. No file in the

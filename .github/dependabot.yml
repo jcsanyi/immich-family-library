@@ -4,6 +4,16 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # The base image and uv, pinned by digest in the Dockerfile. A new Python
+  # minor or major is a deliberate change with .python-version and
+  # requires-python, so only patch updates arrive here.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   # Updates pyproject.toml and uv.lock together, transitive dependencies
   # included, so the lockfile does not go stale below the declared packages.
   # Minor and patch updates arrive as one weekly pull request. A major release
