@@ -16,6 +16,7 @@ from immichpy.client.generated.models.user_admin_response_dto import UserAdminRe
 from immichpy.client.generated.models.user_avatar_color import UserAvatarColor
 from immichpy.client.generated.models.user_status import UserStatus
 
+from ifl import __version__
 from ifl import accounts as acc
 from ifl.accounts import (
     ADMIN_PERMISSIONS,
@@ -177,6 +178,13 @@ async def test_only_a_refusal_from_immich_is_a_failed_key_check(stub):
     with pytest.raises(ImmichError, match="users.get_my_user got no usable answer from Immich"):
         await open_account(URL, AccountConfig("alice", "k1", "alice@x"), required=set())
     assert stub.made[1].closed
+
+
+async def test_the_family_check_logs_this_release_beside_the_server(stub, caplog):
+    stub.KEYS["k1"] = {"user": user("f@x"), "key": key(set())}
+    with caplog.at_level("INFO", logger="ifl"):
+        await open_account(URL, AccountConfig("family", "k1"), required=set(), check_version=True)
+    assert f"ifl {__version__}, server 3.3.1 at {URL}" in caplog.text
 
 
 async def test_the_server_must_be_at_least_the_minimum_version(stub):

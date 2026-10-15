@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# A second tag waits for the first release to finish, rather than racing it.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # gh release create
+    env:
+      IMAGE: jcsanyi/immich-family-library
+
+    steps:
+      # Full history, so that the tag can be checked against main and hatch-vcs
+      # can read the version inside the image build.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v10.3.0
+
+      # Everything that can be wrong with the tag is found here, before anything
+      # is built or published.
+      - name: Check the tag
+        id: tag
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+
+          version="${GITHUB_REF_NAME#v}"
+          # Pre-release labels are the ones a Python version accepts, so that
+          # the image's version and the tag can be compared.
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(a|b|rc|alpha|beta)\.?[0-9]+)?$ ]] \
+            || fail "$GITHUB_REF_NAME is not a version tag like v1.2.3, or v1.2.3-rc.1 for a pre-release"
+
+          git fetch --quiet origin main
+          git merge-base --is-ancestor "$(git rev-parse "$GITHUB_REF^{commit}")" origin/main \
+            || fail "$GITHUB_REF_NAME is not on main"
+
+          awk -v v="$version" '
+            $0 == "## " v || index($0, "## " v " ") == 1 { found = 1; next }
+            found && /^## / { exit }
+            found
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md" \
+            || fail "CHANGELOG.md has no section for $version, or the section is empty"
+
+          # The image reports the version as Python normalizes it: v1.2.3-rc.1
+          # becomes 1.2.3rc1.
+          normalized="$(uvx --quiet --from packaging python -c \
+            'import sys; from packaging.version import Version; print(Version(sys.argv[1]))' "$version")"
+
+          echo "normalized=$normalized" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([[ "$version" == *-* ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      # A stray tracked file in .dockerignore, or anything else that leaves the
+      # build stage's tree dirty, gives the image a dev version. It would still
+      # build and run, so only this check catches it.
+      - name: Build for the version check
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ifl-release-check
+
+      - name: Check the image's version
+        env:
+          WANT: ifl ${{ steps.tag.outputs.normalized }}
+        run: |
+          got="$(docker run --rm ifl-release-check --version)"
+          if [[ "$got" != "$WANT" ]]; then
+            echo "::error::the image reports '$got', expected '$WANT'"
+            exit 1
+          fi
+
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # A pre-release gets only its exact version. A release also gets X.Y and
+      # latest.
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      # The amd64 layers come from the cache of the build above.
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ steps.tag.outputs.prerelease }}
+        run: |
+          flags=()
+          [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"

@@ -9,6 +9,7 @@ from fakes import ALICE, BOB, EDITOR, FAMILY, VIEWER, FakeAsset, make_accounts, 
 from immichpy.client.generated.models.bulk_id_error_reason import BulkIdErrorReason
 from immichpy.client.generated.models.bulk_id_response_dto import BulkIdResponseDto
 
+from ifl import __version__
 from ifl.accounts import AccountError
 from ifl.cli import main
 
@@ -302,3 +303,10 @@ def test_a_fault_in_the_service_is_not_dressed_up_as_an_immich_failure(world, co
 
     with pytest.raises(KeyError):
         run(path, "observe")
+
+
+def test_version_prints_the_release_and_needs_no_config(capsys):
+    with pytest.raises(SystemExit) as e:
+        main(["-c", "does-not-exist.toml", "--version"])
+    assert e.value.code == 0
+    assert capsys.readouterr().out == f"ifl {__version__}\n"

@@ -262,12 +262,126 @@ The `Tests` workflow in `.github/workflows/tests.yml` runs on every pull
 request to `main` and on every push to `main`. It installs the locked
 dependencies with `uv sync --frozen`, then runs `bin/lint` and `bin/tests`.
 The job summary shows the coverage table. The HTML coverage report is an artifact of the run, kept for
-14 days.
+14 days. The `Release` workflow also runs the `Tests` workflow, before it
+publishes anything. "Releases" below describes it.
 
 Dependabot (`.github/dependabot.yml`) opens pull requests each week for
 updates to the GitHub Actions and to the Python dependencies in `uv.lock`,
 transitive dependencies included. Minor and patch updates to Python packages
 come as one grouped pull request. A major release gets its own pull request.
+
+The `Dockerfile` pins the Python base image and the uv image by version and
+digest, so that a build is repeatable. Dependabot also updates these pins. For
+the Python image, it offers only a new patch release. A new Python minor
+version is a change to `.python-version`, `requires-python` and the
+`Dockerfile` together.
+
+## Versions and the changelog
+
+The version comes from the git tags, through hatch-vcs. No file in the
+repository holds a version number. A commit with the tag `vX.Y.Z` has the
+version `X.Y.Z`. A later commit has a development version, for example
+`0.1.1.dev3+g1a2b3c4`: three commits after `v0.1.0`, at commit `1a2b3c4`. If
+the tree has changes that are not committed, the version also gets a date, for
+example `.d20261015`.
+
+`ifl --version` prints the version. Every command except `show-config` writes
+it to the log at startup, next to the version of the Immich server.
+
+In a checkout, uv makes the version when it installs the project. uv installs
+the project again when the commit or the tags change (`tool.uv.cache-keys` in
+`pyproject.toml`). A change that is not committed does not cause a new
+install, so the date in a checkout can be out of date. To get the current
+version, run `uv sync --reinstall-package immich-family-library`.
+
+The `Dockerfile` copies the full tree into the build stage, `.git` included,
+and hatch-vcs reads the version there. Only the virtual environment goes into
+the final image. `.dockerignore` lists only files that git does not track. If
+it lists a tracked file, git sees that file as deleted in the build stage.
+Then every image gets a date in its version, and a release image does not have
+the version of its tag.
+
+`CHANGELOG.md` records the changes in each release that an operator can see.
+An operator is a person who runs the service. New entries go into the
+`## Unreleased` section at the top. This section exists only while it has
+entries.
+
+1. If a pull request makes a change that an operator can see, add an entry
+   under `## Unreleased` in the same pull request. If the section is not
+   there, add it above the newest release.
+2. If the operator must do a step for the upgrade, write the step under
+   `### Upgrade notes`. Examples are a new key permission and a new minimum
+   Immich version.
+3. Do not add an entry for a change to tests, docs or internal code only.
+
+At a release, the entries can be merged, made shorter or removed, because by
+then the full set of changes is known. Each upgrade note must stay.
+
+## Releases
+
+A push of a version tag starts the `Release` workflow in
+`.github/workflows/release.yml`. The workflow publishes two things:
+
+- the image on Docker Hub, `jcsanyi/immich-family-library`, for amd64 and
+  arm64;
+- a GitHub Release, with the section of `CHANGELOG.md` for that version as its
+  notes.
+
+A release tag is `vX.Y.Z`. Its image gets the Docker tags `X.Y.Z`, `X.Y` and
+`latest`. A pre-release tag adds a label that a Python version accepts, for
+example `v0.2.0-rc.1`, `v0.2.0-a.1` or `v0.2.0-beta.2`. Its image gets only
+its own version as a Docker tag, and its GitHub Release is marked as a
+pre-release.
+
+The workflow runs the `Tests` workflow first. Then it does these checks before
+it publishes anything:
+
+- The tag has the correct form.
+- The tag is on `main`.
+- `CHANGELOG.md` has a section for the version, and the section is not empty.
+- The amd64 image reports the version of the tag. A dirty build stage gives a
+  development version, and this check stops it.
+
+The workflow pushes the image before it creates the GitHub Release.
+
+### To make a release
+
+1. Make a branch from `main`, for example `release-0.2.0`.
+2. In `CHANGELOG.md`, change `## Unreleased` to `## 0.2.0 - YYYY-MM-DD`.
+3. Edit the entries of the release. Keep each upgrade note.
+4. Open a pull request, and merge it after review.
+5. Get the merge commit of that pull request:
+   `gh pr view NUMBER --json mergeCommit -q .mergeCommit.oid`.
+6. Tag that commit: `git tag -a v0.2.0 -m v0.2.0 COMMIT`. Do not tag a later
+   commit on `main`, because its changes are not in the notes.
+7. Push the tag: `git push origin v0.2.0`.
+8. Watch the `Release` run on the Actions tab of the repository.
+
+Each tag needs its own commit. If two tags are on one commit, it is not
+certain which tag hatch-vcs uses for the version.
+
+### If the workflow fails
+
+If the run stops before the step "Build and push", it publishes nothing. Do
+these steps:
+
+1. Delete the tag on GitHub: `git push origin :refs/tags/v0.2.0`.
+2. Delete the local tag: `git tag -d v0.2.0`.
+3. Correct the problem through a pull request.
+4. Tag the merge commit of that pull request with the same version, and push
+   the tag.
+
+If the image is on Docker Hub and only the step "Create the GitHub Release"
+failed, make the GitHub Release by hand. Use the section of `CHANGELOG.md` as
+the notes:
+
+```
+gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file NOTES.md
+```
+
+Do not use a published version again. If a published release has a fault,
+correct it and release the next patch version. A person who pulled the image
+keeps the old image under that version.
 
 ## The dev instance
 
@@ -371,20 +485,28 @@ requests, issues and comments carry no tool attribution.
 
 ## Writing style
 
-Each doc follows one of two rule sets, depending on who reads it and why:
+The docs use the plain-english plugin for Claude Code
+(https://github.com/b1rdmania/claude-plain-english-skill). The plugin has two
+skills. Each part of the docs uses one of them:
 
-- `how-it-works.md`, `for-members.md`, and the opening of `README.md` are
-  plain English in the Orwell and Gowers tradition: active voice, concrete
-  nouns, the condition before the command, no AI vocabulary. These docs
-  explain, so voice and rhythm matter.
-- `cli.md`, `configuration.md`, `deployment.md`, `immich-notes.md`, this file,
-  the rest of `README.md`, and `AGENTS.md` follow ASD-STE100 Simplified
-  Technical English, in pragmatic mode: sentences of 20 words for procedures
-  and 25 for descriptions, the imperative for steps, no contractions, no
-  "should", one name per thing. These docs are reference and procedure.
+- `plain-english`:
+  - `how-it-works.md`
+  - `for-members.md`
+  - the opening of `README.md`
+  - `CHANGELOG.md`, except for any upgrade notes
+- `simple-english`:
+  - `cli.md`
+  - `configuration.md`
+  - `deployment.md`
+  - `immich-notes.md`
+  - this file
+  - the rest of `README.md`
+  - `AGENTS.md`
+  - the upgrade notes in `CHANGELOG.md`
 
-The Claude Code plugin at https://github.com/b1rdmania/claude-plain-english-skill
-has one skill for each set and applies the rules. Either set is fine to write
-by hand. When a doc's style is wrong, re-author it rather than patch it. Then
-compare the result against the old text claim by claim, so that no fact is
-lost.
+The docs use Canadian spelling, for example "behaviour" and "colour". This
+replaces the spelling rule of the `simple-english` skill.
+
+You can write a doc without the plugin. When the style of a doc is wrong,
+write the doc again with its skill. Do not patch it. Then compare the result
+with the old text claim by claim, so that no fact is lost.

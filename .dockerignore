@@ -1,7 +1,14 @@
-.git
+# Untracked files only. A tracked file left out of the build would look
+# deleted to git, and every image would carry the dirty marker.
 .venv
 config
 config.toml
-tests
-__pycache__
-*.pyc
+AGENTS.local.md
+.envrc.local
+.claude
+.coverage
+.pytest_cache
+.ruff_cache
+htmlcov
+**/__pycache__
+**/*.pyc
