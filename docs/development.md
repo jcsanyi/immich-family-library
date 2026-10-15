@@ -412,13 +412,22 @@ requests, issues and comments carry no tool attribution.
 
 The docs use the plain-english plugin for Claude Code
 (https://github.com/b1rdmania/claude-plain-english-skill). The plugin has two
-skills, and each doc uses one of them:
+skills. Each part of the docs uses one of them:
 
-- `plain-english`: `how-it-works.md`, `for-members.md`, the opening of
-  `README.md`, and `CHANGELOG.md`. In `CHANGELOG.md`, the steps under
-  `### Upgrade notes` use `simple-english`.
-- `simple-english`: `cli.md`, `configuration.md`, `deployment.md`,
-  `immich-notes.md`, this file, the rest of `README.md`, and `AGENTS.md`.
+- `plain-english`:
+  - `how-it-works.md`
+  - `for-members.md`
+  - the opening of `README.md`
+  - `CHANGELOG.md`, except for any upgrade notes
+- `simple-english`:
+  - `cli.md`
+  - `configuration.md`
+  - `deployment.md`
+  - `immich-notes.md`
+  - this file
+  - the rest of `README.md`
+  - `AGENTS.md`
+  - the upgrade notes in `CHANGELOG.md`
 
 The docs use Canadian spelling, for example "behaviour" and "colour". This
 replaces the spelling rule of the `simple-english` skill.
