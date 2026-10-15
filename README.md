@@ -1,5 +1,7 @@
 # Immich Family Library
 
+> **Not yet stable.** This project is still in development. Don't use it on photos you care about: it trashes originals in members' accounts, and it has only run against a test instance. To hear when the first stable release is out, watch the [repository on GitHub](https://github.com/jcsanyi/immich-family-library) and choose **Custom**, then **Releases**.
+
 A small service that runs next to a self-hosted [Immich](https://immich.app) instance. It gives a family a shared photo library while each member keeps their own account and decides what to contribute.
 
 Members upload to their own accounts as usual. When a member shares an album with the family, or drops photos into a family album, the service moves those photos into a dedicated family account. The family account shares its library back with every member through partner sharing.
@@ -22,7 +24,7 @@ There is one extra Immich user, the family account, and it owns the family libra
 
 ## Running it
 
-The service is one container next to Immich, on the same docker network, with a volume for its run lock. `compose.yml` is the deployment and `config.example.toml` is the annotated configuration. [docs/deployment.md](docs/deployment.md) has the steps.
+The service is one container next to Immich, on the same docker network, with a volume for its run lock. `compose.yml` is the deployment and `config.example.toml` is the annotated configuration. [docs/deployment.md](docs/deployment.md) has the steps. Before you upgrade, read [CHANGELOG.md](CHANGELOG.md).
 
 ## Documentation
 
