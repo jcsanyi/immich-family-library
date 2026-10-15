@@ -262,7 +262,8 @@ The `Tests` workflow in `.github/workflows/tests.yml` runs on every pull
 request to `main` and on every push to `main`. It installs the locked
 dependencies with `uv sync --frozen`, then runs `bin/lint` and `bin/tests`.
 The job summary shows the coverage table. The HTML coverage report is an artifact of the run, kept for
-14 days.
+14 days. The `Release` workflow also runs the `Tests` workflow, before it
+publishes anything. "Releases" below describes it.
 
 Dependabot (`.github/dependabot.yml`) opens pull requests each week for
 updates to the GitHub Actions and to the Python dependencies in `uv.lock`,
@@ -313,6 +314,73 @@ An operator is a person who runs the service. New entries go into the
 
 At a release, the entries can be merged, made shorter or removed, because by
 then the full set of changes is known. Each upgrade note must stay.
+
+## Releases
+
+A push of a version tag starts the `Release` workflow in
+`.github/workflows/release.yml`. The workflow publishes two things:
+
+- the image on Docker Hub, `jcsanyi/immich-family-library`, for amd64 and
+  arm64;
+- a GitHub Release, with the section of `CHANGELOG.md` for that version as its
+  notes.
+
+A release tag is `vX.Y.Z`. Its image gets the Docker tags `X.Y.Z`, `X.Y` and
+`latest`. A pre-release tag adds a label that a Python version accepts, for
+example `v0.2.0-rc.1`, `v0.2.0-a.1` or `v0.2.0-beta.2`. Its image gets only
+its own version as a Docker tag, and its GitHub Release is marked as a
+pre-release.
+
+The workflow runs the `Tests` workflow first. Then it does these checks before
+it publishes anything:
+
+- The tag has the correct form.
+- The tag is on `main`.
+- `CHANGELOG.md` has a section for the version, and the section is not empty.
+- The amd64 image reports the version of the tag. A dirty build stage gives a
+  development version, and this check stops it.
+
+The workflow pushes the image before it creates the GitHub Release.
+
+### To make a release
+
+1. Make a branch from `main`, for example `release-0.2.0`.
+2. In `CHANGELOG.md`, change `## Unreleased` to `## 0.2.0 - YYYY-MM-DD`.
+3. Add a new, empty `## Unreleased` section above it.
+4. Edit the entries of the release. Keep each upgrade note.
+5. Open a pull request, and merge it after review.
+6. Get the merge commit of that pull request:
+   `gh pr view NUMBER --json mergeCommit -q .mergeCommit.oid`.
+7. Tag that commit: `git tag -a v0.2.0 -m v0.2.0 COMMIT`. Do not tag a later
+   commit on `main`, because its changes are not in the notes.
+8. Push the tag: `git push origin v0.2.0`.
+9. Watch the `Release` run on the Actions tab of the repository.
+
+Each tag needs its own commit. If two tags are on one commit, it is not
+certain which tag hatch-vcs uses for the version.
+
+### If the workflow fails
+
+If the run stops before the step "Build and push", it publishes nothing. Do
+these steps:
+
+1. Delete the tag on GitHub: `git push origin :refs/tags/v0.2.0`.
+2. Delete the local tag: `git tag -d v0.2.0`.
+3. Correct the problem through a pull request.
+4. Tag the merge commit of that pull request with the same version, and push
+   the tag.
+
+If the image is on Docker Hub and only the step "Create the GitHub Release"
+failed, make the GitHub Release by hand. Use the section of `CHANGELOG.md` as
+the notes:
+
+```
+gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file NOTES.md
+```
+
+Do not use a published version again. If a published release has a fault,
+correct it and release the next patch version. A person who pulled the image
+keeps the old image under that version.
 
 ## The dev instance
 
