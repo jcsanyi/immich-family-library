@@ -404,7 +404,6 @@ wheels = [
 
 [[package]]
 name = "immich-family-library"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
