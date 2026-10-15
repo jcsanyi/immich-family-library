@@ -14,6 +14,7 @@ from uuid import UUID
 
 import tomli_w
 
+from ifl import __version__
 from ifl.accounts import AccountError, Accounts, open_accounts
 from ifl.config import Config, ConfigError, load_config, to_raw
 from ifl.convert import convert_albums
@@ -222,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ifl")
     parser.add_argument("-c", "--config", type=Path, default=Path("config.toml"))
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser(
         "observe", help="one pass: report what the rules would do; writes nothing to Immich"

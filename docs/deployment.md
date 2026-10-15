@@ -155,7 +155,8 @@ says what occurs in each case.
 Pull or build the new image and run `docker compose up -d`. The service pins
 its API client to the Immich version it was built against.
 [development.md](development.md) says which. Upgrading Immich past that
-version needs a matching release of the service. Check the changelog.
+version needs a matching release of the service. Read
+[CHANGELOG.md](../CHANGELOG.md) before you upgrade.
 
 The service refuses to start on an Immich that is older than that version. On
 a later minor or major version it starts, and it logs a warning that the

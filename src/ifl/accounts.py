@@ -14,6 +14,7 @@ from uuid import UUID
 
 from immichpy.client.main import AsyncClient
 
+from ifl import __version__
 from ifl.config import AccountConfig, Config
 from ifl.immich import ImmichError, describe_error, guard
 
@@ -128,7 +129,7 @@ async def open_account(
             # Before anything else. An Immich that is too old answers the key
             # check with a reply the client cannot read, and the version is
             # what explains that.
-            log.info("server %s at %s", await check_server(client), url)
+            log.info("ifl %s, server %s at %s", __version__, await check_server(client), url)
         me = await client.users.get_my_user()
         if cfg.email is not None and me.email.lower() != cfg.email.lower():
             raise AccountError(

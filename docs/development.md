@@ -269,6 +269,45 @@ updates to the GitHub Actions and to the Python dependencies in `uv.lock`,
 transitive dependencies included. Minor and patch updates to Python packages
 come as one grouped pull request. A major release gets its own pull request.
 
+## Versions and the changelog
+
+The version comes from the git tags, through hatch-vcs. No file in the
+repository holds a version number. A commit with the tag `vX.Y.Z` has the
+version `X.Y.Z`. A later commit has a development version, for example
+`0.1.1.dev3+g1a2b3c4`: three commits after `v0.1.0`, at commit `1a2b3c4`. If
+the tree has changes that are not committed, the version also gets a date, for
+example `.d20261015`.
+
+`ifl --version` prints the version. Every command except `show-config` writes
+it to the log at startup, next to the version of the Immich server.
+
+In a checkout, uv makes the version when it installs the project. uv installs
+the project again when the commit or the tags change (`tool.uv.cache-keys` in
+`pyproject.toml`). A change that is not committed does not cause a new
+install, so the date in a checkout can be out of date. To get the current
+version, run `uv sync --reinstall-package immich-family-library`.
+
+The `Dockerfile` copies the full tree into the build stage, `.git` included,
+and hatch-vcs reads the version there. Only the virtual environment goes into
+the final image. `.dockerignore` lists only files that git does not track. If
+it lists a tracked file, git sees that file as deleted in the build stage.
+Then every image gets a date in its version, and a release image does not have
+the version of its tag.
+
+`CHANGELOG.md` records the changes in each release that an operator can see.
+An operator is a person who runs the service. New entries go into the
+`## Unreleased` section at the top.
+
+1. If a pull request makes a change that an operator can see, add an entry
+   under `## Unreleased` in the same pull request.
+2. If the operator must do a step for the upgrade, write the step under
+   `### Upgrade notes`. Examples are a new key permission and a new minimum
+   Immich version.
+3. Do not add an entry for a change to tests, docs or internal code only.
+
+At a release, the entries can be merged, made shorter or removed, because by
+then the full set of changes is known. Each upgrade note must stay.
+
 ## The dev instance
 
 Testing happens on a separate Immich instance, never on production.

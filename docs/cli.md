@@ -5,14 +5,14 @@
 - `-c PATH`, `--config PATH`: the config file. The default is `config.toml`
   in the current directory. In the container it is `/config/config.toml`.
 - `-v`, `--verbose`: debug logging.
+- `--version`: print the version of the service and stop. It reads no config.
 
-Logging goes to stderr. `show-config` is the only command that writes to
-stdout.
+Logging goes to stderr. Only `show-config` and `--version` write to stdout.
 
 ## Startup
 
 Every command except `show-config` checks the server and opens every account
-first. The server must be Immich 3.3 or later, and this is checked before any
+first. The log gives the version of the service and of the Immich server. The server must be Immich 3.3 or later, and this is checked before any
 key. Each key must work, belong to the configured email, and carry the
 permissions the service needs (listed in [configuration.md](configuration.md)).
 If any of this fails, the command exits with code 2 before it touches

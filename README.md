@@ -33,6 +33,7 @@ The service is one container next to Immich, on the same docker network, with a 
 - [docs/deployment.md](docs/deployment.md): compose, the webhook, the run lock, upgrades, what to check before production.
 - [docs/immich-notes.md](docs/immich-notes.md): what the service relies on in Immich 3.3.1, and how each point was confirmed.
 - [docs/development.md](docs/development.md): tests, the fake Immich, the dev scripts, branches.
+- [CHANGELOG.md](CHANGELOG.md): what changed in each release, and the steps an upgrade needs.
 
 ## Known gaps
 
