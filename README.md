@@ -58,7 +58,7 @@ Before you upgrade, read [CHANGELOG.md](CHANGELOG.md).
 - [docs/how-it-works.md](docs/how-it-works.md): the model. What the service moves, the flows, the move step by step, re-uploads, state and pacing.
 - [docs/cli.md](docs/cli.md): every command, the exit codes, a first run.
 - [docs/configuration.md](docs/configuration.md): every setting with its default, and the API key permissions.
-- [docs/deployment.md](docs/deployment.md): compose, the webhook, the run lock, upgrades, what to check before production.
+- [docs/deployment.md](docs/deployment.md): the two ways to run the container, the config, the first run, the webhook, the run lock, upgrades, what to check before production.
 - [docs/immich-notes.md](docs/immich-notes.md): what the service relies on in Immich 3.3.1, and how each point was confirmed.
 - [docs/development.md](docs/development.md): tests, the fake Immich, the dev scripts, branches.
 - [CHANGELOG.md](CHANGELOG.md): what changed in each release, and the steps an upgrade needs.
