@@ -299,7 +299,9 @@ and hatch-vcs reads the version there. Only the virtual environment goes into
 the final image. `.dockerignore` lists only files that git does not track. If
 it lists a tracked file, git sees that file as deleted in the build stage.
 Then every image gets a date in its version, and a release image does not have
-the version of its tag.
+the version of its tag. The `Tests` workflow fails if `.dockerignore` lists a
+tracked file. It uses the pattern rules of git, which match at least the files
+that the rules of Docker match.
 
 `CHANGELOG.md` records the changes in each release that an operator can see.
 An operator is a person who runs the service. New entries go into the

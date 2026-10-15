@@ -12,5 +12,3 @@ AGENTS.local.md
 htmlcov
 **/__pycache__
 **/*.pyc
-# Test of the release workflow's image version check. Reverted after the test.
-tests
