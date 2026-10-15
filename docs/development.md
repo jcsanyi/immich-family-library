@@ -303,10 +303,12 @@ the version of its tag.
 
 `CHANGELOG.md` records the changes in each release that an operator can see.
 An operator is a person who runs the service. New entries go into the
-`## Unreleased` section at the top.
+`## Unreleased` section at the top. This section exists only while it has
+entries.
 
 1. If a pull request makes a change that an operator can see, add an entry
-   under `## Unreleased` in the same pull request.
+   under `## Unreleased` in the same pull request. If the section is not
+   there, add it above the newest release.
 2. If the operator must do a step for the upgrade, write the step under
    `### Upgrade notes`. Examples are a new key permission and a new minimum
    Immich version.
@@ -346,15 +348,14 @@ The workflow pushes the image before it creates the GitHub Release.
 
 1. Make a branch from `main`, for example `release-0.2.0`.
 2. In `CHANGELOG.md`, change `## Unreleased` to `## 0.2.0 - YYYY-MM-DD`.
-3. Add a new, empty `## Unreleased` section above it.
-4. Edit the entries of the release. Keep each upgrade note.
-5. Open a pull request, and merge it after review.
-6. Get the merge commit of that pull request:
+3. Edit the entries of the release. Keep each upgrade note.
+4. Open a pull request, and merge it after review.
+5. Get the merge commit of that pull request:
    `gh pr view NUMBER --json mergeCommit -q .mergeCommit.oid`.
-7. Tag that commit: `git tag -a v0.2.0 -m v0.2.0 COMMIT`. Do not tag a later
+6. Tag that commit: `git tag -a v0.2.0 -m v0.2.0 COMMIT`. Do not tag a later
    commit on `main`, because its changes are not in the notes.
-8. Push the tag: `git push origin v0.2.0`.
-9. Watch the `Release` run on the Actions tab of the repository.
+7. Push the tag: `git push origin v0.2.0`.
+8. Watch the `Release` run on the Actions tab of the repository.
 
 Each tag needs its own commit. If two tags are on one commit, it is not
 certain which tag hatch-vcs uses for the version.
