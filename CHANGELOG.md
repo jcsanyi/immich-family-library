@@ -6,5 +6,6 @@ are steps you must take.
 
 ## Unreleased
 
-- `ifl --version` prints the service's version, and the startup log shows it
-  beside the Immich server's version.
+## 0.1.0-rc.1 - 2026-10-15
+
+The first release candidate. It isn't ready for use on real photos yet.
