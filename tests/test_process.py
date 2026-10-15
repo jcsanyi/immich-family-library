@@ -101,15 +101,17 @@ async def test_a_pass_takes_external_library_photos_out_of_the_dropbox(world, ca
     result = await run_pass(accounts, cfg)
 
     # Each member's key took out that member's own, and the limit didn't apply.
+    # The moved phone photo's original left the dropbox with the move.
     assert [w for w in world.writes if w[0] == "remove"] == [
         ("remove", ALICE, drop.id, {a1.id, a2.id}),
         ("remove", BOB, drop.id, {b1.id}),
+        ("remove", ALICE, drop.id, {phone.id}),
     ]
     assert result.dropbox.removed == {"alice": 2, "bob": 1} and not result.failed
     # Out of the dropbox and nothing else: still theirs, untagged, and where it was.
     assert all(not a.is_trashed and not a.tags for a in (a1, a2, b1))
     assert world.assets[trip.id] == [a1] and len(world.uploads) == 1
-    assert [a for a in world.assets[drop.id] if not a.is_trashed] == []
+    assert world.assets[drop.id] == []
     assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == [
         "alice: 2 photos from an external library taken out of 'Drop'; "
         "the service doesn't support moving these",

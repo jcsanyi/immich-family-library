@@ -153,7 +153,19 @@ are on. No key lists it, so the service can't know the photo is there, and
 the photo leaves that album when the original goes to the trash.
 
 **The trash.** The original is trashed with the owner's key, never deleted
-outright.
+outright. Then it leaves every album it was in, the dropbox included, so that
+a restore from the trash gives the member a photo in no album. The owner's
+key takes it out of family albums, since every member is an editor there. Any
+other album takes the keys the re-link uses, in the same order. The trash
+comes first because an original that is out of its albums and not trashed is
+one the asset scan never finds again.
+
+If the original won't leave an album, the move is still done, and the log
+warns with the album's name. A restore would then put the original back in
+that album, and if it's a family album the next pass moves it again. Anything
+the family changed on the copy since, such as taking it out of an album or
+trashing it, would be undone. That takes a failed removal, a restore and a
+change by the family, all on one photo, so the service accepts it.
 
 A member who restores a moved original from their trash doesn't get the photo
 back. A trashed photo keeps its place in its albums, so the restored original

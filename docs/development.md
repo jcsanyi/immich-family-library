@@ -214,6 +214,13 @@ A catch of that kind is correct, on two conditions:
 - The code acts on the answer. If no key is accepted, the move raises a
   `MoveError` that lists what each key was told.
 
+One catch has a different reason. After the move trashes the original, it
+removes the original from its albums (`_remove_original`). At that point the
+move is done. An error from Immich there, an outage included, becomes a
+warning on the result of the move. If the error rose, the move would be
+reported as failed, and no later pass would try it again, because the
+original is in the trash. A fault in the service still rises.
+
 ## Tests
 
 The tests use no network. `tests/fakes.py` is a fake Immich: albums with

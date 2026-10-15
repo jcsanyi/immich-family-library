@@ -213,12 +213,15 @@ class FakeWorld:
 
     async def remove_album_assets(self, client, album_id, asset_ids):
         """Immich lets the album's owner or an editor take a photo out. Verified
-        for an editor and their own photo."""
+        for an editor and their own photo, and for the owner and someone else's.
+        A key that isn't on the album is refused outright."""
         ids = list(asset_ids)
         if not ids:
             return []
-        self.writes.append(("remove", client.user_id, album_id, set(ids)))
         album = self.albums[album_id]
+        if client.user_id not in album.user_ids:
+            raise refusal("albums.remove_asset_from_album")
+        self.writes.append(("remove", client.user_id, album_id, set(ids)))
         allowed = album.owner_id == client.user_id or album.roles.get(client.user_id) == EDITOR
         out = []
         for i in ids:

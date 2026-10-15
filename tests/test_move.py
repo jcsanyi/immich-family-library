@@ -64,7 +64,7 @@ async def test_move_carries_everything_and_trashes_the_original(world):
     )
     world.edits[a.id] = ["crop", "rotate"]
     trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR}, assets=[a])
-    world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR}, assets=[a])
+    drop = world.album("Drop", FAMILY, roles={ALICE: EDITOR, BOB: EDITOR}, assets=[a])
     private = world.album("Private", ALICE, roles={BOB: VIEWER}, assets=[a])
     world.partners[FAMILY] = {ALICE, BOB}
 
@@ -87,8 +87,14 @@ async def test_move_carries_everything_and_trashes_the_original(world):
     assert result.relinked == ["Trip"] and result.relinked_member == ["Private"]
     assert copy in world.assets[trip.id] and copy in world.assets[private.id]
     assert ("add", ALICE, private.id, {copy.id}) in world.writes
-    # The original: tagged, trashed.
+    # The original: tagged, trashed, and then out of every album, the dropbox
+    # included, with alice's key: the family key may not take photos out.
     assert [t.value for t in a.tags] == ["family"] and a.is_trashed and result.trashed
+    assert all(a not in world.assets[al.id] for al in (trip, drop, private))
+    removes = [w for w in world.writes if w[0] == "remove"]
+    assert {(w[1], w[2]) for w in removes} == {(ALICE, al.id) for al in (trip, drop, private)}
+    assert world.writes.index(("trash", ALICE, a.id)) < world.writes.index(removes[0])
+    assert not result.warnings
     assert result.owner_id == ALICE and not result.reupload
     # Keys: reads and the trash under alice, the upload under the family.
     assert ("download", ALICE, a.id) in world.writes and ("trash", ALICE, a.id) in world.writes
@@ -237,6 +243,14 @@ async def test_relink_reaches_albums_the_asset_owner_is_not_on(world):
     adds = {(w[2], w[1]) for w in world.writes if w[0] == "add" and copy.id in w[3]}
     assert {(handmade.id, FAMILY), (private.id, BOB), (theirs.id, BOB)} <= adds
     assert a.is_trashed
+    # The original leaves bob's albums with his key. A family album that alice
+    # isn't on keeps it: reconcile puts her on every one, so that only happens
+    # when the move runs before reconcile has.
+    removes = {(w[2], w[1]) for w in world.writes if w[0] == "remove"}
+    assert {(private.id, BOB), (theirs.id, BOB)} <= removes
+    assert a in world.assets[handmade.id]
+    (warning,) = result.warnings
+    assert warning.startswith("original left in 'Handmade' (alice: ")
 
 
 async def test_an_outsiders_album_that_only_a_viewer_sees_blocks_and_says_who_sees_it(world):
@@ -310,7 +324,7 @@ async def test_relink_failure_keeps_the_original(world):
     assert not result.uploaded and a.is_trashed and result.relinked_member == ["Bobs"]
 
 
-async def test_a_restored_original_is_trashed_again_without_redoing_the_fixups(world):
+async def test_a_restored_original_put_back_in_a_family_album_keeps_the_familys_fixups(world):
     accounts = make_accounts()
     a = alice_asset(world)
     world.edits[a.id] = ["alice-crop"]
@@ -320,10 +334,12 @@ async def test_a_restored_original_is_trashed_again_without_redoing_the_fixups(w
     assert first.edits == 1 and world.edits[copy] == ["alice-crop"] and a.is_trashed
     entry = dict(world.metadata[copy]["ifl"])
 
-    # The family re-crops its copy. Then alice takes her original back out of
-    # the trash, where it is still a member of the family album.
+    # The family re-crops its copy. Alice takes her original back out of the
+    # trash, where it is in no album now, and puts it into the family album.
+    assert a not in world.assets[trip.id]
     world.edits[copy] = ["family-crop"]
     a.is_trashed = False
+    world.assets[trip.id].append(a)
     later = NOW + timedelta(days=3)
     again = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=later)
 
@@ -331,6 +347,7 @@ async def test_a_restored_original_is_trashed_again_without_redoing_the_fixups(w
     assert world.edits[copy] == ["family-crop"] and world.metadata[copy]["ifl"] == entry
     assert again.edits == 0 and not again.uploaded and not again.duplicate
     assert a.is_trashed and again.trashed and world.library[copy] in world.assets[trip.id]
+    assert a not in world.assets[trip.id]
 
 
 async def test_dying_at_the_edits_step_keeps_the_original_and_resumes(world, monkeypatch):
@@ -868,3 +885,56 @@ async def test_relink_tries_the_next_key_only_when_immich_refused_this_one(world
     with pytest.raises(KeyError):
         await move_asset(accounts, OPTS, c.id, accounts.members["alice"], now=NOW)
     assert not c.is_trashed
+
+
+async def test_an_original_left_in_an_album_is_a_warning_on_a_finished_move(world, monkeypatch):
+    from fakes import outage, refusal
+
+    accounts = make_accounts()
+    a = alice_asset(world)
+    trip = world.album("Trip", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    bobs = world.album("Bobs", BOB, roles={ALICE: EDITOR}, assets=[a])
+    gone = world.album("Gone", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    denied = world.album("Denied", FAMILY, roles={ALICE: EDITOR}, assets=[a])
+    world.partners[FAMILY] = {ALICE, BOB}
+    real = world.remove_album_assets
+
+    async def remove(client, album_id, asset_ids):
+        if album_id == trip.id:
+            raise outage("albums.remove_asset_from_album")
+        if album_id == bobs.id:
+            raise refusal("albums.remove_asset_from_album")
+        if album_id == gone.id:
+            world.assets[gone.id].remove(a)  # alice took it out first
+        if album_id == denied.id:
+            no = BulkIdErrorReason.NO_PERMISSION
+            return [
+                BulkIdResponseDto(id=i, success=False, error=no, error_message="nope")
+                for i in asset_ids
+            ]
+        return await real(client, album_id, asset_ids)
+
+    monkeypatch.setattr("ifl.move.remove_album_assets", remove)
+    result = await move_asset(accounts, OPTS, a.id, accounts.members["alice"], now=NOW)
+
+    # The move is done whatever the removal got. An outage ends the try for
+    # that album; a refusal moves on to the next key, and every key was asked.
+    assert a.is_trashed and result.trashed and a not in world.assets[gone.id]
+    warnings = {w.split("'")[1]: w for w in result.warnings}
+    assert set(warnings) == {"Trip", "Bobs", "Denied"}
+    assert "(no usable answer from Immich: " in warnings["Trip"]
+    assert "(bob: " in warnings["Bobs"] and "; alice: " in warnings["Bobs"]
+    assert "(alice: no_permission: nope)" in warnings["Denied"]
+    assert warnings["Trip"].endswith("it would undo changes the family made to the copy")
+    assert warnings["Bobs"].endswith("it would sit there beside the copy")
+
+    # A fault in the service is no answer from Immich: it rises.
+    b = world.add_asset(FakeAsset(uuid4(), ALICE, checksum="sha-b", original_file_name="b.jpg"))
+    world.assets[trip.id].append(b)
+
+    async def broken(client, album_id, asset_ids):
+        raise KeyError("owner")
+
+    monkeypatch.setattr("ifl.move.remove_album_assets", broken)
+    with pytest.raises(KeyError):
+        await move_asset(accounts, OPTS, b.id, accounts.members["alice"], now=NOW)
