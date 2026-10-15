@@ -35,9 +35,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
-# No --dirty: the image's build stage holds only some of the tracked files, so
-# git would call every image build dirty, a release included.
-raw-options = { scm = { git = { describe_command = "git describe --tags --long --match *[0-9]*" } } }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ifl"]
