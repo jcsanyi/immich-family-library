@@ -272,7 +272,7 @@ async def _remove_original(
     the family key has no permission to. Any other album takes the re-link's
     keys, in the same order. The move has finished by now, so no answer from
     Immich fails it: a refused key says to try the next one, and an outage ends
-    the try. A fault in the service rises with its traceback."""
+    the try."""
     if album.owner_id == accounts.family.user_id:
         keys = [owner]
     else:
@@ -643,9 +643,14 @@ async def move_asset(
     # Then out of its albums, so that a restore from the trash gives the member
     # a photo in no album, which the next pass leaves alone. Never before the
     # trash: an original out of its albums and not trashed is one the asset
-    # scan never finds again.
+    # scan never finds again. The move is done by now, so nothing here may undo
+    # that: a fault leaves the original in this album, and the rest go on.
     for a in albums:
-        if why := await _remove_original(accounts, a, owner, asset_id):
+        try:
+            why = await _remove_original(accounts, a, owner, asset_id)
+        except Exception as e:  # noqa: BLE001 - the move is done; only this album is left
+            why = log_failure(log, f"original of {asset.original_file_name} left in {a.name!r}", e)
+        if why:
             if a.owner_id == family.user_id:
                 then = "it would undo changes the family made to the copy"
             else:

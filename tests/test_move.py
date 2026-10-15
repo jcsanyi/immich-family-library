@@ -887,7 +887,9 @@ async def test_relink_tries_the_next_key_only_when_immich_refused_this_one(world
     assert not c.is_trashed
 
 
-async def test_an_original_left_in_an_album_is_a_warning_on_a_finished_move(world, monkeypatch):
+async def test_an_original_left_in_an_album_is_a_warning_on_a_finished_move(
+    world, monkeypatch, caplog
+):
     from fakes import outage, refusal
 
     accounts = make_accounts()
@@ -932,13 +934,22 @@ async def test_an_original_left_in_an_album_is_a_warning_on_a_finished_move(worl
     assert warnings["Trip"].endswith("it would undo changes the family made to the copy")
     assert warnings["Bobs"].endswith("it would sit there beside the copy")
 
-    # A fault in the service is no answer from Immich: it rises.
+    # A fault in the service doesn't undo the move either. It is an error with
+    # its traceback, and the next album is still tried.
     b = world.add_asset(FakeAsset(uuid4(), ALICE, checksum="sha-b", original_file_name="b.jpg"))
     world.assets[trip.id].append(b)
+    shore = world.album("Shore", FAMILY, roles={ALICE: EDITOR}, assets=[b])
 
     async def broken(client, album_id, asset_ids):
-        raise KeyError("owner")
+        if album_id == trip.id:
+            raise KeyError("owner")
+        return await real(client, album_id, asset_ids)
 
     monkeypatch.setattr("ifl.move.remove_album_assets", broken)
-    with pytest.raises(KeyError):
-        await move_asset(accounts, OPTS, b.id, accounts.members["alice"], now=NOW)
+    caplog.clear()
+    done = await move_asset(accounts, OPTS, b.id, accounts.members["alice"], now=NOW)
+    assert b.is_trashed and done.trashed and b not in world.assets[shore.id]
+    (warning,) = done.warnings
+    assert warning.startswith("original left in 'Trip' (KeyError: 'owner')")
+    (error,) = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert error.exc_info and "left in 'Trip'" in error.getMessage()

@@ -219,7 +219,9 @@ removes the original from its albums (`_remove_original`). At that point the
 move is done. An error from Immich there, an outage included, becomes a
 warning on the result of the move. If the error rose, the move would be
 reported as failed, and no later pass would try it again, because the
-original is in the trash. A fault in the service still rises.
+original is in the trash. A fault in the service is logged as an error with
+its traceback, and it becomes a warning on the result too. In each case the
+move goes on to the next album.
 
 ## Tests
 
