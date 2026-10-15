@@ -1,0 +1,29 @@
+name: Docker Hub description
+
+# DOCKER.md is the page on Docker Hub. The manual trigger pushes it without a
+# change to the file.
+on:
+  push:
+    branches: [main]
+    paths:
+      - DOCKER.md
+      - .github/workflows/dockerhub-description.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The token needs the Read, Write, Delete scope to change the page.
+      - uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: jcsanyi/immich-family-library
+          short-description: Not yet stable. A shared family photo library for self-hosted Immich.
+          readme-filepath: DOCKER.md

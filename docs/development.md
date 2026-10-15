@@ -385,6 +385,15 @@ Do not use a published version again. If a published release has a fault,
 correct it and release the next patch version. A person who pulled the image
 keeps the old image under that version.
 
+### The Docker Hub page
+
+`DOCKER.md` is the page on Docker Hub. The workflow
+`.github/workflows/dockerhub-description.yml` pushes it when a change to it
+reaches `main`. It has a copy of the quick start in the README, because a
+reader on Docker Hub can need it without the README. When you change one copy,
+change the other in the same pull request. Links in `DOCKER.md` must be full
+URLs, because Docker Hub shows the page away from the repository.
+
 ## The dev instance
 
 Testing happens on a separate Immich instance, never on production.
@@ -496,6 +505,7 @@ skills. Each part of the docs uses one of them:
   - `for-members.md`
   - the opening of `README.md`
   - `CHANGELOG.md`, except for any upgrade notes
+  - the opening of `DOCKER.md`
 - `simple-english`:
   - `cli.md`
   - `configuration.md`
@@ -505,6 +515,7 @@ skills. Each part of the docs uses one of them:
   - the rest of `README.md`
   - `AGENTS.md`
   - the upgrade notes in `CHANGELOG.md`
+  - the rest of `DOCKER.md`
 
 The docs use Canadian spelling, for example "behaviour" and "colour". This
 replaces the spelling rule of the `simple-english` skill.
