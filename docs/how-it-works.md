@@ -175,6 +175,11 @@ original goes back to the trash. The copy's edits stay as they are: its `ifl`
 entry names that original, which says the edits were already carried, so they
 aren't carried twice.
 
+A duplicate the service trashed is different. The copy's entry names only the
+original, so a restored duplicate looks like a re-upload again. If it was
+uploaded in the last three days, the next daemon restart or one-off command
+trashes it again (issue 34).
+
 State comes from Immich at every step. The family owning the checksum means
 the upload happened. The original still existing means it hasn't been
 trashed. The copy's `ifl` entry naming the original means the fix-ups

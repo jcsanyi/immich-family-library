@@ -282,10 +282,10 @@ async def _remove_original(
         try:
             (r,) = await remove_album_assets(who.client, album.id, [asset_id])
         except ImmichError as e:
-            if not e.refused:
-                return e.reason
             failures.append(f"{who.name}: {e.reason}")
-            continue
+            if e.refused:
+                continue
+            break
         if r.success or r.error == BulkIdErrorReason.NOT_FOUND:
             return None
         failures.append(f"{who.name}: {bulk_error(r)}")

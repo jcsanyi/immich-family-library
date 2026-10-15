@@ -903,7 +903,9 @@ async def test_an_original_left_in_an_album_is_a_warning_on_a_finished_move(worl
         if album_id == trip.id:
             raise outage("albums.remove_asset_from_album")
         if album_id == bobs.id:
-            raise refusal("albums.remove_asset_from_album")
+            if client.user_id == BOB:
+                raise refusal("albums.remove_asset_from_album")
+            raise outage("albums.remove_asset_from_album")
         if album_id == gone.id:
             world.assets[gone.id].remove(a)  # alice took it out first
         if album_id == denied.id:
@@ -922,8 +924,10 @@ async def test_an_original_left_in_an_album_is_a_warning_on_a_finished_move(worl
     assert a.is_trashed and result.trashed and a not in world.assets[gone.id]
     warnings = {w.split("'")[1]: w for w in result.warnings}
     assert set(warnings) == {"Trip", "Bobs", "Denied"}
-    assert "(no usable answer from Immich: " in warnings["Trip"]
-    assert "(bob: " in warnings["Bobs"] and "; alice: " in warnings["Bobs"]
+    assert "(alice: no usable answer from Immich: " in warnings["Trip"]
+    # The outage on the second key keeps what the first key was told.
+    assert "(bob: Immich answered 400" in warnings["Bobs"]
+    assert "; alice: no usable answer from Immich: " in warnings["Bobs"]
     assert "(alice: no_permission: nope)" in warnings["Denied"]
     assert warnings["Trip"].endswith("it would undo changes the family made to the copy")
     assert warnings["Bobs"].endswith("it would sit there beside the copy")
