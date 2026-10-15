@@ -46,7 +46,10 @@ Immich. It reports:
   workflow`, or "family albums consistent".
 - `MOVE` lines for member photos in family albums, with `[dropbox]` marked.
   `REUPLOAD` lines for members' recent uploads that the family already has.
-  `SKIP` lines for re-uploads whose family copy is trashed. `BLOCKED` photos.
+  `SKIP` lines for recent uploads that match a family copy but are not
+  re-uploads: the family's copy is trashed, it did not come from that member,
+  or the upload is the original that the copy was moved from. `BLOCKED`
+  photos.
 - `REMOVE` lines for photos from an external library that are in the dropbox.
   A pass takes these out of the dropbox and does not move them. A photo from
   an external library in a different family album has no line.
@@ -99,8 +102,9 @@ re-upload: the family has the same file, in a copy that the service moved from
 this member. If it is, the command adds the family's copy to the albums that
 hold the member's photo, and trashes the member's photo. In every other case
 the command moves nothing, gives the reason and exits 1. The cases are: the
-family has no copy, the family's copy is in the trash, and the family's copy
-came from somewhere else.
+family has no copy, the family's copy is in the trash, the family's copy
+came from somewhere else, and the photo is the original that the family's copy
+was moved from.
 
 The summary line of `--all` counts the re-uploads it trashed. The command adds
 nothing to the daily report, which only the daemon keeps. If anything failed,

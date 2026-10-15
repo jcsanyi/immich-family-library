@@ -382,8 +382,10 @@ async def reupload_items(
     that came from that same member: the copy's provenance entry names them.
     A copy the family got some other way, by a direct upload or from another
     member, makes no claim on this member's photo. Only a family album does.
-    Those, and the ones whose family copy is in the trash, are listed as
-    skipped. An external-library photo is never a re-upload."""
+    Nor is the photo the copy was moved from a re-upload: that is the member's
+    original, back from the trash. Those, and the ones whose family copy is in
+    the trash, are listed as skipped. An external-library photo is never a
+    re-upload."""
     family = accounts.family
     for member, assets in candidates:
         recent = {a.checksum: a for a in assets if a.owner_id == member.user_id and not external(a)}
@@ -404,6 +406,12 @@ async def reupload_items(
                 scan.skipped_reuploads.append(
                     f"{a.original_file_name} from {member.name}: "
                     "the family's copy did not come from them"
+                )
+                continue
+            if provenance.get("origin_asset_id") == str(a.id):
+                scan.skipped_reuploads.append(
+                    f"{a.original_file_name} from {member.name}: "
+                    "it is the original the family's copy was moved from"
                 )
                 continue
             scan.moves.append(

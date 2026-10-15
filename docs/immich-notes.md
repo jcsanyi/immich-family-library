@@ -163,7 +163,24 @@ are listed here so that the next Immich upgrade knows what to re-check.
   assets stay in their albums' rows and in dedupe.
 - `POST /trash/restore/assets` brings a trashed asset back, with memberships
   and metadata intact. The service uses it when a member shares a photo the
-  family had deleted.
+  family had deleted. Confirmed on dev: a restored original is again in every
+  album it was in when it was trashed.
+- A restore changes `updatedAt` of the asset. So a restored original waits
+  for `settle_seconds` again before the move takes it. Confirmed on dev.
+- A restore does not start the upload workflow, so the webhook gets nothing.
+  Confirmed on dev: a restored original of alice's was in no album, the
+  family held a copy that came from alice, and the webhook got no post.
+- A trashed asset can be removed from an album, and it stays in the trash.
+  Confirmed on dev:
+  - The owner of the asset removed it from family albums, as an editor, and
+    from an album of their own.
+  - The owner of a member album removed another member's trashed asset from
+    it.
+  - The owner of the asset is refused for an album that they are not on. The
+    answer is a 400 with "Not found or no albumAsset.delete access".
+  - The family key is refused with a 403, because it does not have the
+    `albumAsset.delete` permission. The family key never needs it: the owner
+    of the asset is an editor on every family album.
 
 ## External libraries (`services/library.service.ts`)
 

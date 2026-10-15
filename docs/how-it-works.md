@@ -153,13 +153,32 @@ are on. No key lists it, so the service can't know the photo is there, and
 the photo leaves that album when the original goes to the trash.
 
 **The trash.** The original is trashed with the owner's key, never deleted
-outright.
+outright. Then it leaves every album it was in, the dropbox included, so that
+a restore from the trash gives the member a photo in no album. The owner's
+key takes it out of family albums, since every member is an editor there. Any
+other album takes the keys the re-link uses, in the same order. The trash
+comes first because an original that is out of its albums and not trashed is
+one the asset scan never finds again.
 
-A member who restores a moved original from their trash doesn't get the photo
-back. A trashed photo keeps its place in its albums, so the restored original
-is once more a member's photo in a family album, and the next pass trashes it
-again. The family's copy isn't touched: its `ifl` entry names that original,
-which says the edits were already carried, so they aren't carried twice.
+If the original won't leave an album, the move is still done, and the log
+warns with the album's name. A restore would then put the original back in
+that album, and if it's a family album the next pass moves it again. Anything
+the family changed on the copy since, such as taking it out of an album or
+trashing it, would be undone. That takes a failed removal, a restore and a
+change by the family, all on one photo, so the service accepts it.
+
+A member who restores a moved original from their trash gets it back as a
+photo in no album, beside the family's copy. The service leaves it alone,
+and nothing changes for the family. If the member puts it into a family album
+again, it merges with the copy: the copy goes into that album, and the
+original goes back to the trash. The copy's edits stay as they are: its `ifl`
+entry names that original, which says the edits were already carried, so they
+aren't carried twice.
+
+A duplicate the service trashed is different. The copy's entry names only the
+original, so a restored duplicate looks like a re-upload again. If it was
+uploaded in the last three days, the next daemon restart or one-off command
+trashes it again (issue 34).
 
 State comes from Immich at every step. The family owning the checksum means
 the upload happened. The original still existing means it hasn't been
@@ -218,7 +237,9 @@ What the service does about it:
 - The asset scan has a second source: per member, the photos uploaded since
   the last look, with their checksums batched through the family's bulk
   check. A match is a re-upload only when the family's copy came from that
-  same member, which the copy's `ifl` entry says. It then goes through the
+  same member, which the copy's `ifl` entry says, and the photo isn't the
+  original the copy was moved from. That one is back from the member's
+  trash, not from their phone. A re-upload then goes through the
   same move: the copy is found by checksum, nothing is uploaded, the copy is
   re-linked into any album the duplicate sits in, the duplicate is trashed,
   and it joins the member's daily tally.

@@ -115,9 +115,8 @@ the wasted upload, once a month per photo.
   doesn't join the family's library. The dropbox doesn't work for these. The
   photo is taken back out of it, and nothing else happens to it.
 - Taking a photo back from the family isn't possible yet. For now, ask whoever
-  runs the service. Restoring your original from the trash won't do it: the
-  photo is still in the family album, so it goes back to your trash within the
-  hour.
+  runs the service. You can restore your original from the trash, and it stays
+  in your library, but the family keeps its copy too.
 - You'll be asked once for an API key from your account. That's what lets the
   service move photos on your behalf. Whoever runs it will tell you which
   boxes to tick when you create it. Nothing else about your account changes.

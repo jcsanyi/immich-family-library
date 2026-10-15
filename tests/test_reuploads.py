@@ -144,6 +144,28 @@ async def test_a_family_copy_from_elsewhere_makes_no_claim_on_a_members_photo(wo
     ]
 
 
+async def test_an_original_restored_from_the_trash_is_no_reupload(world):
+    accounts = make_accounts()
+    # Alice's original was moved and then restored: the copy's entry names it.
+    # Her phone also uploaded the file again, as a new asset.
+    original = upload(world, ALICE, "lake", T1)
+    copy = family_has(world, "lake", origin=ALICE)
+    world.metadata[copy.id]["ifl"]["origin_asset_id"] = str(original.id)
+    skip = ["lake.jpg from alice: it is the original the family's copy was moved from"]
+
+    scan = await scan_assets(accounts, "Drop", now=NOW)
+    assert scan.moves == [] and scan.skipped_reuploads == skip
+
+    # The webhook and `move` ask about ids in hand, and get the same answer.
+    alice = accounts.members["alice"]
+    assert (await reuploads_among(accounts, [(alice, original)])).skipped_reuploads == skip
+
+    # The phone's new upload of the same file is a re-upload all the same.
+    phone = upload(world, ALICE, "lake", T1)
+    scan = await reuploads_among(accounts, [(alice, phone)])
+    assert [m.asset_id for m in scan.moves] == [phone.id] and scan.skipped_reuploads == []
+
+
 async def test_an_external_library_photo_is_never_a_reupload(world):
     accounts = make_accounts()
     family_has(world, "nas", origin=ALICE)

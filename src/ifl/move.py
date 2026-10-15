@@ -10,7 +10,7 @@ and the key each call runs under. In short:
   sidecar from its own exif row, and wait for it;
 - rewrite only the sidecar's tag list, upload bytes plus sidecar as the family,
   apply the edits, record provenance, add the copy to the family albums;
-- trash the original.
+- trash the original, then take it out of its albums.
 
 State comes from Immich at every step: the family already owning the checksum
 means the upload is done, the original still existing means it hasn't been
@@ -261,6 +261,35 @@ async def _relink_member_album(
         f"could not re-link the copy into {album.name!r} ({'; '.join(failures) or 'no key can'});"
         " original left in place"
     )
+
+
+async def _remove_original(
+    accounts: Accounts, album: AlbumSummary, owner: Account, asset_id: UUID
+) -> str | None:
+    """Take the trashed original out of an album. Why it is still there, or None.
+
+    The owner is an editor on every family album, so their key does it there;
+    the family key has no permission to. Any other album takes the re-link's
+    keys, in the same order. The move has finished by now, so no answer from
+    Immich fails it: a refused key says to try the next one, and an outage ends
+    the try."""
+    if album.owner_id == accounts.family.user_id:
+        keys = [owner]
+    else:
+        keys = _relink_keys(accounts, album, owner)
+    failures = []
+    for who in keys:
+        try:
+            (r,) = await remove_album_assets(who.client, album.id, [asset_id])
+        except ImmichError as e:
+            failures.append(f"{who.name}: {e.reason}")
+            if e.refused:
+                continue
+            break
+        if r.success or r.error == BulkIdErrorReason.NOT_FOUND:
+            return None
+        failures.append(f"{who.name}: {bulk_error(r)}")
+    return "; ".join(failures) or "no key can"
 
 
 async def _wait_for_dimensions(family: Account, asset_id: UUID, timeout: float) -> None:
@@ -610,6 +639,23 @@ async def move_asset(
     if not current.is_trashed:
         await trash_assets(owner.client, [asset_id])
         trashed = True
+
+    # Then out of its albums, so that a restore from the trash gives the member
+    # a photo in no album, which the next pass leaves alone. Never before the
+    # trash: an original out of its albums and not trashed is one the asset
+    # scan never finds again. The move is done by now, so nothing here may undo
+    # that: a fault leaves the original in this album, and the rest go on.
+    for a in albums:
+        try:
+            why = await _remove_original(accounts, a, owner, asset_id)
+        except Exception as e:  # noqa: BLE001 - the move is done; only this album is left
+            why = log_failure(log, f"original of {asset.original_file_name} left in {a.name!r}", e)
+        if why:
+            if a.owner_id == family.user_id:
+                then = "it would undo changes the family made to the copy"
+            else:
+                then = "it would sit there beside the copy"
+            warnings.append(f"original left in {a.name!r} ({why}); restored from the trash, {then}")
 
     return MoveResult(
         asset_id=asset_id,
