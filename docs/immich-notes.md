@@ -240,12 +240,161 @@ points are what it relies on to find one and to leave it alone.
   Android with SDK 31 (Android 12) or later
   (`widgets/settings/advanced_settings.dart`). There is no iOS equivalent.
 
-## Faces (unverified)
+## Faces and people (`services/person.service.ts`)
 
-Cluster groups (3.2) pool recognition across accounts. Whether a single new
-upload clusters with existing cross-account faces, or only a full re-run
-does, is untested (issue 1). If only a re-run does, the cluster group's
-regenerate-people endpoint is the fallback.
+The points in this section were tested on dev with three accounts in one
+cluster group: family, alice and bob. Carol, outside the group, was used for
+one test of edited photos. The test photos came from Labeled Faces in the
+Wild, at 250 × 250 pixels. That size was enough for detection and
+recognition.
+
+### Cluster groups and person groups
+
+- A user joins a cluster group by invitation. A member of the group sends a
+  request (`PUT /cluster-groups/{id}/requests`), and the invited user accepts
+  it. Each user starts in a group of their own. Confirmed on dev.
+- Cluster groups (3.2) pool recognition across accounts. Faces of one person
+  in two accounts become one person group. Each account that has faces of the
+  person gets its own person row, with the same `personGroupId`.
+- Recognition adds the face in one new upload to a person group that another
+  account already has. No re-run of recognition is necessary, and no people
+  share is necessary. Confirmed on dev: one photo uploaded to bob joined a
+  person group of the family. One photo uploaded to the family joined a
+  person group of alice. Each face joined its group 2 seconds after
+  detection, and the uploader got a new person row.
+- A family copy that the move makes is such an upload. Thus its faces join the
+  person group that the member already has. This test did not use the move.
+- `GET /people` lists a person only when two conditions are true
+  (`getVisiblePeopleQuery` in `repositories/person.repository.ts`):
+  - The account can see a photo with a face of that person: its own photo, a
+    partner-shared photo, or a photo in a shared album. Only photos in the
+    timeline count. Archived, hidden and locked photos do not.
+  - The person has a name, or has at least `people.minimumFaces` faces. This
+    is a preference of each user, and it is 3 by default.
+- `GET /people/{id}` returns a person that the list does not show. Confirmed
+  on dev.
+- The statistics of a person count the partner-shared photos too.
+
+### People sharing (3.3)
+
+- A share is for one person, from a sharer to a recipient, with a role:
+  `read`, `write` or `admin`. The web app always shares with `admin`. Both
+  users must be in the same cluster group.
+- If the recipient has no row for the person, the share makes one. The new
+  row gets the name and birth date of the sharer at that time. If the
+  recipient has a row, the share does not change it. Confirmed on dev.
+- "Share everyone" (`type: everyone`) shares the people that the account has
+  at that time. Immich does not keep it as a setting. People that recognition
+  finds later are not shared. The toggle in the web app shows "on" only when
+  every current person is shared. Confirmed on dev.
+
+### Edits through a share
+
+- Each account keeps its own name, birth date and hidden flag for a person.
+- An edit of the name or birth date changes the copy of the editor. It also
+  changes the copy of each user who shares that person with the editor as
+  `write` or `admin` (`updateForWritableOwners`). The change goes no further.
+- Confirmed on dev, with shares only from the family to alice and bob:
+  - A name from alice reached the family. It did not reach bob.
+  - A name from the family reached nobody.
+- Confirmed on dev, with shares in both directions between the family and
+  each member:
+  - A name from the family reached alice and bob.
+  - A name from alice reached the family. It did not reach bob.
+  - The family saved alice's name again, with no change, in the web app. Bob
+    then got the name.
+- `PUT /people/{id}` with `userId` changes the copy of that user. It accepts
+  only the name and birth date. That user must share the person with the
+  caller as `write` or `admin`. Confirmed on dev.
+- A birth date moves through a share as a name does. The hidden flag stays
+  with the account that sets it. Confirmed on dev.
+- The web app shows the name of another user as "aka" below "Add a name". It
+  does not show their birth date. Confirmed on dev, in the web app as bob.
+- The preference `people.updateStrategy` is "everyone" by default. When a user
+  sets it to "self", the web app sends their own `userId`. Their edits then
+  change only their own copy. This is from the web and server source only.
+
+### Detection and recognition
+
+- Detection reads the preview of the asset, not the original. Each face keeps
+  its box in the pixels of that preview, with the width and height of the
+  preview.
+- Detection is deterministic. The same file in two accounts gave the same
+  faces, with the same boxes to the pixel. Confirmed on dev with 3 photos and
+  8 faces.
+- Recognition is not deterministic across accounts. The person of a face
+  depends on the faces that the cluster group has at that time. Confirmed on
+  dev: a face in the same file had a person in alice's copy and no person in
+  the family's copy.
+- Two copies of one file count as two faces toward the threshold. Thus a copy
+  can make a person for a face that had too few matches before.
+- Two settings control how many faces a person needs:
+  - `machineLearning.facialRecognition.minFaces` is an admin setting, 3 by
+    default. Recognition makes a person only when it finds this many similar
+    faces.
+  - `people.minimumFaces` is a preference of each user. It only controls
+    which unnamed people the list shows.
+- Recognition skips a face that has a person, and a face that is not from
+  machine learning. Thus an assignment that a user or the service makes stays
+  in place. A face with too few matches is deferred, and a later recognition
+  job can give it a person.
+- After an upload, detection is queued when thumbnail generation ends
+  (`services/job.service.ts`). Detection skips a hidden asset.
+- The API does not tell when detection is done on an asset. Detection sets
+  `asset_job_status.facesRecognizedAt`, but no endpoint returns it for one
+  asset. No event or workflow trigger comes after detection. An asset that
+  has no faces and an asset that is not detected yet look the same.
+- The web app shows only faces that have a person. The "Edit people" button
+  (a pencil, next to "Tag People") shows all the faces of a photo, and can
+  give a person to a face that has none. Confirmed on dev.
+
+### Edited photos
+
+Immich 3.3.1 and 3.3.3 have a fault with faces on photos that were edited in
+Immich. Issue 32499 reports it, with the steps to reproduce it. Before
+PR 31240, detection did not run on an edited photo.
+That PR made detection read the edited preview, but it does not map the boxes
+back to the original.
+
+- An edit does not run detection again. It makes new edited thumbnails only.
+  The faces keep their boxes in the coordinates of the original. The API maps
+  each box through the edits when it returns the face. Confirmed on dev with a
+  crop and a rotation.
+- Detection uses the edited preview when one exists. It stores the new boxes
+  in the coordinates of the edited image. The API then maps them through the
+  edits a second time, so the boxes show in the wrong place. Confirmed on dev:
+  a face in an 80 × 80 crop of a 250 × 250 photo showed about 3 times too
+  large, and mostly outside the photo.
+- The new boxes do not match the old ones, so detection removes all the old
+  faces from machine learning, with their people. Confirmed on dev.
+- Thus the fault occurs when detection runs after an edit. Examples are the
+  first detection on a library that has edited photos, the admin job for
+  detection on all assets, and "Refresh faces" on one photo.
+- A copy that is edited soon after upload is in a race. On idle dev, detection
+  read the unedited preview about 3 seconds before the edited preview was
+  ready, so the faces were correct. When the machine learning queue is long,
+  the edited preview is ready first.
+
+### Changing faces through the API
+
+These points were confirmed on dev with the family's password session, on a
+copy that was not edited.
+
+- `PUT /faces/{id}` gives a person to a face. The `id` in the path is the
+  person. The body holds the face id.
+- An account can give a face only to a person that it has a row for. If not,
+  the answer is a 400 with "Not found or no person.update access". A people
+  share from the user who has the person makes the row.
+- `DELETE /faces/{id}` with `force: false` marks the face as deleted.
+  Detection matches deleted faces too, so a later run does not add the face
+  again. The other faces keep their people. With `force: true`, the row is
+  removed, and the source shows that the next run adds the face again.
+- `POST /faces` makes a face with `sourceType: manual`. It needs a person. It
+  takes the box in the coordinates of the asset as the user sees it, after
+  the edits. It stores the box in the coordinates of the original. Confirmed
+  on dev, before and after a crop.
+- Detection does not add a second face where a face already is. A new box
+  that matches an existing face gives its embedding to that face.
 
 ## Upstream references
 
@@ -258,3 +407,10 @@ regenerate-people endpoint is the fallback.
 - Tags are per user: issue 22308, discussion 12845
 - Workflows and webhooks: PR 29258 (merged), PR 30524 (added-to-album trigger, open)
 - Cluster groups: v3.2.0 release notes. People sharing: v3.3.0 release notes, discussion 32196
+- "Share everyone" is not kept: issue 32049 (moved to discussion 32050), discussion 32084
+- Shared names show only as "aka": issue 32273
+- Faces on edited photos: issue 32499, issue 31584 (closed as a duplicate of
+  31106), issue 31106, PR 31240 (merged, detection reads the edited preview),
+  PR 29393 (closed, also mapped the boxes back)
+- Detection does not match faces imported from metadata on large originals:
+  issue 32076

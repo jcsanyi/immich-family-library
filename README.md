@@ -45,7 +45,6 @@ The [issues](https://github.com/jcsanyi/immich-family-library/issues) track what
 - Reclaim, moving a photo back to its original owner, is planned and not built (issue 3).
 - Live photos are not moved. The service blocks them and reports them (issue 14).
 - Stacks and manual face corrections do not carry over to the family copy (issues 5 and 4).
-- Whether a new upload's faces cluster with people found across accounts is not verified (issue 1).
 
 ## Alternatives
 
