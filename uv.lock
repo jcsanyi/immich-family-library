@@ -408,6 +408,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "immichpy" },
+    { name = "pydantic" },
     { name = "tomli-w" },
 ]
 
@@ -427,6 +428,7 @@ seed = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "immichpy", specifier = "==9.0.1" },
+    { name = "pydantic", specifier = ">=2" },
     { name = "tomli-w", specifier = ">=1.0" },
 ]
 

@@ -95,9 +95,9 @@ async def run_pass(
     for b in albums.blocked:
         log.warning("not converting %s: %s", b.what, b.reason)
     log.info("albums: %s", "; ".join(describe_albums(albums)))
-    converted = await convert_albums(accounts, albums.conversions, limit=cfg.albums_per_pass)
+    converted = await convert_albums(accounts, albums.conversions, limit=cfg.limits.albums_per_pass)
 
-    fixes = await scan_reconcile(accounts, cfg.dropbox_album, cfg.webhook)
+    fixes = await scan_reconcile(accounts, cfg.family.dropbox_album, cfg.webhook)
     log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
     reconciled = await reconcile(accounts, fixes, cfg.webhook) if fixes else None
 
@@ -106,7 +106,7 @@ async def run_pass(
     if backlog:
         log.warning("not moving anything this pass: Immich has jobs waiting: %s", backlog)
     else:
-        assets = await scan_assets(accounts, cfg.dropbox_album, mark=mark)
+        assets = await scan_assets(accounts, cfg.family.dropbox_album, mark=mark)
         for b in assets.blocked:
             log.warning("not moving %s: %s", b.what, b.reason)
         for s in assets.skipped_reuploads:
@@ -117,7 +117,7 @@ async def run_pass(
             accounts,
             opts,
             assets.moves,
-            limit=cfg.assets_per_pass,
+            limit=cfg.limits.assets_per_pass,
             in_flight=in_flight,
         )
         mark = _advance_mark(mark, assets, moved)

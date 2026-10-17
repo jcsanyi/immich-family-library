@@ -168,9 +168,9 @@ async def login(url: str, acct: AccountConfig, password: str) -> Account:
 
 async def login_all(config_path: Path, password: str) -> tuple[Accounts, str]:
     cfg = load_config(config_path)
-    family = await login(cfg.immich_url, cfg.family, password)
-    members = {n: await login(cfg.immich_url, m, password) for n, m in cfg.members.items()}
-    return Accounts(family=family, members=members), cfg.dropbox_album
+    family = await login(cfg.immich.url, cfg.family_account, password)
+    members = {n: await login(cfg.immich.url, m, password) for n, m in cfg.member_accounts.items()}
+    return Accounts(family=family, members=members), cfg.family.dropbox_album
 
 
 async def reset(accounts: Accounts) -> None:

@@ -88,6 +88,7 @@ class Daemon:
             self.report(final=True)
 
     async def passes(self) -> None:
+        interval = self.cfg.service.interval_seconds
         while not self.stopping.is_set():
             try:
                 result = await run_pass(
@@ -100,12 +101,12 @@ class Daemon:
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 - the daemon outlives any one pass
-                log_failure(log, f"pass failed; next one in {self.cfg.interval_seconds}s", e)
+                log_failure(log, f"pass failed; next one in {interval}s", e)
             # Outside the try: the webhook keeps counting while passes fail, and
             # the report is the one signal for a looping phone.
             self.report()
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self.stopping.wait(), timeout=self.cfg.interval_seconds)
+                await asyncio.wait_for(self.stopping.wait(), timeout=interval)
 
     # ---- the daily report
 
@@ -118,7 +119,7 @@ class Daemon:
         started: one warning per member whose re-uploads were trashed since then.
         `final` reports at once, whatever the time."""
         now = now or datetime.now().astimezone()
-        at = self.cfg.report_at
+        at = self.cfg.warnings.report_time
         scheduled = now.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
         if scheduled > now:
             scheduled -= timedelta(days=1)

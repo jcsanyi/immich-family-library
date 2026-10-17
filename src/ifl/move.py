@@ -113,11 +113,11 @@ class MoveOptions:
     @classmethod
     def from_config(cls, cfg: Config) -> MoveOptions:
         return cls(
-            dropbox_album=cfg.dropbox_album,
-            settle_seconds=cfg.settle_seconds,
-            moved_tag=cfg.moved_tag,
-            from_prefix=cfg.from_prefix,
-            temp_dir=cfg.temp_dir,
+            dropbox_album=cfg.family.dropbox_album,
+            settle_seconds=cfg.service.settle_seconds,
+            moved_tag=cfg.tags.moved,
+            from_prefix=cfg.tags.from_prefix,
+            temp_dir=cfg.service.temp_dir,
         )
 
 

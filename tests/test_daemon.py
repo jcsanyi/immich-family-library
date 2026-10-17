@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -161,7 +160,9 @@ def local_daemon(**service) -> Daemon:
     """A daemon whose receiver binds an ephemeral port on loopback."""
     cfg = parse_config({**RAW, "service": {**RAW["service"], **service}})
     # Port 0 asks the OS for a free one. The config refuses it, so it goes in here.
-    cfg = replace(cfg, webhook=replace(cfg.webhook, listen="127.0.0.1:0"))
+    cfg = cfg.model_copy(
+        update={"webhook": cfg.webhook.model_copy(update={"listen": "127.0.0.1:0"})}
+    )
     return Daemon(make_accounts(), cfg)
 
 
@@ -391,8 +392,9 @@ async def test_a_listen_address_that_is_taken_is_a_config_error(world):
         taken.bind(("127.0.0.1", 0))
         taken.listen()
         daemon = local_daemon()
-        webhook = replace(daemon.cfg.webhook, listen=f"127.0.0.1:{taken.getsockname()[1]}")
-        daemon.cfg = replace(daemon.cfg, webhook=webhook)
+        listen = f"127.0.0.1:{taken.getsockname()[1]}"
+        webhook = daemon.cfg.webhook.model_copy(update={"listen": listen})
+        daemon.cfg = daemon.cfg.model_copy(update={"webhook": webhook})
 
         with pytest.raises(ConfigError, match=r"\[webhook\] cannot listen on 127\.0\.0\.1:\d+"):
             await daemon.serve()

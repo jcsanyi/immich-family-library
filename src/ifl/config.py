@@ -4,55 +4,21 @@ from __future__ import annotations
 
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-# The full set of supported settings with their default values. config.example.toml shows
-# every key, with these values where there's a default, and explains how each should be set.
-# - A default of "" means there's no reasonable default but a non-empty value must be set.
-# - A default of None means off unless it's been set.
-# - [webhook] is optional as a whole, and absent by default.
-# - [members] is the template for each [members.<name>] table.
-DEFAULTS = {
-    "immich": {
-        "url": "",
-        "admin_api_key": None,
-    },
-    "service": {
-        "readonly": True,
-        "lock_path": "run.lock",
-        "temp_dir": "/tmp/immich-family-library",
-        "settle_seconds": 60,
-        "interval_seconds": 600,
-    },
-    "webhook": {
-        "url": "",
-        "token": "",
-        "listen": "0.0.0.0:8080",
-    },
-    "limits": {
-        "albums_per_pass": 5,
-        "assets_per_pass": 20,
-    },
-    "tags": {
-        "moved": "family",
-        "from_prefix": "from",
-    },
-    "warnings": {
-        "report_at": "22:00",
-    },
-    "family": {
-        "email": "",
-        "api_key": "",
-        "dropbox_album": "Family Dropbox",
-    },
-    "members": {
-        "email": "",
-        "api_key": "",
-    },
-}
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 
 class ConfigError(Exception):
@@ -70,11 +36,75 @@ class AccountConfig:
 _HOST_PORT = re.compile(r"(?:\[(?P<v6>[^\[\]]+)\]|(?P<host>[^:\[\]]*)):(?P<port>[0-9]+)")
 
 
-@dataclass(frozen=True)
-class WebhookConfig:
+# The models below are the file's shape: every section and key it may hold, each with its
+# type and its default. A key with no default must be set. config.example.toml shows every
+# key, with these values where there's a default, and explains how each should be set.
+class _Section(BaseModel):
+    # Strict, so a value of the wrong type is an error and never a guess:
+    # `readonly = "false"` would otherwise read as true, and `true` as the int 1.
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+
+class ImmichConfig(_Section):
+    url: str = Field(min_length=1)
+    admin_api_key: str | None = None  # any admin user's key; only for the queue check
+
+    @field_validator("url")
+    @classmethod
+    def _no_trailing_slash(cls, url: str) -> str:
+        return url.rstrip("/")
+
+    @field_validator("admin_api_key")
+    @classmethod
+    def _empty_is_none(cls, key: str | None) -> str | None:
+        return key or None
+
+
+class ServiceConfig(_Section):
+    readonly: bool = True
+    lock_path: Path = Field(Path("run.lock"), validate_default=True)  # the run lock; see lock.py
+    # Holds one original at a time, between its download and its upload.
+    temp_dir: Path = Field(Path("/tmp/immich-family-library"), validate_default=True)
+    settle_seconds: int = Field(60, ge=0)  # leave an asset alone this long after its last change
+    interval_seconds: int = Field(600, ge=1)  # the daemon's pause between passes
+
+    @field_validator("lock_path", "temp_dir", mode="before")
+    @classmethod
+    def _resolve(cls, path: object, info: ValidationInfo) -> Path:
+        if not isinstance(path, str | Path) or not str(path):
+            raise ValueError("must be a non-empty path")
+        # Relative to the config file. An absolute path replaces config_dir.
+        return (info.context or {}).get("config_dir", Path(".")) / path
+
+
+class WebhookConfig(_Section):
     url: str  # what Immich calls, e.g. http://ifl:8080/webhook/asset-created
-    token: str  # Immich sends it back in the X-IFL-Token header
-    listen: str
+    token: str = Field(min_length=1)  # Immich sends it back in the X-IFL-Token header
+    listen: str = "0.0.0.0:8080"
+
+    @field_validator("url")
+    @classmethod
+    def _http_url(cls, url: str) -> str:
+        try:
+            parts = urlsplit(url)
+            ok = parts.scheme in ("http", "https") and bool(parts.hostname)
+        except ValueError:
+            ok = False
+        if not ok:
+            raise ValueError("must be an http or https URL")
+        return url
+
+    @field_validator("listen")
+    @classmethod
+    def _host_port(cls, listen: str) -> str:
+        # Port 0 binds, but Immich has to be told a port to call.
+        m = _HOST_PORT.fullmatch(listen)
+        if not m or not 1 <= int(m["port"]) <= 65535:
+            raise ValueError(
+                'must be "host:port" with a port from 1 to 65535, '
+                'for example "0.0.0.0:8080", ":8080" or "[::]:8080"'
+            )
+        return listen
 
     @property
     def path(self) -> str:
@@ -91,47 +121,98 @@ class WebhookConfig:
         return m["v6"] or m["host"] or "0.0.0.0", int(m["port"])
 
 
-@dataclass(frozen=True)
-class Config:
-    immich_url: str
-    family: AccountConfig
-    dropbox_album: str
-    members: dict[str, AccountConfig]
-    lock_path: Path  # the run lock; see lock.py
-    temp_dir: Path  # holds one original at a time, between its download and its upload
-    readonly: bool
-    settle_seconds: int  # leave an asset alone this long after its last change
-    interval_seconds: int  # the daemon's pause between passes
-    webhook: WebhookConfig | None  # the daemon's receiver; None means no webhook
-    albums_per_pass: int  # 0 means no limit
-    assets_per_pass: int  # 0 means no limit
-    moved_tag: str  # goes on a member's original when it's moved
-    from_prefix: str  # the family copy is tagged "<from_prefix>/<member>"
-    admin_api_key: str | None  # any admin user's key; only for the queue check
-    report_at: time  # local time of day for the daily re-upload report
-    config_dir: Path = field(compare=False)
+class LimitsConfig(_Section):
+    albums_per_pass: int = Field(5, ge=0)  # 0 means no limit
+    assets_per_pass: int = Field(20, ge=0)  # 0 means no limit
 
 
-KINDS = {str: "a string", bool: "true or false", int: "a whole number"}
+class TagsConfig(_Section):
+    moved: str = "family"  # goes on a member's original when it's moved
+    from_prefix: str = "from"  # the family copy is tagged "<from_prefix>/<member>"
+
+    @field_validator("moved", "from_prefix")
+    @classmethod
+    def _tag_name(cls, name: str) -> str:
+        if not name.strip() or name.strip("/") != name:
+            raise ValueError("must be a tag name without leading or trailing slashes")
+        return name
 
 
-def _typed(section: str, raw: dict, key: str, kind: type):
-    """The setting, or its default when the file leaves it out. A value of the
-    wrong type is an error: `readonly = "false"` would otherwise read as true."""
-    if key not in raw:
-        return DEFAULTS[section.partition(".")[0]][key]
-    value = raw[key]
-    # A bool is an int in Python, and `assets_per_pass = true` must not read as 1.
-    if not isinstance(value, kind) or (kind is int and isinstance(value, bool)):
-        raise ConfigError(f"[{section}] {key} must be {KINDS[kind]}")
-    return value
+class WarningsConfig(_Section):
+    report_at: str = "22:00"  # local time of day for the daily re-upload report
+
+    # Before the type check: TOML has its own time type, so `report_at = 22:00:00`
+    # arrives as a time, and the generic "should be a valid string" would not say why.
+    @field_validator("report_at", mode="before")
+    @classmethod
+    def _hh_mm(cls, value: object) -> object:
+        if isinstance(value, str) and re.fullmatch(r"\d\d:\d\d", value):
+            try:
+                time.fromisoformat(value)
+                return value
+            except ValueError:
+                pass
+        raise ValueError('must be a time of day as "HH:MM"')
+
+    @property
+    def report_time(self) -> time:
+        return time.fromisoformat(self.report_at)
 
 
-def _account(section: str, raw: dict, name: str) -> AccountConfig:
-    for key in ("email", "api_key"):
-        if not _typed(section, raw, key, str):
-            raise ConfigError(f"[{section}] is missing '{key}'")
-    return AccountConfig(name=name, email=raw["email"], api_key=raw["api_key"])
+class MemberConfig(_Section):
+    email: str = Field(min_length=1)
+    api_key: str = Field(min_length=1)
+
+
+class FamilyConfig(MemberConfig):
+    dropbox_album: str = "Family Dropbox"
+
+    @field_validator("dropbox_album")
+    @classmethod
+    def _album_name(cls, name: str) -> str:
+        if not name.strip():
+            raise ValueError("must be a non-empty album name")
+        return name
+
+
+class Config(_Section):
+    immich: ImmichConfig
+    # A section the file leaves out is validated from {}, so its paths resolve too.
+    service: ServiceConfig = Field({}, validate_default=True)
+    webhook: WebhookConfig | None = None  # the daemon's receiver; None means no webhook
+    limits: LimitsConfig = Field({}, validate_default=True)
+    tags: TagsConfig = Field({}, validate_default=True)
+    warnings: WarningsConfig = Field({}, validate_default=True)
+    family: FamilyConfig
+    members: dict[str, MemberConfig] = {}  # one per [members.<name>] table
+
+    _config_dir: Path = PrivateAttr(Path("."))
+
+    @model_validator(mode="after")
+    def _accounts(self) -> Config:
+        if not self.members:
+            raise ValueError("at least one [members.<name>] section is required")
+        emails = [self.family.email, *(m.email for m in self.members.values())]
+        for email in emails:
+            if emails.count(email) > 1:
+                raise ValueError(f"email {email} is used by more than one account")
+        return self
+
+    @property
+    def family_account(self) -> AccountConfig:
+        return AccountConfig("family", self.family.api_key, self.family.email)
+
+    @property
+    def member_accounts(self) -> dict[str, AccountConfig]:
+        return {name: AccountConfig(name, m.api_key, m.email) for name, m in self.members.items()}
+
+
+def _describe(error: dict) -> str:
+    """One pydantic error as one line, e.g. `members.a.api_key: Field required`."""
+    where = ".".join(str(part) for part in error["loc"])
+    # A ValueError from our own validators would otherwise read "Value error, ...".
+    what = str(error["ctx"]["error"]) if error["type"] == "value_error" else error["msg"]
+    return f"{where}: {what}" if where else what
 
 
 def load_config(path: Path) -> Config:
@@ -146,156 +227,13 @@ def load_config(path: Path) -> Config:
     return parse_config(raw, config_dir=path.parent)
 
 
-def _check_keys(raw: dict) -> None:
-    for section, body in raw.items():
-        if section not in DEFAULTS:
-            raise ConfigError(f"unknown section [{section}]")
-        if not isinstance(body, dict):
-            raise ConfigError(f"[{section}] must be a table")
-        if section == "members":
-            for name, member in body.items():
-                if not isinstance(member, dict):
-                    raise ConfigError(f"[members.{name}] must be a table")
-                for key in member:
-                    if key not in DEFAULTS["members"]:
-                        raise ConfigError(f"[members.{name}] has an unknown key '{key}'")
-            continue
-        for key in body:
-            if key not in DEFAULTS[section]:
-                raise ConfigError(f"[{section}] has an unknown key '{key}'")
-
-
 def parse_config(raw: dict, config_dir: Path = Path(".")) -> Config:
-    _check_keys(raw)
-    immich = raw.get("immich") or {}
-    if not _typed("immich", immich, "url", str):
-        raise ConfigError("[immich] url is required")
-
-    family_raw = raw.get("family") or {}
-    family = _account("family", family_raw, "family")
-    dropbox_album = _typed("family", family_raw, "dropbox_album", str)
-    if not dropbox_album.strip():
-        raise ConfigError("[family] dropbox_album must be a non-empty album name")
-
-    members = {}
-    for name, m in (raw.get("members") or {}).items():
-        members[name] = _account(f"members.{name}", m, name)
-    if not members:
-        raise ConfigError("at least one [members.<name>] section is required")
-
-    seen_emails = {family.email}
-    for m in members.values():
-        if m.email in seen_emails:
-            raise ConfigError(f"email {m.email} is used by more than one account")
-        seen_emails.add(m.email)
-
-    service = raw.get("service") or {}
-    readonly = _typed("service", service, "readonly", bool)
-    lock_path_raw = _typed("service", service, "lock_path", str)
-    if not lock_path_raw:
-        raise ConfigError("[service] lock_path must name a file")
-    lock_path = Path(lock_path_raw)
-    if not lock_path.is_absolute():
-        lock_path = config_dir / lock_path
-    temp_dir_raw = _typed("service", service, "temp_dir", str)
-    if not temp_dir_raw:
-        raise ConfigError("[service] temp_dir must name a directory")
-    temp_dir = Path(temp_dir_raw)
-    if not temp_dir.is_absolute():
-        temp_dir = config_dir / temp_dir
-
-    limits = raw.get("limits") or {}
-    albums_per_pass = _typed("limits", limits, "albums_per_pass", int)
-    if albums_per_pass < 0:
-        raise ConfigError("[limits] albums_per_pass must be a whole number (0 for no limit)")
-    assets_per_pass = _typed("limits", limits, "assets_per_pass", int)
-    if assets_per_pass < 0:
-        raise ConfigError("[limits] assets_per_pass must be a whole number (0 for no limit)")
-
-    settle = _typed("service", service, "settle_seconds", int)
-    if settle < 0:
-        raise ConfigError("[service] settle_seconds must be a whole number of seconds")
-    interval = _typed("service", service, "interval_seconds", int)
-    if interval < 1:
-        raise ConfigError(
-            "[service] interval_seconds must be a whole number of seconds, at least 1"
-        )
-
-    webhook = None
-    webhook_raw = raw.get("webhook")
-    if webhook_raw:
-        for key in ("url", "token"):
-            if not _typed("webhook", webhook_raw, key, str):
-                raise ConfigError(f"[webhook] is missing '{key}'")
-        webhook = WebhookConfig(
-            url=webhook_raw["url"],
-            token=webhook_raw["token"],
-            listen=_typed("webhook", webhook_raw, "listen", str),
-        )
-        _check_webhook(webhook)
-
-    tags = raw.get("tags") or {}
-    moved_tag = _typed("tags", tags, "moved", str)
-    from_prefix = _typed("tags", tags, "from_prefix", str)
-    for key, value in (("moved", moved_tag), ("from_prefix", from_prefix)):
-        if not value.strip() or value.strip("/") != value:
-            raise ConfigError(
-                f"[tags] {key} must be a tag name without leading or trailing slashes"
-            )
-
-    warnings = raw.get("warnings") or {}
-    report_at = _time_of_day(warnings.get("report_at", DEFAULTS["warnings"]["report_at"]))
-
-    admin_api_key = _typed("immich", immich, "admin_api_key", str) or None
-
-    return Config(
-        immich_url=immich["url"].rstrip("/"),
-        family=family,
-        dropbox_album=dropbox_album,
-        members=members,
-        lock_path=lock_path,
-        temp_dir=temp_dir,
-        readonly=readonly,
-        settle_seconds=settle,
-        interval_seconds=interval,
-        webhook=webhook,
-        albums_per_pass=albums_per_pass,
-        assets_per_pass=assets_per_pass,
-        moved_tag=moved_tag,
-        from_prefix=from_prefix,
-        admin_api_key=admin_api_key,
-        report_at=report_at,
-        config_dir=config_dir,
-    )
-
-
-def _check_webhook(webhook: WebhookConfig) -> None:
     try:
-        url = urlsplit(webhook.url)
-        ok = url.scheme in ("http", "https") and bool(url.hostname)
-    except ValueError:
-        ok = False
-    if not ok:
-        raise ConfigError("[webhook] url must be an http or https URL")
-    try:
-        _, port = webhook.bind
-        ok = 1 <= port <= 65535
-    except ValueError:
-        ok = False
-    if not ok:
-        raise ConfigError(
-            '[webhook] listen must be "host:port" with a port from 1 to 65535, '
-            'for example "0.0.0.0:8080", ":8080" or "[::]:8080"'
-        )
-
-
-def _time_of_day(value: object) -> time:
-    if isinstance(value, str) and re.fullmatch(r"\d\d:\d\d", value):
-        try:
-            return time.fromisoformat(value)
-        except ValueError:
-            pass
-    raise ConfigError('[warnings] report_at must be a time of day as "HH:MM"')
+        cfg = Config.model_validate(raw, context={"config_dir": config_dir})
+    except ValidationError as e:
+        raise ConfigError("\n".join(_describe(error) for error in e.errors())) from None
+    cfg._config_dir = config_dir
+    return cfg
 
 
 def redact(secret: str) -> str:
@@ -310,41 +248,17 @@ def to_raw(cfg: Config, *, minimal: bool = False) -> dict:
     that have a default are left out when they match it; everything required is
     always included.
     """
-
-    def account(a: AccountConfig) -> dict:
-        out = {"email": a.email} if a.email else {}
-        return {**out, "api_key": redact(a.api_key)}
-
-    out: dict = {
-        "immich": {"url": cfg.immich_url},
-        "service": {
-            "readonly": cfg.readonly,
-            "lock_path": str(cfg.lock_path),
-            "temp_dir": str(cfg.temp_dir),
-            "settle_seconds": cfg.settle_seconds,
-            "interval_seconds": cfg.interval_seconds,
-        },
-        "limits": {"albums_per_pass": cfg.albums_per_pass, "assets_per_pass": cfg.assets_per_pass},
-        "tags": {"moved": cfg.moved_tag, "from_prefix": cfg.from_prefix},
-        "warnings": {"report_at": cfg.report_at.strftime("%H:%M")},
-        "family": {**account(cfg.family), "dropbox_album": cfg.dropbox_album},
-        "members": {name: account(m) for name, m in cfg.members.items()},
-    }
-    if cfg.admin_api_key:
-        out["immich"]["admin_api_key"] = redact(cfg.admin_api_key)
-    if cfg.webhook:
-        out["webhook"] = {
-            "url": cfg.webhook.url,
-            "token": redact(cfg.webhook.token),
-            "listen": cfg.webhook.listen,
-        }
+    out = cfg.model_dump(mode="json", exclude_defaults=minimal, exclude_none=True)
+    for account in (out["family"], *out["members"].values()):
+        account["api_key"] = redact(account["api_key"])
+    if "admin_api_key" in out["immich"]:
+        out["immich"]["admin_api_key"] = redact(out["immich"]["admin_api_key"])
+    if "webhook" in out:
+        out["webhook"]["token"] = redact(out["webhook"]["token"])
     if minimal:
-        # The one default that is not a constant: it is relative to the config file.
-        default_lock = str(cfg.config_dir / DEFAULTS["service"]["lock_path"])
-        defaults = {**DEFAULTS, "service": {**DEFAULTS["service"], "lock_path": default_lock}}
-        for section, settings in defaults.items():
-            for key, default in settings.items():
-                if section in out and key in out[section] and out[section][key] == default:
-                    del out[section][key]
+        # The one default that isn't a constant: it resolves against the config file.
+        service = out.get("service", {})
+        if service.get("lock_path") == str(cfg._config_dir / "run.lock"):
+            del service["lock_path"]
         out = {section: settings for section, settings in out.items() if settings}
     return out

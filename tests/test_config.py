@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ifl.config import ConfigError, parse_config
+from ifl.config import ConfigError, WebhookConfig, parse_config
 
 GOOD = {
     "immich": {"url": "https://x.example/"},
@@ -15,22 +15,22 @@ GOOD = {
 
 def test_parse_good():
     cfg = parse_config(GOOD, config_dir=Path("/etc/ifl"))
-    assert cfg.immich_url == "https://x.example"
-    assert cfg.family.email == "f@x"
-    assert cfg.dropbox_album == "Drop"
-    assert cfg.members["a"].name == "a"
-    assert cfg.lock_path == Path("/etc/ifl/run.lock")
-    assert cfg.temp_dir == Path("/tmp/immich-family-library")
-    assert cfg.report_at == time(22, 0)
-    assert cfg.readonly is True
-    assert cfg.albums_per_pass == 5
+    assert cfg.immich.url == "https://x.example"
+    assert cfg.family_account.email == "f@x"
+    assert cfg.family.dropbox_album == "Drop"
+    assert cfg.member_accounts["a"].name == "a"
+    assert cfg.service.lock_path == Path("/etc/ifl/run.lock")
+    assert cfg.service.temp_dir == Path("/tmp/immich-family-library")
+    assert cfg.warnings.report_time == time(22, 0)
+    assert cfg.service.readonly is True
+    assert cfg.limits.albums_per_pass == 5
 
 
 @pytest.mark.parametrize(
     "mutate, msg",
     [
-        (lambda r: r.pop("immich"), "url is required"),
-        (lambda r: r["family"].pop("api_key"), "missing 'api_key'"),
+        (lambda r: r.pop("immich"), "immich: Field required"),
+        (lambda r: r["family"].pop("api_key"), "family.api_key: Field required"),
         (lambda r: r["family"].update({"dropbox_album": ""}), "dropbox_album"),
         (lambda r: r.pop("members"), "at least one"),
         (lambda r: r["members"].update({"b": {"email": "a@x", "api_key": "k"}}), "more than one"),
@@ -40,34 +40,49 @@ def test_parse_good():
         # Unknown names are errors, not silent defaults.
         (
             lambda r: r["service"].update({"poll_interval_seconds": 60}),
-            r"\[service\] has an unknown key 'poll_interval_seconds'",
+            "service.poll_interval_seconds: Extra inputs are not permitted",
         ),
         (
             lambda r: r["members"]["a"].update({"name": "Alice"}),
-            r"\[members.a\] has an unknown key 'name'",
+            "members.a.name: Extra inputs are not permitted",
         ),
-        (lambda r: r.update({"serivce": {"readonly": False}}), r"unknown section \[serivce\]"),
-        (lambda r: r.update({"service": 5}), r"\[service\] must be a table"),
+        (
+            lambda r: r.update({"serivce": {"readonly": False}}),
+            "serivce: Extra inputs are not permitted",
+        ),
+        (lambda r: r.update({"service": 5}), "service: Input should be a valid dictionary"),
         # A value of the wrong type is an error, never a guess.
-        (lambda r: r["immich"].update({"url": 5}), r"\[immich\] url must be a string"),
+        (lambda r: r["immich"].update({"url": 5}), "immich.url: Input should be a valid string"),
         (
             lambda r: r["service"].update({"readonly": "false"}),
-            r"\[service\] readonly must be true or false",
+            "service.readonly: Input should be a valid boolean",
         ),
-        (lambda r: r["service"].update({"readonly": 0}), "readonly must be true or false"),
-        (lambda r: r["service"].update({"lock_path": 5}), "lock_path must be a string"),
-        (lambda r: r["service"].update({"lock_path": ""}), "lock_path must name a file"),
-        (lambda r: r["service"].update({"temp_dir": 5}), "temp_dir must be a string"),
-        (lambda r: r["service"].update({"temp_dir": ""}), "temp_dir must name a directory"),
-        (lambda r: r["family"].update({"email": 5}), r"\[family\] email must be a string"),
-        (lambda r: r["family"].update({"dropbox_album": 5}), "dropbox_album must be a string"),
-        (lambda r: r["members"]["a"].update({"api_key": 5}), r"\[members.a\] api_key must be"),
+        (
+            lambda r: r["service"].update({"readonly": 0}),
+            "readonly: Input should be a valid boolean",
+        ),
+        (lambda r: r["service"].update({"lock_path": 5}), "lock_path: must be a non-empty path"),
+        (lambda r: r["service"].update({"lock_path": ""}), "lock_path: must be a non-empty path"),
+        (lambda r: r["service"].update({"temp_dir": 5}), "temp_dir: must be a non-empty path"),
+        (lambda r: r["service"].update({"temp_dir": ""}), "temp_dir: must be a non-empty path"),
+        (
+            lambda r: r["family"].update({"email": 5}),
+            "family.email: Input should be a valid string",
+        ),
+        (
+            lambda r: r["family"].update({"dropbox_album": 5}),
+            "dropbox_album: Input should be a valid string",
+        ),
+        (lambda r: r["members"]["a"].update({"api_key": 5}), "members.a.api_key: Input should be"),
         (
             lambda r: r.update({"limits": {"assets_per_pass": True}}),
-            "assets_per_pass must be a whole number",
+            "assets_per_pass: Input should be a valid integer",
         ),
-        (lambda r: r["service"].update({"settle_seconds": False}), "settle_seconds must be"),
-        (lambda r: r.update({"tags": {"moved": 5}}), r"\[tags\] moved must be a string"),
+        (
+            lambda r: r["service"].update({"settle_seconds": False}),
+            "settle_seconds: Input should be a valid integer",
+        ),
+        (lambda r: r.update({"tags": {"moved": 5}}), "tags.moved: Input should be a valid string"),
     ],
 )
 def test_parse_errors(mutate, msg):
@@ -83,7 +98,7 @@ def test_the_example_file_shows_every_default_but_the_lock_path():
     import re
     import tomllib
 
-    from ifl.config import DEFAULTS
+    from ifl.config import to_raw
 
     text = (Path(__file__).parents[1] / "config.example.toml").read_text()
     # The [webhook] section is commented out in the example; read it as written.
@@ -92,10 +107,19 @@ def test_the_example_file_shows_every_default_but_the_lock_path():
     # The one value that is not the default: the example is the container's
     # config, and the default lock is beside the config, which is mounted read-only.
     assert example["service"].pop("lock_path") == "/data/run.lock"
-    for section, settings in DEFAULTS.items():
+    required = {
+        "immich": {"url": "https://x.example"},
+        "webhook": {"url": "http://x", "token": "t"},
+        "family": {"email": "f@x", "api_key": "k"},
+        "members": {"a": {"email": "a@x", "api_key": "k"}},
+    }
+    defaults = to_raw(parse_config(required))
+    defaults["service"].pop("lock_path")
+    for section, settings in defaults.items():
+        if section == "members":
+            continue
         for key, default in settings.items():
-            # A required or optional key has no default to show.
-            if default not in ("", None) and (section, key) != ("service", "lock_path"):
+            if key not in required.get(section, {}):
                 assert example[section][key] == default, f"[{section}] {key}"
 
 
@@ -104,12 +128,12 @@ def test_dropbox_album_defaults():
 
     raw = copy.deepcopy(GOOD)
     raw["family"].pop("dropbox_album")
-    assert parse_config(raw).dropbox_album == "Family Dropbox"
+    assert parse_config(raw).family.dropbox_album == "Family Dropbox"
 
 
 def test_limits_section():
     raw = {**GOOD, "limits": {"albums_per_pass": 0}}
-    assert parse_config(raw).albums_per_pass == 0
+    assert parse_config(raw).limits.albums_per_pass == 0
 
 
 def test_to_raw_redacts_and_resolves():
@@ -188,16 +212,24 @@ def test_stage4_settings_and_admin_key():
 
     raw = copy.deepcopy(GOOD)
     cfg = parse_config(raw)
-    assert (cfg.settle_seconds, cfg.moved_tag, cfg.from_prefix) == (60, "family", "from")
-    assert cfg.admin_api_key is None
+    assert (cfg.service.settle_seconds, cfg.tags.moved, cfg.tags.from_prefix) == (
+        60,
+        "family",
+        "from",
+    )
+    assert cfg.immich.admin_api_key is None
     assert "tags" not in to_raw(cfg, minimal=True)
 
     raw["service"] = {"settle_seconds": 5}
     raw["tags"] = {"moved": "ifl/moved", "from_prefix": "given-by"}
     raw["immich"]["admin_api_key"] = "sekrit-admin"
     cfg = parse_config(raw)
-    assert (cfg.settle_seconds, cfg.moved_tag, cfg.from_prefix) == (5, "ifl/moved", "given-by")
-    assert cfg.admin_api_key == "sekrit-admin"
+    assert (cfg.service.settle_seconds, cfg.tags.moved, cfg.tags.from_prefix) == (
+        5,
+        "ifl/moved",
+        "given-by",
+    )
+    assert cfg.immich.admin_api_key == "sekrit-admin"
 
     minimal = to_raw(cfg, minimal=True)
     assert minimal["service"] == {"settle_seconds": 5}
@@ -210,7 +242,7 @@ def test_stage4_settings_and_admin_key():
     "mutate, msg",
     [
         (lambda r: r.update({"service": {"settle_seconds": -1}}), "settle_seconds"),
-        (lambda r: r.update({"tags": {"moved": "/family"}}), "tags. moved"),
+        (lambda r: r.update({"tags": {"moved": "/family"}}), "tags.moved: must be a tag name"),
         (lambda r: r.update({"tags": {"from_prefix": ""}}), "from_prefix"),
         (lambda r: r["immich"].update({"admin_api_key": 5}), "admin_api_key"),
         (lambda r: r.update({"warnings": {"report_at": "10pm"}}), "report_at"),
@@ -234,7 +266,7 @@ def test_report_at_is_a_local_time_of_day():
     from ifl.config import to_raw
 
     cfg = parse_config({**GOOD, "warnings": {"report_at": "06:30"}})
-    assert cfg.report_at == time(6, 30)
+    assert cfg.warnings.report_time == time(6, 30)
     assert to_raw(cfg, minimal=True)["warnings"] == {"report_at": "06:30"}
     assert "warnings" not in to_raw(parse_config(GOOD), minimal=True)
 
@@ -243,14 +275,14 @@ def test_webhook_and_interval_settings():
     from ifl.config import to_raw
 
     cfg = parse_config(GOOD)
-    assert cfg.webhook is None and cfg.interval_seconds == 600
+    assert cfg.webhook is None and cfg.service.interval_seconds == 600
     raw = {
         **GOOD,
         "service": {"interval_seconds": 30},
         "webhook": {"url": "http://ifl:8080/hook", "token": "sekrit"},
     }
     cfg = parse_config(raw)
-    assert cfg.interval_seconds == 30
+    assert cfg.service.interval_seconds == 30
     assert cfg.webhook.url == "http://ifl:8080/hook" and cfg.webhook.listen == "0.0.0.0:8080"
     # The receiver serves the path Immich is told to call, and binds what `listen` says.
     assert cfg.webhook.path == "/hook" and cfg.webhook.bind == ("0.0.0.0", 8080)
@@ -283,7 +315,7 @@ def test_webhook_and_interval_settings():
         "9000",
         8080,
     ):
-        with pytest.raises(ConfigError, match=r"\[webhook\] listen must be"):
+        with pytest.raises(ConfigError, match="webhook.listen: (must be|Input should be)"):
             parse_config({**GOOD, "webhook": {"url": "http://x", "token": "t", "listen": listen}})
     for listen, bind in (
         ("127.0.0.1:9000", ("127.0.0.1", 9000)),
@@ -295,6 +327,9 @@ def test_webhook_and_interval_settings():
         assert cfg.webhook.bind == bind and cfg.webhook.path == "/"
     with pytest.raises(ConfigError, match="interval_seconds"):
         parse_config({**GOOD, "service": {"interval_seconds": 0}})
+    # The config checks `listen`, and `bind` also refuses what it can't split.
+    with pytest.raises(ValueError, match="not host:port"):
+        _ = WebhookConfig.model_construct(url="http://x", token="t", listen="ifl").bind
 
 
 def test_a_config_file_that_cannot_be_read_is_a_config_error(tmp_path):

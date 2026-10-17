@@ -53,13 +53,13 @@ async def opened(config_path: Path, *, writes: bool) -> AsyncIterator[tuple[Conf
     holds the run lock for its whole run, so two of them never create the same
     album twice or work on the same photos."""
     cfg = load_config(config_path)
-    if writes and cfg.readonly:
+    if writes and cfg.service.readonly:
         raise ConfigError(
             "config is readonly; set readonly = false under [service] to allow this command"
         )
-    with hold_lock(cfg.lock_path) if writes else contextlib.nullcontext():
+    with hold_lock(cfg.service.lock_path) if writes else contextlib.nullcontext():
         if writes:
-            prepare_temp_dir(cfg.temp_dir)
+            prepare_temp_dir(cfg.service.temp_dir)
         accounts = await open_accounts(cfg)
         try:
             yield cfg, accounts
@@ -73,9 +73,9 @@ async def run_observe(config_path: Path) -> int:
         # The same three scans `process` acts on, in the same order, reported only.
         albums = await scan_albums(accounts)
         log.info("albums: %s", "; ".join(describe_albums(albums)))
-        fixes = await scan_reconcile(accounts, cfg.dropbox_album, cfg.webhook)
+        fixes = await scan_reconcile(accounts, cfg.family.dropbox_album, cfg.webhook)
         log.info("family albums: %s", "; ".join(describe_reconcile(fixes, accounts)))
-        assets = await scan_assets(accounts, cfg.dropbox_album)
+        assets = await scan_assets(accounts, cfg.family.dropbox_album)
         log.info("assets: %s", "; ".join(describe_assets(assets)))
         for who, n in assets.reuploads_by_owner().items():
             log.info("%s has %d re-uploads waiting", who, n)
@@ -93,7 +93,7 @@ async def run_convert_album(config_path: Path, album_id: UUID | None) -> int:
         if album_id is None:
             for b in scan.blocked:
                 log.warning("skipping %s: %s", b.what, b.reason)
-            todo, limit = scan.conversions, cfg.albums_per_pass
+            todo, limit = scan.conversions, cfg.limits.albums_per_pass
         else:
             todo, limit = [c for c in scan.conversions if c.album.id == album_id], 0
             if not todo:
@@ -123,7 +123,7 @@ async def run_convert_album(config_path: Path, album_id: UUID | None) -> int:
 async def run_reconcile_albums(config_path: Path) -> int:
     """Make the family albums consistent: dropbox exists, every member is an editor."""
     async with opened(config_path, writes=True) as (cfg, accounts):
-        scan = await scan_reconcile(accounts, cfg.dropbox_album, cfg.webhook)
+        scan = await scan_reconcile(accounts, cfg.family.dropbox_album, cfg.webhook)
         log.info("family albums: %s", "; ".join(describe_reconcile(scan, accounts)))
         if not scan:
             return 0
@@ -142,7 +142,7 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
         if backlog:
             log.error("not moving anything: Immich has jobs waiting: %s", backlog)
             return 1
-        scan = await scan_assets(accounts, cfg.dropbox_album, reuploads=asset_id is None)
+        scan = await scan_assets(accounts, cfg.family.dropbox_album, reuploads=asset_id is None)
         opts = MoveOptions.from_config(cfg)
         if asset_id is None:
             for b in scan.blocked:
@@ -154,9 +154,9 @@ async def run_move(config_path: Path, asset_id: UUID | None) -> int:
                     "leaving %d external-library %s in %r for the next pass to take out",
                     n,
                     "photo" if n == 1 else "photos",
-                    cfg.dropbox_album,
+                    cfg.family.dropbox_album,
                 )
-            many = await move_assets(accounts, opts, scan.moves, limit=cfg.assets_per_pass)
+            many = await move_assets(accounts, opts, scan.moves, limit=cfg.limits.assets_per_pass)
             log.info("%s", many)
             return 1 if many.failed else 0
         target = [m for m in scan.moves if m.asset_id == asset_id]
@@ -207,7 +207,7 @@ async def run_daemon(config_path: Path) -> int:
     async with opened(config_path, writes=True) as (cfg, accounts):
         log.info(
             "daemon: a pass every %ds%s",
-            cfg.interval_seconds,
+            cfg.service.interval_seconds,
             "" if cfg.webhook else "; no webhook configured",
         )
         await Daemon(accounts, cfg).run()
