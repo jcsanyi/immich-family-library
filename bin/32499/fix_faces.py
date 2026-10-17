@@ -39,6 +39,8 @@ WHAT YOU KEEP AND WHAT YOU LOSE
   - A face outside the crop is not visible through the API, so the script
     does not touch it. It keeps its person.
   - Hidden photos and photos in the locked folder are not processed.
+  - Photos of a partner are not processed, because only the owner can
+    change them. Run the script with the API key of the partner.
 
 You can run the script again. A second run does not change the result.
 
@@ -150,16 +152,18 @@ class Failure(Exception):
     pass
 
 
-def edited_assets(api):
+def edited_assets(api, owner_id):
     # Hidden photos are left out because detection skips them, and locked
-    # ones because an API key can't read the locked folder.
+    # ones because an API key can't read the locked folder. The search also
+    # returns partners' photos that show in the timeline, and only the owner
+    # can change those.
     for visibility in ("timeline", "archive"):
         page = 1
         while page:
             body = {"page": page, "size": 1000, "visibility": visibility, "withDeleted": False}
             res = api.call("POST", "/search/metadata", body)["assets"]
             for asset in res["items"]:
-                if asset.get("isEdited"):
+                if asset.get("isEdited") and asset["ownerId"] == owner_id:
                     yield asset
             page = int(res["nextPage"]) if res.get("nextPage") else None
 
@@ -430,9 +434,9 @@ def list_suffix(items):
     return f" ({', '.join(items)})" if items else ""
 
 
-def dry_run(api, bug):
+def dry_run(api, owner_id, bug):
     count = 0
-    for asset in edited_assets(api):
+    for asset in edited_assets(api, owner_id):
         count += 1
         faces = ml_faces(api, asset["id"])
         people = [f["person"].get("name") or f["person"]["id"] for f in faces if f.get("person")]
@@ -498,7 +502,7 @@ def main():
         restore(api, args.restore)
         return 0
     if args.dry_run:
-        dry_run(api, args.mode == "bug")
+        dry_run(api, me["id"], args.mode == "bug")
         return 0
 
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -511,7 +515,7 @@ def main():
     try:
         # The list is read in full first, because removing and restoring edits
         # changes the photos while the search is still paging through them.
-        assets = list(edited_assets(api))
+        assets = list(edited_assets(api, me["id"]))
         print(f"{len(assets)} edited photos\n")
         for asset in assets:
             fixer.start(asset)
