@@ -349,7 +349,8 @@ The workflow pushes the image before it creates the GitHub Release.
 ### To make a release
 
 1. Make a branch from `main`, for example `release-0.2.0`.
-2. In `CHANGELOG.md`, change `## Unreleased` to `## 0.2.0 - YYYY-MM-DD`.
+2. In `CHANGELOG.md`, change `## Unreleased` to the tag and the date, for
+   example `## v0.2.0 - October 16, 2026`.
 3. Edit the entries of the release. Keep each upgrade note.
 4. Open a pull request, and merge it after review.
 5. Get the merge commit of that pull request:

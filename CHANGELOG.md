@@ -4,13 +4,11 @@ What changed in each release of the service. Before you upgrade, read every
 section newer than the version you run. Any upgrade notes in those sections
 are steps you must take.
 
-## Unreleased
+## v0.1.1 - October 16, 2026
 
-- `ifl example-config` prints the annotated example config, so you can start a
-  config without a copy of the repository.
-- The example config's `url` is now Immich's address on its own docker
-  network, `http://immich_server:2283`.
+- Added the `ifl example-config` command for printing the annotated example
+  config to help bootstrap a new installation
 
-## 0.1.0 - 2026-10-15
+## v0.1.0 - October 15, 2026
 
 The first release. It isn't ready for use on real photos yet.
