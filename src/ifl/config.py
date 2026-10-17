@@ -9,12 +9,17 @@ from datetime import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-# The one place in the code that holds a default. `parse_config` fills every
-# field of `Config` from the file or from here, so the dataclasses carry none.
-# config.example.toml shows the same values, and a test holds it to them,
-# all but `lock_path`, where the example has the container's value: the default
-# is beside the config file, and the container mounts that directory read-only.
+# The full set of supported settings with their default values. config.example.toml shows
+# every key, with these values where there's a default, and explains how each should be set.
+# - A default of "" means there's no reasonable default but a non-empty value must be set.
+# - A default of None means off unless it's been set.
+# - [webhook] is optional as a whole, and absent by default.
+# - [members] is the template for each [members.<name>] table.
 DEFAULTS = {
+    "immich": {
+        "url": "",
+        "admin_api_key": None,
+    },
     "service": {
         "readonly": True,
         "lock_path": "run.lock",
@@ -22,25 +27,31 @@ DEFAULTS = {
         "settle_seconds": 60,
         "interval_seconds": 600,
     },
-    "webhook": {"listen": "0.0.0.0:8080"},
-    "family": {"dropbox_album": "Family Dropbox"},
-    "limits": {"albums_per_pass": 5, "assets_per_pass": 20},
-    "tags": {"moved": "family", "from_prefix": "from"},
-    "warnings": {"report_at": "22:00"},
-}
-
-
-# Every section and key the file may hold. Anything else is an error, so a
-# typo or an old name fails at startup instead of silently taking the default.
-SCHEMA = {
-    "immich": {"url", "admin_api_key"},
-    "service": {"readonly", "lock_path", "temp_dir", "settle_seconds", "interval_seconds"},
-    "webhook": {"url", "token", "listen"},
-    "family": {"email", "api_key", "dropbox_album"},
-    "members": {"email", "api_key"},  # per [members.<name>] table
-    "limits": {"albums_per_pass", "assets_per_pass"},
-    "tags": {"moved", "from_prefix"},
-    "warnings": {"report_at"},
+    "webhook": {
+        "url": "",
+        "token": "",
+        "listen": "0.0.0.0:8080",
+    },
+    "limits": {
+        "albums_per_pass": 5,
+        "assets_per_pass": 20,
+    },
+    "tags": {
+        "moved": "family",
+        "from_prefix": "from",
+    },
+    "warnings": {
+        "report_at": "22:00",
+    },
+    "family": {
+        "email": "",
+        "api_key": "",
+        "dropbox_album": "Family Dropbox",
+    },
+    "members": {
+        "email": "",
+        "api_key": "",
+    },
 }
 
 
@@ -52,37 +63,32 @@ class ConfigError(Exception):
 class AccountConfig:
     name: str
     api_key: str
-    email: str | None = None  # checked against the key's owner at startup when given
+    email: str | None = None  # to be matched against the key, or None if we don't care (admin key)
+
+
+# a valid host:port value: [ipv6]:port, ipv4:port, hostname:port, or :port for every address
+_HOST_PORT = re.compile(r"(?:\[(?P<v6>[^\[\]]+)\]|(?P<host>[^:\[\]]*)):(?P<port>[0-9]+)")
 
 
 @dataclass(frozen=True)
 class WebhookConfig:
     url: str  # what Immich calls, e.g. http://ifl:8080/webhook/asset-created
-    token: str  # sent by Immich in the X-IFL-Token header; the receiver checks it
+    token: str  # Immich sends it back in the X-IFL-Token header
     listen: str
 
     @property
     def path(self) -> str:
-        """What the receiver serves: the path Immich is told to call, so the
-        two cannot disagree."""
+        """What the receiver serves: derived from the path Immich is told to call."""
         return urlsplit(self.url).path or "/"
 
     @property
     def bind(self) -> tuple[str, int]:
-        """`listen` as the host and port to bind. An empty host means every
+        """The host and port to bind, derived from `listen`. An empty host means every
         address. Raises ValueError when `listen` is not `host:port`."""
-        host, sep, port = self.listen.rpartition(":")
-        bracketed = host.startswith("[") and host.endswith("]")
-        half_bracketed = not bracketed and (host.startswith("[") or host.endswith("]"))
-        if (
-            not sep
-            or not port.isascii()
-            or not port.isdigit()
-            or half_bracketed
-            or (":" in host and not bracketed)
-        ):
+        m = _HOST_PORT.fullmatch(self.listen)
+        if not m:
             raise ValueError(f"not host:port: {self.listen!r}")
-        return (host[1:-1] if bracketed else host) or "0.0.0.0", int(port)
+        return m["v6"] or m["host"] or "0.0.0.0", int(m["port"])
 
 
 @dataclass(frozen=True)
@@ -113,7 +119,7 @@ def _typed(section: str, raw: dict, key: str, kind: type):
     """The setting, or its default when the file leaves it out. A value of the
     wrong type is an error: `readonly = "false"` would otherwise read as true."""
     if key not in raw:
-        return DEFAULTS.get(section, {}).get(key)
+        return DEFAULTS[section.partition(".")[0]][key]
     value = raw[key]
     # A bool is an int in Python, and `assets_per_pass = true` must not read as 1.
     if not isinstance(value, kind) or (kind is int and isinstance(value, bool)):
@@ -142,7 +148,7 @@ def load_config(path: Path) -> Config:
 
 def _check_keys(raw: dict) -> None:
     for section, body in raw.items():
-        if section not in SCHEMA:
+        if section not in DEFAULTS:
             raise ConfigError(f"unknown section [{section}]")
         if not isinstance(body, dict):
             raise ConfigError(f"[{section}] must be a table")
@@ -151,11 +157,11 @@ def _check_keys(raw: dict) -> None:
                 if not isinstance(member, dict):
                     raise ConfigError(f"[members.{name}] must be a table")
                 for key in member:
-                    if key not in SCHEMA["members"]:
+                    if key not in DEFAULTS["members"]:
                         raise ConfigError(f"[members.{name}] has an unknown key '{key}'")
             continue
         for key in body:
-            if key not in SCHEMA[section]:
+            if key not in DEFAULTS[section]:
                 raise ConfigError(f"[{section}] has an unknown key '{key}'")
 
 

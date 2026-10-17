@@ -94,7 +94,8 @@ def test_the_example_file_shows_every_default_but_the_lock_path():
     assert example["service"].pop("lock_path") == "/data/run.lock"
     for section, settings in DEFAULTS.items():
         for key, default in settings.items():
-            if (section, key) != ("service", "lock_path"):
+            # A required or optional key has no default to show.
+            if default not in ("", None) and (section, key) != ("service", "lock_path"):
                 assert example[section][key] == default, f"[{section}] {key}"
 
 
@@ -278,6 +279,7 @@ def test_webhook_and_interval_settings():
         "::1:8080",
         "[:8080",
         "::]:8080",
+        "[]:8080",
         "9000",
         8080,
     ):
