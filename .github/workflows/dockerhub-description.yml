@@ -1,7 +1,8 @@
 name: Docker Hub description
 
 # DOCKER.md is the page on Docker Hub. The manual trigger pushes it without a
-# change to the file.
+# change to the file. The short description is set by hand on Docker Hub, and
+# this workflow leaves it alone.
 on:
   push:
     branches: [main]
@@ -25,5 +26,4 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: jcsanyi/immich-family-library
-          short-description: Not yet stable. A shared family photo library for self-hosted Immich.
           readme-filepath: DOCKER.md
