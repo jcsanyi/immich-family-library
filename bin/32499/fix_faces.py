@@ -68,12 +68,15 @@ HOW TO USE IT
 The script writes one line for each photo. The line gives the number of faces,
 the people that it restored, and the people that it could not match.
 
-If a photo had no faces at the start, the script does not wait for it. At the
-end, it checks these photos one time. Then it waits one more timeout and puts
-the edits back on each photo that is left.
+The script waits up to --check-timeout (10 seconds by default) for the new
+faces of a photo. If no faces come in that time, the photo goes to a list for
+the end of the run. Detection finds no faces on some photos. An example is a
+photo that was rotated in Immich, because its original is on its side. At the
+end, the script checks the photos on the list one time. Then it waits one
+--timeout and puts the edits back on each photo that is left.
 
-If the machine-learning queue is long, increase --timeout. The default is 120
-seconds for each step on one photo.
+--timeout (120 seconds by default) is also the limit for each other step on
+one photo. If the machine-learning queue is long, increase --timeout.
 
 SAFETY
 
@@ -264,10 +267,11 @@ class Photo:
 
 
 class Fixer:
-    def __init__(self, api, mode, timeout, backup_path):
+    def __init__(self, api, mode, timeout, check_timeout, backup_path):
         self.api = api
         self.bug = mode == "bug"
         self.timeout = timeout
+        self.check_timeout = check_timeout
         self.backup_path = backup_path
         # Photos whose edits are off right now, so that an exit can put them back.
         self.removed = {}
@@ -318,18 +322,20 @@ class Fixer:
 
         api.call("POST", "/assets/jobs", {"assetIds": [photo.id], "name": "refresh-faces"})
 
-        if not faces:
-            if self.bug:
-                self.pending.append(photo)
-                print(f"queued     {photo.label}: no faces before; checked at the end")
-            else:
-                print(f"queued     {photo.label}: no faces before; nothing to restore")
+        if not faces and not self.bug:
+            print(f"queued     {photo.label}: no faces before; nothing to restore")
             return
 
-        new = settled_faces(api, photo.id, self.timeout)
+        # A short wait here, because detection finds nothing on some photos.
+        # A rotated photo's original can be on its side, for example. The
+        # full timeout comes once, at the end, for all of them together.
+        new = settled_faces(api, photo.id, self.check_timeout)
         if new is None:
             self.pending.append(photo)
-            print(f"waiting    {photo.label}: no faces after {self.timeout}s; checked at the end")
+            print(
+                f"waiting    {photo.label}: no faces after {self.check_timeout}s; "
+                "checked at the end"
+            )
             return
         self.finish(photo)
 
@@ -474,7 +480,13 @@ def main():
         "--timeout",
         type=int,
         default=120,
-        help="seconds to wait for each step on one photo (default 120)",
+        help="seconds to wait for each step on one photo, and at the end (default 120)",
+    )
+    parser.add_argument(
+        "--check-timeout",
+        type=int,
+        default=10,
+        help="seconds to wait for the faces of one photo before it goes to the end (default 10)",
     )
     args = parser.parse_args()
 
@@ -491,7 +503,7 @@ def main():
 
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_path = os.path.abspath(f"edits-backup-{stamp}.jsonl")
-    fixer = Fixer(api, args.mode, args.timeout, backup_path)
+    fixer = Fixer(api, args.mode, args.timeout, args.check_timeout, backup_path)
     if fixer.bug:
         print(f"edits backup: {backup_path}")
     print()
