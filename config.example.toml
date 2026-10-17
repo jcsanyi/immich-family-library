@@ -1,10 +1,11 @@
-# immich-family-library configuration.
-# Copy to config.toml, fill in keys, keep it out of the repo (it's gitignored).
+# immich-family-library configuration. `ifl example-config` prints this file.
+# Save it as config.toml and fill in the keys. In a checkout, config.toml is
+# gitignored.
 
 [immich]
-# Where the service reaches Immich. Running in the same docker network as the
-# Immich stack, the server's container name works: "http://immich_server:2283".
-url = "https://photos.example.com"
+# Where the service reaches Immich. On the Immich stack's docker network, the
+# server's container name works, as here. Elsewhere, use Immich's own URL.
+url = "http://immich_server:2283"
 # Optional. Any admin user's API key (the family account or a member, if
 # they're an admin) with `queue.read`, plus `user.read` for the startup
 # check. Before moving anything, the service checks that the sidecar and

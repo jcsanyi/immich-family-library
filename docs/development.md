@@ -349,7 +349,8 @@ The workflow pushes the image before it creates the GitHub Release.
 ### To make a release
 
 1. Make a branch from `main`, for example `release-0.2.0`.
-2. In `CHANGELOG.md`, change `## Unreleased` to `## 0.2.0 - YYYY-MM-DD`.
+2. In `CHANGELOG.md`, change `## Unreleased` to the tag and the date, for
+   example `## v0.2.0 - October 16, 2026`.
 3. Edit the entries of the release. Keep each upgrade note.
 4. Open a pull request, and merge it after review.
 5. Get the merge commit of that pull request:
@@ -384,6 +385,15 @@ gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file NOTES.md
 Do not use a published version again. If a published release has a fault,
 correct it and release the next patch version. A person who pulled the image
 keeps the old image under that version.
+
+### The Docker Hub page
+
+`DOCKER.md` is the page on Docker Hub. The workflow
+`.github/workflows/dockerhub-description.yml` pushes it when a change to it
+reaches `main`. It has a copy of the quick start in the README, because a
+reader on Docker Hub can need it without the README. When you change one copy,
+change the other in the same pull request. Links in `DOCKER.md` must be full
+URLs, because Docker Hub shows the page away from the repository.
 
 ## The dev instance
 
@@ -496,6 +506,7 @@ skills. Each part of the docs uses one of them:
   - `for-members.md`
   - the opening of `README.md`
   - `CHANGELOG.md`, except for any upgrade notes
+  - the opening of `DOCKER.md`
 - `simple-english`:
   - `cli.md`
   - `configuration.md`
@@ -505,6 +516,7 @@ skills. Each part of the docs uses one of them:
   - the rest of `README.md`
   - `AGENTS.md`
   - the upgrade notes in `CHANGELOG.md`
+  - the rest of `DOCKER.md`
 
 The docs use Canadian spelling, for example "behaviour" and "colour". This
 replaces the spelling rule of the `simple-english` skill.

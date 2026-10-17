@@ -157,6 +157,23 @@ token redacted to its last four characters. `--minimal` leaves out settings
 that match their defaults. It needs no network, so it works before the keys
 do.
 
+## `ifl example-config`
+
+Prints the annotated example configuration on stdout. Save it as
+`config.toml`, and fill in the URL and the keys. It needs no config and no
+network. The image has the example inside it, so the command also works where
+there is no checkout:
+
+```
+docker compose run --rm -T ifl example-config > ifl/config.toml
+```
+
+The `-T` flag is necessary. Without it, `docker compose run` attaches a
+terminal, and the file gets Windows line endings.
+
+In a checkout, the installed package has no copy of the example. The command
+then exits 1 and tells you to copy `config.example.toml` from the repository.
+
 ## Exit codes
 
 - `0`: everything asked for was done.

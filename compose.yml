@@ -1,6 +1,8 @@
-# Runs the service next to an Immich compose stack: `docker compose up -d` in
-# this checkout, with config.toml in ./config and the run lock in a named
-# volume. Nothing in that volume needs a backup; see docs/deployment.md.
+# Builds and runs the service from this checkout, as its own compose project
+# beside an Immich stack: `docker compose up -d --build` in this directory,
+# with config.toml in ./config and the run lock in a named volume. This is for
+# development. To run the published image, use the setup in the README or in
+# docs/deployment.md.
 #
 # The service joins the Immich stack's network so it can reach the server by
 # container name, and so Immich's webhook can reach the service the same way:

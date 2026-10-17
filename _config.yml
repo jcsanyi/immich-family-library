@@ -6,6 +6,7 @@ theme: jekyll-theme-cayman
 # not part of the site needs an entry.
 exclude:
   - AGENTS.md
+  - DOCKER.md
   - Dockerfile
   - LICENSE
   - bin

@@ -310,3 +310,12 @@ def test_version_prints_the_release_and_needs_no_config(capsys):
         main(["-c", "does-not-exist.toml", "--version"])
     assert e.value.code == 0
     assert capsys.readouterr().out == f"ifl {__version__}\n"
+
+
+def test_example_config_without_a_packaged_copy_says_where_the_file_is(
+    tmp_path, monkeypatch, capsys, caplog
+):
+    monkeypatch.setattr("ifl.cli.files", lambda package: tmp_path)
+    assert main(["-c", "does-not-exist.toml", "example-config"]) == 1
+    assert capsys.readouterr().out == ""
+    assert "copy config.example.toml from the repository" in caplog.text

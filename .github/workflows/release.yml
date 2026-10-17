@@ -51,13 +51,14 @@ jobs:
           git merge-base --is-ancestor "$(git rev-parse "$GITHUB_REF^{commit}")" origin/main \
             || fail "$GITHUB_REF_NAME is not on main"
 
-          awk -v v="$version" '
-            $0 == "## " v || index($0, "## " v " ") == 1 { found = 1; next }
+          # A section's heading starts with the tag: "## v1.2.3 - October 16, 2026".
+          awk -v tag="$GITHUB_REF_NAME" '
+            $0 == "## " tag || index($0, "## " tag " ") == 1 { found = 1; next }
             found && /^## / { exit }
             found
           ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
           grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md" \
-            || fail "CHANGELOG.md has no section for $version, or the section is empty"
+            || fail "CHANGELOG.md has no section for $GITHUB_REF_NAME, or the section is empty"
 
           # The image reports the version as Python normalizes it: v1.2.3-rc.1
           # becomes 1.2.3rc1.
@@ -82,7 +83,7 @@ jobs:
           load: true
           tags: ifl-release-check
 
-      - name: Check the image's version
+      - name: Check the image
         env:
           WANT: ifl ${{ steps.tag.outputs.normalized }}
         run: |
@@ -91,6 +92,9 @@ jobs:
             echo "::error::the image reports '$got', expected '$WANT'"
             exit 1
           fi
+          # An operator starts a config from this, and only a packaged build has it.
+          docker run --rm ifl-release-check example-config > /dev/null \
+            || { echo "::error::the image has no packaged example config"; exit 1; }
 
       - uses: docker/login-action@v4
         with:
