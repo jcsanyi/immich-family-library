@@ -24,10 +24,11 @@ There is one extra Immich user, the family account, and it owns the family libra
 
 ## Running it
 
-The service is one more container in the Immich compose stack. These are the short steps. [docs/deployment.md](docs/deployment.md) has the details and the alternatives.
+The service is one more container in the Immich compose stack. These are the short steps - see [docs/deployment.md](docs/deployment.md) for the details and alternatives.
 
 1. Create the family user in Immich. Get an API key from the family user and from each member, with the permissions in [docs/configuration.md](docs/configuration.md).
-2. In the directory of Immich's `docker-compose.yml`, make a directory `ifl`. Add the service to `docker-compose.override.yml` in the same directory. If the file does not exist, make it:
+2. In the directory of Immich's `docker-compose.yml`, make a subdirectory `ifl`.
+3. In the same `docker-compose.yml` directory, add the service to `docker-compose.override.yml`. If the file does not exist, create it:
 
    ```yaml
    services:
@@ -45,10 +46,11 @@ The service is one more container in the Immich compose stack. These are the sho
      ifl-data:
    ```
 
-3. Get the annotated example config: `docker compose run --rm -T ifl example-config > ifl/config.toml`. Fill in the keys, and keep `readonly = true`.
-4. Run `docker compose run --rm ifl observe`. It reports what the service will do, and changes nothing.
-5. When the report is what you expect, set `readonly = false` in `ifl/config.toml`.
-6. Run `docker compose run --rm ifl reconcile-albums`. Then run `docker compose up -d`.
+4. Get the annotated example config: `docker compose run --rm -T ifl example-config > ifl/config.toml`.
+5. Fill in the keys from step 1. Change any other setting that your setup needs, and keep `readonly = true`.
+6. Run `docker compose run --rm ifl observe`. It reports what the service will do, and changes nothing.
+7. When the report is what you expect, set `readonly = false` in `ifl/config.toml`.
+8. Run `docker compose run --rm ifl reconcile-albums`. Then run `docker compose up -d`.
 
 Before you upgrade, read [CHANGELOG.md](CHANGELOG.md).
 
@@ -71,7 +73,6 @@ The [issues](https://github.com/jcsanyi/immich-family-library/issues) track what
 - Reclaim, moving a photo back to its original owner, is planned and not built (issue 3).
 - Live photos are not moved. The service blocks them and reports them (issue 14).
 - Stacks and manual face corrections do not carry over to the family copy (issues 5 and 4).
-- Whether a new upload's faces cluster with people found across accounts is not verified (issue 1).
 
 ## Alternatives
 
