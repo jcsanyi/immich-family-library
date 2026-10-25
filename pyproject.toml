@@ -9,7 +9,7 @@ dependencies = [
     "aiohttp>=3.10",
     # Pinned together with the Immich version on the dev and prod instances.
     # See COMPATIBILITY.csv in the immichpy repo before bumping either.
-    "immichpy==9.0.1",
+    "immichpy==9.2.3",
     "tomli-w>=1.0",
 ]
 
