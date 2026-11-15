@@ -36,7 +36,7 @@ class _Section(BaseModel):
 
 class Config(_Section):
     immich: ImmichConfig
-    # A missing section is validated from {}, so its validators still run.
+    # An optional missing section is validated from {}, so its validators still run.
     service: ServiceConfig = Field({}, validate_default=True)
     webhook: WebhookConfig | None = None  # the daemon's receiver; None means no webhook
     limits: LimitsConfig = Field({}, validate_default=True)
