@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import tomllib
-from dataclasses import dataclass
 from datetime import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -25,24 +24,36 @@ class ConfigError(Exception):
     pass
 
 
-@dataclass(frozen=True)
-class AccountConfig:
-    name: str
-    api_key: str
-    email: str | None = None  # to be matched against the key, or None if we don't care (admin key)
-
-
 # a valid host:port value: [ipv6]:port, ipv4:port, hostname:port, or :port for every address
 _HOST_PORT = re.compile(r"(?:\[(?P<v6>[^\[\]]+)\]|(?P<host>[^:\[\]]*)):(?P<port>[0-9]+)")
 
 
-# The models below are the file's shape: every section and key it may hold, each with its
-# type and its default. A key with no default must be set. config.example.toml shows every
-# key, with these values where there's a default, and explains how each should be set.
 class _Section(BaseModel):
     # Strict, so a value of the wrong type is an error and never a guess:
     # `readonly = "false"` would otherwise read as true, and `true` as the int 1.
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+
+class Config(_Section):
+    immich: ImmichConfig
+    # A missing section is validated from {}, so its validators still run.
+    service: ServiceConfig = Field({}, validate_default=True)
+    webhook: WebhookConfig | None = None  # the daemon's receiver; None means no webhook
+    limits: LimitsConfig = Field({}, validate_default=True)
+    tags: TagsConfig = Field({}, validate_default=True)
+    warnings: WarningsConfig = Field({}, validate_default=True)
+    family: FamilyConfig
+    members: dict[str, MemberConfig] = Field(min_length=1)  # one per [members.<name>] table
+
+    _config_dir: Path = PrivateAttr(Path("."))
+
+    @model_validator(mode="after")
+    def _accounts(self) -> Config:
+        emails = [self.family.email, *(m.email for m in self.members.values())]
+        for email in emails:
+            if emails.count(email) > 1:
+                raise ValueError(f"email {email} is used by more than one account")
+        return self
 
 
 class ImmichConfig(_Section):
@@ -62,8 +73,7 @@ class ImmichConfig(_Section):
 
 class ServiceConfig(_Section):
     readonly: bool = True
-    lock_path: Path = Field(Path("run.lock"), validate_default=True)  # the run lock; see lock.py
-    # Holds one original at a time, between its download and its upload.
+    lock_path: Path = Field(Path("run.lock"), validate_default=True)
     temp_dir: Path = Field(Path("/tmp/immich-family-library"), validate_default=True)
     settle_seconds: int = Field(60, ge=0)  # leave an asset alone this long after its last change
     interval_seconds: int = Field(600, ge=1)  # the daemon's pause between passes
@@ -175,36 +185,7 @@ class FamilyConfig(MemberConfig):
         return name
 
 
-class Config(_Section):
-    immich: ImmichConfig
-    # A section the file leaves out is validated from {}, so its paths resolve too.
-    service: ServiceConfig = Field({}, validate_default=True)
-    webhook: WebhookConfig | None = None  # the daemon's receiver; None means no webhook
-    limits: LimitsConfig = Field({}, validate_default=True)
-    tags: TagsConfig = Field({}, validate_default=True)
-    warnings: WarningsConfig = Field({}, validate_default=True)
-    family: FamilyConfig
-    members: dict[str, MemberConfig] = {}  # one per [members.<name>] table
-
-    _config_dir: Path = PrivateAttr(Path("."))
-
-    @model_validator(mode="after")
-    def _accounts(self) -> Config:
-        if not self.members:
-            raise ValueError("at least one [members.<name>] section is required")
-        emails = [self.family.email, *(m.email for m in self.members.values())]
-        for email in emails:
-            if emails.count(email) > 1:
-                raise ValueError(f"email {email} is used by more than one account")
-        return self
-
-    @property
-    def family_account(self) -> AccountConfig:
-        return AccountConfig("family", self.family.api_key, self.family.email)
-
-    @property
-    def member_accounts(self) -> dict[str, AccountConfig]:
-        return {name: AccountConfig(name, m.api_key, m.email) for name, m in self.members.items()}
+Config.model_rebuild()
 
 
 def _describe(error: dict) -> str:

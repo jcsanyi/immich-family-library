@@ -27,7 +27,7 @@ from ifl.accounts import (
     open_account,
     open_accounts,
 )
-from ifl.config import AccountConfig, Config, parse_config
+from ifl.config import Config, parse_config
 
 URL = "https://x.example"
 
@@ -105,9 +105,7 @@ def stub(monkeypatch):
 
 async def test_a_good_key_opens_an_account(stub):
     stub.KEYS["k1"] = {"user": user("Alice@x"), "key": key(MEMBER_PERMISSIONS)}
-    a = await open_account(
-        URL, AccountConfig("alice", "k1", "alice@x"), required=MEMBER_PERMISSIONS
-    )
+    a = await open_account(URL, "alice", "k1", "alice@x", required=MEMBER_PERMISSIONS)
     assert a.name == "alice" and a.email == "Alice@x" and a.user_id == stub.KEYS["k1"]["user"].id
     assert a.client.base_url == URL and a.client.api_key == "k1" and not a.client.closed
     assert str(a) == "alice <Alice@x>"
@@ -116,25 +114,19 @@ async def test_a_good_key_opens_an_account(stub):
 async def test_a_key_for_the_wrong_user_is_refused_and_closed(stub):
     stub.KEYS["k1"] = {"user": user("bob@x"), "key": key(MEMBER_PERMISSIONS)}
     with pytest.raises(AccountError, match="key belongs to bob@x, config says alice@x"):
-        await open_account(
-            URL, AccountConfig("alice", "k1", "alice@x"), required=MEMBER_PERMISSIONS
-        )
+        await open_account(URL, "alice", "k1", "alice@x", required=MEMBER_PERMISSIONS)
     assert stub.made[0].closed
     # No email in the config means no check, which is how the admin key is opened.
-    a = await open_account(URL, AccountConfig("admin", "k1"), required=set())
+    a = await open_account(URL, "admin", "k1", required=set())
     assert a.email == "bob@x"
 
 
 async def test_an_admin_key_must_belong_to_an_admin(stub):
     stub.KEYS["k1"] = {"user": user("root@x", is_admin=False), "key": key(ADMIN_PERMISSIONS)}
     with pytest.raises(AccountError, match="not an admin"):
-        await open_account(
-            URL, AccountConfig("admin", "k1"), required=ADMIN_PERMISSIONS, must_be_admin=True
-        )
+        await open_account(URL, "admin", "k1", required=ADMIN_PERMISSIONS, must_be_admin=True)
     stub.KEYS["k1"]["user"] = user("root@x", is_admin=True)
-    a = await open_account(
-        URL, AccountConfig("admin", "k1"), required=ADMIN_PERMISSIONS, must_be_admin=True
-    )
+    a = await open_account(URL, "admin", "k1", required=ADMIN_PERMISSIONS, must_be_admin=True)
     assert a.email == "root@x"
 
 
@@ -146,14 +138,10 @@ async def test_missing_permissions_are_named_and_all_covers_everything(stub):
     with pytest.raises(
         AccountError, match=r"missing permissions: \['album.delete', 'asset.delete'\]"
     ):
-        await open_account(
-            URL, AccountConfig("alice", "k1", "alice@x"), required=MEMBER_PERMISSIONS
-        )
+        await open_account(URL, "alice", "k1", "alice@x", required=MEMBER_PERMISSIONS)
     assert stub.made[-1].closed
     stub.KEYS["k1"]["key"] = key({"all"})
-    a = await open_account(
-        URL, AccountConfig("alice", "k1", "alice@x"), required=FAMILY_PERMISSIONS
-    )
+    a = await open_account(URL, "alice", "k1", "alice@x", required=FAMILY_PERMISSIONS)
     assert not a.client.closed
 
 
@@ -170,20 +158,20 @@ async def test_only_a_refusal_from_immich_is_a_failed_key_check(stub):
         AccountError,
         match=r"\[alice\] key check failed: Immich answered 401 to users.get_my_user: Invalid",
     ):
-        await open_account(URL, AccountConfig("alice", "k1", "alice@x"), required=set())
+        await open_account(URL, "alice", "k1", "alice@x", required=set())
     assert stub.made[0].closed
 
     # No answer says nothing about the key. It is an outage, and reads as one.
     stub.KEYS["k1"] = {"raise": ConnectionError("no route to host")}
     with pytest.raises(ImmichError, match="users.get_my_user got no usable answer from Immich"):
-        await open_account(URL, AccountConfig("alice", "k1", "alice@x"), required=set())
+        await open_account(URL, "alice", "k1", "alice@x", required=set())
     assert stub.made[1].closed
 
 
 async def test_the_family_check_logs_this_release_beside_the_server(stub, caplog):
     stub.KEYS["k1"] = {"user": user("f@x"), "key": key(set())}
     with caplog.at_level("INFO", logger="ifl"):
-        await open_account(URL, AccountConfig("family", "k1"), required=set(), check_version=True)
+        await open_account(URL, "family", "k1", required=set(), check_version=True)
     assert f"ifl {__version__}, server 3.3.1 at {URL}" in caplog.text
 
 
@@ -312,9 +300,7 @@ async def test_a_fault_during_the_key_check_is_not_reported_as_a_wrong_key(monke
     monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
 
     with pytest.raises(AttributeError):
-        await open_account(
-            "https://x.example", AccountConfig("alice", "k", "alice@x"), required=set()
-        )
+        await open_account("https://x.example", "alice", "k", "alice@x", required=set())
     assert closed == [True]
 
 
@@ -337,7 +323,7 @@ async def test_a_reply_the_client_cannot_read_is_not_a_failed_key_check(monkeypa
     monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
 
     with pytest.raises(ImmichError) as failed:
-        await open_account("https://x.example", AccountConfig("alice", "k"), required=set())
+        await open_account("https://x.example", "alice", "k", required=set())
     text = str(failed.value)
     assert text.startswith(
         "users.get_my_user got no usable answer from Immich: "
@@ -429,7 +415,5 @@ async def test_the_version_is_checked_before_the_first_key(monkeypatch):
     monkeypatch.setattr("ifl.accounts.AsyncClient", Client)
 
     with pytest.raises(AccountError, match=r"server is 3\.0\.4, need 3\.3"):
-        await open_account(
-            "https://x.example", AccountConfig("family", "k"), required=set(), check_version=True
-        )
+        await open_account("https://x.example", "family", "k", required=set(), check_version=True)
     assert asked == ["version"]

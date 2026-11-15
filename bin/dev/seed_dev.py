@@ -52,7 +52,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from ifl.accounts import Account, Accounts  # noqa: E402
-from ifl.config import AccountConfig, load_config  # noqa: E402
+from ifl.config import load_config  # noqa: E402
 from ifl.immich import list_albums  # noqa: E402
 
 log = logging.getLogger("seed")
@@ -156,20 +156,21 @@ async def add_to_album(acct: Account, album_id: UUID, asset_ids: list[UUID]) -> 
     )
 
 
-async def login(url: str, acct: AccountConfig, password: str) -> Account:
+async def login(url: str, name: str, email: str, password: str) -> Account:
     anon = AsyncClient(base_url=url)
     try:
-        res = await anon.auth.login(LoginCredentialDto(email=acct.email, password=password))
+        res = await anon.auth.login(LoginCredentialDto(email=email, password=password))
     finally:
         await anon.close()
     client = AsyncClient(base_url=url, access_token=res.access_token)
-    return Account(name=acct.name, email=acct.email, user_id=res.user_id, client=client)
+    return Account(name=name, email=email, user_id=res.user_id, client=client)
 
 
 async def login_all(config_path: Path, password: str) -> tuple[Accounts, str]:
     cfg = load_config(config_path)
-    family = await login(cfg.immich.url, cfg.family_account, password)
-    members = {n: await login(cfg.immich.url, m, password) for n, m in cfg.member_accounts.items()}
+    url = cfg.immich.url
+    family = await login(url, "family", cfg.family.email, password)
+    members = {n: await login(url, n, m.email, password) for n, m in cfg.members.items()}
     return Accounts(family=family, members=members), cfg.family.dropbox_album
 
 

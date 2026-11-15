@@ -15,7 +15,7 @@ from uuid import UUID
 from immichpy.client.main import AsyncClient
 
 from ifl import __version__
-from ifl.config import AccountConfig, Config
+from ifl.config import Config
 from ifl.immich import ImmichError, describe_error, guard
 
 log = logging.getLogger(__name__)
@@ -117,13 +117,15 @@ async def close_client(client: AsyncClient) -> None:
 
 async def open_account(
     url: str,
-    cfg: AccountConfig,
+    name: str,
+    api_key: str,
+    email: str | None = None,  # to be matched against the key, or None if we don't care (admin key)
     *,
     required: set[str],
     must_be_admin: bool = False,
     check_version: bool = False,
 ) -> Account:
-    client = guard(AsyncClient(base_url=url, api_key=cfg.api_key))
+    client = guard(AsyncClient(base_url=url, api_key=api_key))
     try:
         if check_version:
             # Before anything else. An Immich that is too old answers the key
@@ -131,27 +133,27 @@ async def open_account(
             # what explains that.
             log.info("ifl %s, server %s at %s", __version__, await check_server(client), url)
         me = await client.users.get_my_user()
-        if cfg.email is not None and me.email.lower() != cfg.email.lower():
+        if email is not None and me.email.lower() != email.lower():
             raise AccountError(
-                f"[{cfg.name}] key belongs to {me.email}, config says {cfg.email}. "
+                f"[{name}] key belongs to {me.email}, config says {email}. "
                 "Wrong key or wrong server."
             )
         if must_be_admin and not me.is_admin:
-            raise AccountError(f"[{cfg.name}] key belongs to {me.email}, who is not an admin")
+            raise AccountError(f"[{name}] key belongs to {me.email}, who is not an admin")
         key = await client.api_keys.get_my_api_key()
         have = {str(p.value) for p in key.permissions}
         missing = required - have if "all" not in have else set()
         if missing:
-            raise AccountError(f"[{cfg.name}] key is missing permissions: {sorted(missing)}")
+            raise AccountError(f"[{name}] key is missing permissions: {sorted(missing)}")
     except BaseException as e:
         await close_client(client)
         # Immich's answer to a key is the check itself: a refusal is a wrong key.
         # An outage says nothing about the key, and rises as itself.
         if isinstance(e, ImmichError) and e.refused:
-            raise AccountError(f"[{cfg.name}] key check failed: {e}") from e
+            raise AccountError(f"[{name}] key check failed: {e}") from e
         raise
-    log.info("account ok: %s (%s)", cfg.name, me.email)
-    return Account(name=cfg.name, email=me.email, user_id=me.id, client=client)
+    log.info("account ok: %s (%s)", name, me.email)
+    return Account(name=name, email=me.email, user_id=me.id, client=client)
 
 
 async def check_server(client: AsyncClient) -> str:
@@ -181,15 +183,22 @@ async def open_accounts(cfg: Config) -> Accounts:
     opened: list[Account] = []
     try:
         family = await open_account(
-            cfg.immich.url, cfg.family_account, required=FAMILY_PERMISSIONS, check_version=True
+            cfg.immich.url,
+            "family",
+            cfg.family.api_key,
+            cfg.family.email,
+            required=FAMILY_PERMISSIONS,
+            check_version=True,
         )
         opened.append(family)
         members: dict[str, Account] = {}
         # The config compares emails as written; Immich's user id is what counts.
         # The admin key is left out: it may be the family's or a member's.
         participants = {family.user_id: family}
-        for name, m in cfg.member_accounts.items():
-            members[name] = await open_account(cfg.immich.url, m, required=MEMBER_PERMISSIONS)
+        for name, m in cfg.members.items():
+            members[name] = await open_account(
+                cfg.immich.url, name, m.api_key, m.email, required=MEMBER_PERMISSIONS
+            )
             opened.append(members[name])
             other = participants.setdefault(members[name].user_id, members[name])
             if other is not members[name]:
@@ -199,9 +208,12 @@ async def open_accounts(cfg: Config) -> Accounts:
                 )
         admin = None
         if cfg.immich.admin_api_key:
-            admin_cfg = AccountConfig(name="admin", api_key=cfg.immich.admin_api_key)
             admin = await open_account(
-                cfg.immich.url, admin_cfg, required=ADMIN_PERMISSIONS, must_be_admin=True
+                cfg.immich.url,
+                "admin",
+                cfg.immich.admin_api_key,
+                required=ADMIN_PERMISSIONS,
+                must_be_admin=True,
             )
             opened.append(admin)
     except Exception:

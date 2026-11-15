@@ -16,9 +16,9 @@ GOOD = {
 def test_parse_good():
     cfg = parse_config(GOOD, config_dir=Path("/etc/ifl"))
     assert cfg.immich.url == "https://x.example"
-    assert cfg.family_account.email == "f@x"
+    assert cfg.family.email == "f@x"
     assert cfg.family.dropbox_album == "Drop"
-    assert cfg.member_accounts["a"].name == "a"
+    assert cfg.members["a"].email == "a@x"
     assert cfg.service.lock_path == Path("/etc/ifl/run.lock")
     assert cfg.service.temp_dir == Path("/tmp/immich-family-library")
     assert cfg.warnings.report_time == time(22, 0)
@@ -32,7 +32,8 @@ def test_parse_good():
         (lambda r: r.pop("immich"), "immich: Field required"),
         (lambda r: r["family"].pop("api_key"), "family.api_key: Field required"),
         (lambda r: r["family"].update({"dropbox_album": ""}), "dropbox_album"),
-        (lambda r: r.pop("members"), "at least one"),
+        (lambda r: r.pop("members"), "members: Field required"),
+        (lambda r: r.update({"members": {}}), "members: Dictionary should have at least 1 item"),
         (lambda r: r["members"].update({"b": {"email": "a@x", "api_key": "k"}}), "more than one"),
         (lambda r: r.update({"limits": {"albums_per_pass": -1}}), "albums_per_pass"),
         (lambda r: r.update({"limits": {"albums_per_pass": "5"}}), "albums_per_pass"),
